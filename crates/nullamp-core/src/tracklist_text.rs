@@ -64,6 +64,24 @@ pub fn parse(text: &str, origin_url: Option<String>) -> ParsedTracklist {
     out
 }
 
+/// Read a track list out of a comment or description tag. Unlike a paste, the text
+/// is mostly prose, so it only counts when track lines dominate it.
+pub fn parse_description(text: &str) -> Option<Setlist> {
+    let lines = text.lines().filter(|l| !l.trim().is_empty()).count();
+    let mut parsed = parse(text, None);
+    let n = parsed.setlist.entries.len();
+    if n < MIN_DESCRIPTION_TRACKS || n * 2 < lines {
+        return None;
+    }
+    for e in &mut parsed.setlist.entries {
+        e.provenance = Provenance::TagDescription;
+    }
+    Some(parsed.setlist)
+}
+
+/// A shorter run is more likely a title or a sentence with a dash than a tracklist.
+const MIN_DESCRIPTION_TRACKS: usize = 3;
+
 fn take_time_and_numbering(line: &str) -> (Option<f64>, &str) {
     let mut rest = line;
     let mut start = None;
@@ -166,6 +184,19 @@ mod tests {
         assert_eq!(e[5].title, "Song (Live)", "non-version parentheses stay in the title");
         assert!(e.iter().all(|x| x.timing == Timing::Approximate));
         assert_eq!(e[0].provenance.url(), Some("https://example.com/list"));
+    }
+
+    #[test]
+    fn description_lists_need_mostly_track_lines() {
+        let list = "Tracklist\n1. Artist A - Song A\n2. Artist B - Song B (Remix)\n3. Artist C - Song C\n";
+        let s = parse_description(list).unwrap();
+        assert_eq!(s.entries.len(), 3);
+        assert!(s.entries.iter().all(|e| e.start.is_none() && e.provenance == Provenance::TagDescription));
+
+        let prose = "Recorded live at the club - what a night.\nThanks to everyone who came, see you next year.\n\
+            Booking: mail me.\nA - B\nC - D\nE - F\nMore words here.\nAnd more.\nAnd even more text.\n";
+        assert!(parse_description(prose).is_none(), "prose with a few dashes is not a tracklist");
+        assert!(parse_description("A - B\nC - D\n").is_none(), "too short");
     }
 
     #[test]

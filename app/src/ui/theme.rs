@@ -91,7 +91,10 @@ pub fn apply(ctx: &egui::Context) {
     w.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
     w.active.bg_stroke = Stroke::new(1.0, ACCENT);
 
-    ctx.set_visuals(visuals);
+    // The look is fixed: without pinning the theme, a light macOS appearance picks
+    // egui's stock light visuals (pale buttons, light-blue selection) for widgets.
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.set_visuals_of(egui::Theme::Dark, visuals);
     ctx.all_styles_mut(|style: &mut Style| {
         style.spacing.item_spacing = egui::vec2(6.0, 4.0);
         style.spacing.button_padding = egui::vec2(7.0, 3.0);

@@ -23,6 +23,9 @@ pub enum Provenance {
     EmbeddedChapters,
     /// A cue sheet next to the audio file.
     CueSheet { path: String },
+    /// A track list written into the file's comment or description tag. Usually
+    /// has no times, so it is a reference list rather than something to seek by.
+    TagDescription,
     /// Text pasted or imported by the user, optionally copied from a web page.
     Imported { origin_url: Option<String> },
     /// Fetched from an online provider.
@@ -36,6 +39,7 @@ impl Provenance {
         match self {
             Provenance::EmbeddedChapters => "Embedded chapters".into(),
             Provenance::CueSheet { path } => format!("Cue sheet ({})", file_name(path)),
+            Provenance::TagDescription => "Track list in description".into(),
             Provenance::Imported { origin_url: Some(u) } => format!("Imported from {u}"),
             Provenance::Imported { origin_url: None } => "Imported text".into(),
             Provenance::Online { provider, .. } => provider.clone(),
@@ -309,6 +313,7 @@ impl Setlist {
 
         for (i, e) in self.entries.iter().enumerate() {
             match e.start {
+                None if e.provenance == Provenance::TagDescription => {}
                 None => issues.push(Issue::MissingStart { index: i }),
                 Some(s) if s < 0.0 || !s.is_finite() => issues.push(Issue::NegativeTime { index: i }),
                 Some(s) => {

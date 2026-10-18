@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, select_biased};
 use nullamp_core::setlist::{MixInfo, Provenance};
-use nullamp_core::{Setlist, TrackInfo, cue, m3u};
+use nullamp_core::{Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
 use nullamp_online::{ArtworkSource, CoverArtArchive, CoverImage, Http, MusicBrainz, OnlineError, RecordingMatch, RecordingSource};
 
@@ -422,7 +422,14 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
             return Some(s);
         }
     }
-    None
+    // A plain track list in the description, often without times: reference only.
+    let described = meta.and_then(|m| {
+        [nullamp_meta::Field::Comment, nullamp_meta::Field::Description].iter().find_map(|f| tracklist_text::parse_description(m.fields.get(f)?))
+    });
+    described.map(|mut s| {
+        fill_mix(&mut s.mix, &mix);
+        s
+    })
 }
 
 fn fill_mix(target: &mut MixInfo, from: &MixInfo) {
@@ -548,6 +555,18 @@ mod tests {
         // A file with no sources yields nothing.
         let plain = fixture("tagged_v24.mp3");
         assert!(discover_local_setlist(&plain, nullamp_meta::read(&plain).ok().as_ref()).is_none());
+    }
+
+    #[test]
+    fn discovers_untimed_list_in_description() {
+        let path = fixture("tagged_v24.mp3");
+        let mut meta = nullamp_meta::read(&path).unwrap();
+        meta.fields.insert(nullamp_meta::Field::Comment, "1. A - One\n2. B - Two\n3. C - Three\n".into());
+        let s = discover_local_setlist(&path, Some(&meta)).unwrap();
+        assert_eq!(s.entries.len(), 3);
+        assert_eq!(s.entries[1].title, "Two");
+        assert!(s.entries.iter().all(|e| e.start.is_none()));
+        assert!(s.validate(None).is_empty(), "missing times are expected for a reference list");
     }
 
     #[test]

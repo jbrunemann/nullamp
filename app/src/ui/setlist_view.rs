@@ -528,14 +528,17 @@ fn source_summary(app: &mut App, ui: &mut Ui) {
             sources.push(l);
         }
     }
-    let approx = s.entries.iter().filter(|e| e.timing == Timing::Approximate).count();
+    let untimed = s.entries.iter().all(|e| e.start.is_none());
+    let approx = s.entries.iter().filter(|e| e.start.is_some() && e.timing == Timing::Approximate).count();
     let edited = s.entries.iter().filter(|e| e.user_edited).count();
     let saved = app.mix.origin == Some(SetlistOrigin::Saved);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(RichText::new(format!("{} tracks", s.entries.len())).small().color(theme::TEXT));
         ui.label(RichText::new(format!("· {}", sources.join(", "))).small().color(theme::TEXT_DIM));
-        if approx > 0 {
+        if untimed {
+            ui.label(RichText::new("· no times, reference only").small().color(theme::TEXT_DIM));
+        } else if approx > 0 {
             ui.label(RichText::new(format!("· ≈ {approx} approximate")).small().color(theme::WARN))
                 .on_hover_text("These start times are estimates from the source; boundaries are drawn dashed on the timeline.");
         } else {
@@ -606,6 +609,7 @@ fn entries(app: &mut App, ui: &mut Ui) {
             let time_text = match e.start {
                 Some(s) if e.timing == Timing::Approximate => format!("≈{}", format_clock(s)),
                 Some(s) => format_clock(s),
+                None if e.provenance == Provenance::TagDescription => String::new(),
                 None => "--:--".into(),
             };
             let time_color = if e.start.is_none() { theme::WARN } else if active { theme::LCD_AMBER } else { theme::TEXT_DIM };

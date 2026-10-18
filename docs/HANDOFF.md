@@ -10,7 +10,7 @@ Working on macOS: playback, playlists, media keys, setlists, metadata editing, p
 |---|---|
 | 1. Technical validation | Done. Choices and reasons in section 3. |
 | 2. Core player | Done on macOS. Manual check of media keys, file dialogs and drag-and-drop is still owed. |
-| 3. DJ mix support | Done: chapters, embedded and adjacent cue sheets, pasted tracklists, timeline segments, editing, persistence. |
+| 3. DJ mix support | Done: chapters, embedded and adjacent cue sheets, plain track lists in the comment or description tag (reference only when untimed), pasted tracklists, timeline segments, editing, persistence. |
 | 4. Metadata management | Done: inspector, batch edit, artwork, safe writes, backups and restore. |
 | 5. Online enrichment | Partly. MusicBrainz and Cover Art Archive lookups for single tracks work. Online tracklist search was built and then removed by request (section 7). |
 | 6. Hardening and release | Not started: no README, no CI, Linux and Windows untested, no signing or notarisation. |
