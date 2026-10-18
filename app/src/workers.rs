@@ -428,8 +428,9 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     NowPlayingInfo { token, path, meta, art, art_file, fingerprint, setlist, discovered, tracklist_urls }
 }
 
-/// Local setlist sources, in order: embedded chapters, a cue sheet stored in a tag,
-/// a cue sheet next to the file.
+/// Local setlist sources, in order: a cue sheet with exactly the file's name (`mix.cue`
+/// for `mix.wav`, which the user put there on purpose), embedded chapters, a cue sheet
+/// stored in a tag, any other cue sheet next to the file.
 pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Option<Setlist> {
     let file_name = path.file_name()?.to_string_lossy().into_owned();
     let mix = meta
@@ -440,6 +441,11 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
             ..Default::default()
         })
         .unwrap_or_default();
+
+    let same_name = path.with_extension("cue");
+    if let Some(s) = setlist_from_cue_file(&same_name, &file_name, &mix) {
+        return Some(s);
+    }
 
     if let Some(m) = meta {
         if m.chapters.len() >= 2 {
@@ -459,12 +465,7 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
         }
     }
     for cue_path in adjacent_cue_sheets(path) {
-        let Ok(bytes) = std::fs::read(&cue_path) else { continue };
-        let sheet = cue::parse(&bytes);
-        if let Some(mut s) = sheet.to_setlist(&file_name, &cue_path.to_string_lossy())
-            && !s.entries.is_empty()
-        {
-            fill_mix(&mut s.mix, &mix);
+        if let Some(s) = setlist_from_cue_file(&cue_path, &file_name, &mix) {
             return Some(s);
         }
     }
@@ -476,6 +477,16 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
         fill_mix(&mut s.mix, &mix);
         s
     })
+}
+
+fn setlist_from_cue_file(cue_path: &Path, audio_file_name: &str, mix: &MixInfo) -> Option<Setlist> {
+    let bytes = std::fs::read(cue_path).ok()?;
+    let mut s = cue::parse(&bytes).to_setlist(audio_file_name, &cue_path.to_string_lossy())?;
+    if s.entries.is_empty() {
+        return None;
+    }
+    fill_mix(&mut s.mix, mix);
+    Some(s)
 }
 
 fn fill_mix(target: &mut MixInfo, from: &MixInfo) {
@@ -601,6 +612,24 @@ mod tests {
         // A file with no sources yields nothing.
         let plain = fixture("tagged_v24.mp3");
         assert!(discover_local_setlist(&plain, nullamp_meta::read(&plain).ok().as_ref()).is_none());
+    }
+
+    #[test]
+    fn same_name_cue_beats_chapters() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("2019-07-29_22h29m03s.mp3");
+        std::fs::copy(fixture("mix_chapters.mp3"), &path).unwrap();
+        // The sheet names a WAV, as rekordbox recordings do.
+        std::fs::write(
+            dir.path().join("2019-07-29_22h29m03s.cue"),
+            "FILE \"2019-07-29_22h29m03s.wav\" WAVE\n TRACK 01 AUDIO\n TITLE \"Mine\"\n PERFORMER \"P\"\n INDEX 01 00:00:00\n",
+        )
+        .unwrap();
+        let meta = nullamp_meta::read(&path).unwrap();
+        assert!(meta.chapters.len() >= 2);
+        let s = discover_local_setlist(&path, Some(&meta)).unwrap();
+        assert_eq!(s.entries.len(), 1);
+        assert_eq!(s.entries[0].title, "Mine");
     }
 
     #[test]
