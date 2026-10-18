@@ -1,5 +1,6 @@
 //! The deck: LCD display, artwork, mix timeline and transport controls.
 
+use egui::emath::GuiRounding;
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use nullamp_core::command::{Command, CommandSource};
 use nullamp_core::setlist::Timing;
@@ -264,9 +265,11 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     };
     if let Some(d) = dur {
         let shown = drag_target.unwrap_or(pos);
-        let px = x_of(shown, d);
+        // Snap once and draw every part from the snapped x. Left alone, epaint snaps rect edges and vertical lines to the
+        // pixel grid by different rules and the knob not at all, so the parts step at different moments and drift apart.
+        let px = x_of(shown, d).round_to_pixels(ui.ctx().pixels_per_point());
         p.rect_filled(Rect::from_min_max(bar.left_top(), pos2(px, bar.bottom())), 3.0, theme::LCD_FG.gamma_multiply(0.18));
-        p.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(2.0, theme::LCD_ACCENT));
+        p.rect_filled(Rect::from_min_max(pos2(px - 1.0, rect.top()), pos2(px + 1.0, rect.bottom())), 0.0, theme::LCD_ACCENT);
         p.circle_filled(pos2(px, rect.top() + 2.0), 3.0, theme::LCD_ACCENT);
     }
     p.rect_stroke(bar, 3.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
