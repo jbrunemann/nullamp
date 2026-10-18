@@ -22,6 +22,8 @@ use crate::setlist::{Provenance, Setlist, SetlistEntry, Timing, Verification};
 use crate::time::parse_timestamp;
 
 static NUMBERING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}\s*[-–:.)*•·]|#\d{1,3}|0\d|\d{1,3}\s+[\[(]\d)\s*").unwrap());
+/// "Track A w/ Track B": the second track is played over the first, mid-line.
+static INLINE_WITH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+[wW]/\s").unwrap());
 static BULLET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[*•·▪‣]\s*").unwrap());
 static BRACKET_TIME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\[(](\d{1,3}(?::\d{1,2}){1,2}(?:\.\d+)?)[\])]\s*").unwrap());
@@ -126,6 +128,8 @@ fn take_time_and_numbering(line: &str) -> (Option<f64>, &str) {
 }
 
 fn parse_track(text: &str, start: Option<f64>, provenance: &Provenance) -> Option<SetlistEntry> {
+    // Only the main track is kept; the one played with it is dropped.
+    let text = INLINE_WITH.find(text).map_or(text, |m| &text[..m.start()]);
     let (artist, title) = split_artist_title(text)?;
     let mut title = title.to_owned();
     let mut label = None;
@@ -256,6 +260,15 @@ w/ * Mau P - Drugs From Amsterdam (Acapella) REPOPULATE MARS
                 ("Someone", "ALL CAPS TITLE", None, None),
             ]
         );
+    }
+
+    #[test]
+    fn inline_with_keeps_only_the_main_track() {
+        let p = parse("03 * Cherry - Selene SIONA w/  Mau P - Drugs From Amsterdam (Acapella) REPOPULATE MARS\n04 * A - B w/ C - D\n", None);
+        let e = &p.setlist.entries;
+        assert_eq!(e.len(), 2);
+        assert_eq!((e[0].artist.as_str(), e[0].title.as_str(), e[0].label.as_deref()), ("Cherry", "Selene", Some("SIONA")));
+        assert_eq!((e[1].artist.as_str(), e[1].title.as_str()), ("A", "B"));
     }
 
     #[test]
