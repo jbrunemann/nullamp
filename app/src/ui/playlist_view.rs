@@ -484,7 +484,8 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
         for i in range {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
             rows.push((i, rect));
-            let entry = app.player.viewed().entries()[i].clone();
+            // A context menu action can remove entries mid-loop; stop at the new end.
+            let Some(entry) = app.player.viewed().entries().get(i).cloned() else { break };
             let id = entry.id;
             paint_row(app, ui, rect, order, i, &entry, resp.hovered());
 
