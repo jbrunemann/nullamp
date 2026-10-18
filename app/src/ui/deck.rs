@@ -158,7 +158,8 @@ fn lcd_clock(secs: f64) -> String {
 /// Line 3: the file's position in the playlist and, inside a mix, the track's position in the setlist.
 fn lcd_lines(app: &App) -> (String, Color32, String, String) {
     let Some(entry) = app.player.current_entry() else {
-        return ("NULLAMP".into(), theme::LCD_MID, "Drop music here, or press ⌘O / Ctrl+O to add files".into(), String::new());
+        let cmd = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
+        return ("NULLAMP".into(), theme::LCD_MID, format!("Drop music here, or press {cmd}O to add files"), String::new());
     };
     let list = &app.player.lists[app.player.playing_list()].playlist;
     let pos_in_list = list.index_of(entry.id).map(|i| format!("FILE {}/{}", i + 1, list.len())).unwrap_or_default();
