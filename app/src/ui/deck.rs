@@ -285,13 +285,21 @@ fn timeline(app: &mut App, ui: &mut Ui) {
             format!("{approx}{}", entry_line(e))
         });
         // Shown at once (no hover delay) and to a tenth of a second, so a timestamp can be read off and typed into an entry.
-        egui::Tooltip::for_widget(&resp).at_pointer().show(|ui| {
-            ui.set_max_width(ui.spacing().tooltip_width);
-            ui.label(RichText::new(format_precise(t)).monospace().strong());
-            if let Some(track) = track {
-                ui.label(track);
-            }
-        });
+        // A plain area rather than egui::Tooltip: a real tooltip that is always open would make egui show the next widget's
+        // tooltip without its usual delay (grace time) when the pointer leaves the timeline.
+        egui::Area::new(resp.id.with("hover-time"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(hover + vec2(14.0, 20.0))
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(ui.spacing().tooltip_width);
+                    ui.label(RichText::new(format_precise(t)).monospace().strong());
+                    if let Some(track) = track {
+                        ui.label(track);
+                    }
+                });
+            });
     }
     if resp.drag_stopped() || resp.clicked() {
         if let (Some(d), Some(p)) = (dur, resp.interact_pointer_pos().or(resp.hover_pos())) {
