@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --workspace
+      - name: Bundle
+        run: packaging/macos/bundle.sh
+      - name: Zip
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          ditto -c -k --keepParent target/bundle/Nullamp.app "Nullamp-${VERSION}-macos-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nullamp-macos-arm64
+          path: Nullamp-*-macos-arm64.zip
+
+  # Built on the oldest hosted Ubuntu so the binary runs against an older glibc.
+  linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release -p nullamp
+      - name: Package
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          DIR="Nullamp-${VERSION}-linux-x86_64"
+          mkdir "$DIR"
+          cp target/release/nullamp packaging/linux/nullamp.desktop "$DIR/"
+          cp packaging/icon-1024.png "$DIR/nullamp.png"
+          tar -czf "$DIR.tar.gz" "$DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nullamp-linux-x86_64
+          path: Nullamp-*-linux-x86_64.tar.gz
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos-arm64, linux-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Nullamp-*
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" Nullamp-* --repo "$GITHUB_REPOSITORY" --generate-notes
