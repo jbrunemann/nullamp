@@ -10,32 +10,37 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/mix-setlist.png" alt="Nullamp playing a DJ mix, with the setlist panel open" width="900">
+  <img src="docs/images/nullamp-main.png" alt="Nullamp playing a DJ mix: the LCD shows the track inside the mix, the timeline is split into its tracks, and the setlist panel lists them" width="900">
 </p>
 
 Nullamp is for people who keep a folder of music and a pile of long DJ mixes. It opens files in milliseconds, plays them gapless, and knows which track *inside* a one-hour mix is playing right now.
 
 It is not a streaming client and not a library manager. It plays your files.
 
+**New here?** Read the [user manual](docs/USER_MANUAL.md).
+
 ## Features
 
 **Player**
+
 - Instant response: a warm file is audible in about 40 ms, seeks land in a few milliseconds, and opening files never blocks the UI.
 - Gapless playback, shuffle, repeat, volume ramping without clicks, and recovery when the output device changes (headphones, Bluetooth, sleep and wake).
 - Seven-segment LCD with elapsed or remaining time, plus a spectrum or oscilloscope view aligned to what you actually hear.
-- Multiple playlists in tabs with a virtualized table, drag to reorder, and persistence between sessions.
+- Multiple playlists in tabs with a virtualized table, drag to reorder, a Sort menu, columns you can hide and rearrange, and persistence between sessions.
 - Media keys and the macOS Now Playing widget, even when the window is in the background.
 - Dark and light themes, or follow the system.
 
 **DJ mixes**
-- A mix is a single file with a *setlist*. Nullamp reads it from ID3 chapters, embedded or adjacent cue sheets, or a plain track list in the comment tag.
+
+- A mix is a single file with a *setlist*. Nullamp reads it from a cue sheet with the same name as the file, ID3 chapters, a cue sheet embedded in the tags, any other cue sheet beside the file, or a plain track list in the comment tag.
 - The LCD, the timeline and the setlist panel always show the current track. Double-click an entry to jump to it, or use Shift+arrows to step between tracks.
 - Paste a tracklist from a web page or a video description and Nullamp parses the timestamps. Approximate times are drawn dashed and marked with "≈" until you correct them with **→ playhead**.
 - Import and export cue sheets and M3U.
 - Setlists are tied to the audio content, so they survive renaming, moving and retagging the file.
 
 **Metadata**
-- Inspector for tags, technical info, chapters and artwork, with batch editing for up to 500 files.
+
+- Inspector for tags, technical info, chapters and artwork, with batch editing for up to 500 files. The inspector can follow the playing track.
 - Optional MusicBrainz lookup and Cover Art Archive artwork. Everything else works offline.
 - Tag writes are safe: the file is copied, edited, verified by reading it back, and then atomically swapped in. Chapters and unknown frames survive, and originals can be backed up and restored.
 
@@ -68,15 +73,23 @@ On Linux you also need the ALSA, xkbcommon and Wayland development packages (`li
 
 | Key | Action |
 |---|---|
-| Space | Play or pause |
-| Z X C V B | Previous, play, pause, stop, next |
+| Space or C | Play or pause |
+| X / V | Play, stop |
+| Z / B | Previous, next track |
 | ← / → | Seek 5 seconds |
 | ⇧← / ⇧→ | Previous or next setlist entry |
 | + / − / M | Volume up, down, mute |
-| S / R | Shuffle, repeat |
+| S / R | Shuffle, cycle repeat |
 | ⌘O / ⇧⌘O | Add files, add folder |
-| ⌘P | Show or hide the playlist |
-| F1 | Help |
+| ⌘I / ⌘L / ⌘P | Inspector, setlist, playlist |
+| ⌘J | Scroll to the playing track |
+| F1 | Shortcut list |
+
+The full list is in the [user manual](docs/USER_MANUAL.md#9-keyboard-shortcuts).
+
+## Documentation
+
+- [User manual](docs/USER_MANUAL.md): a tour of the window, playlists, setlists, tag editing and troubleshooting.
 
 ## Project layout
 
@@ -89,12 +102,12 @@ On Linux you also need the ALSA, xkbcommon and Wayland development packages (`li
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing |
 | `app/` | The egui application |
 
-
 ## Known limitations
 
 - Seeking far into a VBR MP3 without a seek table is approximate. CBR files, which covers most DJ mixes, seek exactly.
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
 - Online tracklist search is not part of the app. Use the paste import instead.
+- "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window.
 
 ## License
 
