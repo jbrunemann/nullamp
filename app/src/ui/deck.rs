@@ -1,9 +1,9 @@
 //! The deck: LCD display, artwork, mix timeline and transport controls.
 
-use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use nullamp_core::command::{Command, CommandSource};
 use nullamp_core::setlist::Timing;
-use nullamp_core::time::format_clock;
+use nullamp_core::time::{format_clock, format_precise};
 use nullamp_core::RepeatMode;
 
 use super::widgets::{self, Icon};
@@ -280,18 +280,23 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     if let (Some(d), Some(hover)) = (dur, resp.hover_pos()) {
         let t = t_of(hover.x, d);
         p.line_segment([pos2(hover.x, bar.top()), pos2(hover.x, bar.bottom())], Stroke::new(1.0, Color32::from_white_alpha(60)));
-        let label = match app.mix.setlist.as_ref().and_then(|s| s.active_index(t).map(|i| &s.entries[i])) {
-            Some(e) => {
-                let approx = if e.timing == Timing::Approximate { "≈ " } else { "" };
-                format!("{}  ·  {approx}{}", format_clock(t), entry_line(e))
+        let track = app.mix.setlist.as_ref().and_then(|s| s.active_index(t).map(|i| &s.entries[i])).map(|e| {
+            let approx = if e.timing == Timing::Approximate { "≈ " } else { "" };
+            format!("{approx}{}", entry_line(e))
+        });
+        // Shown at once (no hover delay) and to a tenth of a second, so a timestamp can be read off and typed into an entry.
+        egui::Tooltip::for_widget(&resp).at_pointer().show(|ui| {
+            ui.set_max_width(ui.spacing().tooltip_width);
+            ui.label(RichText::new(format_precise(t)).monospace().strong());
+            if let Some(track) = track {
+                ui.label(track);
             }
-            None => format_clock(t),
-        };
-        resp.clone().on_hover_text_at_pointer(label);
+        });
     }
     if resp.drag_stopped() || resp.clicked() {
         if let (Some(d), Some(p)) = (dur, resp.interact_pointer_pos().or(resp.hover_pos())) {
-            app.player.command(Command::SeekTo(t_of(p.x, d)), CommandSource::Ui);
+            // Land on the tenth of a second the tooltip shows.
+            app.player.command(Command::SeekTo((t_of(p.x, d) * 10.0).round() / 10.0), CommandSource::Ui);
         }
     }
 }
