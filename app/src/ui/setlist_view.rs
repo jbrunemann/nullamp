@@ -452,8 +452,8 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
             let e = &s.entries[i];
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("NOW").size(10.0).monospace().color(theme::now()));
-                ui.add(egui::Label::new(RichText::new(super::deck::entry_line(e)).color(theme::now())).truncate());
+                ui.label(RichText::new(" NOW ").size(10.0).monospace().color(theme::bg()).background_color(theme::now()));
+                ui.add(egui::Label::new(RichText::new(super::deck::entry_line(e)).color(theme::text())).truncate());
             });
         }
     });
