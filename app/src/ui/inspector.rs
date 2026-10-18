@@ -17,6 +17,10 @@ use crate::workers::{Job, JobResult, OnlineJob, image_hosts_for};
 /// Batch edits are limited to keep the editor responsive.
 const MAX_TARGETS: usize = 500;
 
+/// Online lookups show only the best few candidates to keep the panel short.
+const MAX_MATCHES: usize = 5;
+const MAX_ARTWORK_RESULTS: usize = 5;
+
 #[derive(Clone, Debug, PartialEq)]
 enum Original {
     Same(String),
@@ -77,6 +81,7 @@ pub struct InspectorState {
     last_backup: Option<(PathBuf, PathBuf)>,
     restore_request: Option<u64>,
     lookup: Lookup,
+    /// One-shot request for the lookup header to expand on its next draw.
     lookup_open: bool,
 }
 
@@ -346,8 +351,9 @@ pub fn on_result(app: &mut App, r: JobResult) {
             app.inspector.lookup.images_request = None;
             match result {
                 Ok(images) if images.is_empty() => app.inspector.lookup.error = Some("This release has no artwork in the Cover Art Archive.".into()),
-                Ok(images) => {
-                    for img in images.iter().take(8) {
+                Ok(mut images) => {
+                    images.truncate(MAX_ARTWORK_RESULTS);
+                    for img in &images {
                         let request = app.workers.request_id();
                         app.inspector.lookup.thumb_requests.insert(request, img.thumbnail.clone());
                         app.workers.submit_online(OnlineJob::FetchImage { request, url: img.thumbnail.clone(), hosts: image_hosts_for(&img.thumbnail) });
@@ -630,11 +636,12 @@ fn start_lookup(app: &mut App) {
 }
 
 fn lookup(app: &mut App, ui: &mut Ui) {
-    let open = egui::CollapsingHeader::new(RichText::new("Find metadata online").strong())
+    // `lookup_open` is a one-shot request to expand; afterwards egui owns the open state so the header toggles like any other.
+    let force_open = std::mem::take(&mut app.inspector.lookup_open);
+    egui::CollapsingHeader::new(RichText::new("Find metadata online").strong())
         .id_salt("lookup")
-        .open(if app.inspector.lookup_open { Some(true) } else { None })
+        .open(force_open.then_some(true))
         .show(ui, |ui| lookup_body(app, ui));
-    app.inspector.lookup_open = open.fully_open() || app.inspector.lookup_open && !open.header_response.clicked();
 }
 
 fn lookup_body(app: &mut App, ui: &mut Ui) {
@@ -668,7 +675,7 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
     let results = l.results.clone();
     let mut use_fields = None;
     let mut want_art = None;
-    for r in results.iter().take(8) {
+    for r in results.iter().take(MAX_MATCHES) {
         egui::Frame::new().fill(theme::raised()).corner_radius(3.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {

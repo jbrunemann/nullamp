@@ -351,7 +351,11 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             }
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if app.player.current.is_some() && ui.small_button("◎ Now playing").on_hover_text("Scroll to the playing track (⌘J / Ctrl+J)").clicked() {
+            // Drop the pill rather than let it overlap the Sort and List buttons in a narrow panel.
+            const LABEL: &str = "◎ Now playing";
+            let font = egui::TextStyle::Small.resolve(ui.style());
+            let needed = ui.painter().layout_no_wrap(LABEL.into(), font, theme::text()).size().x + 2.0 * ui.spacing().button_padding.x;
+            if app.player.current.is_some() && ui.available_width() >= needed && ui.small_button(LABEL).on_hover_text("Scroll to the playing track (⌘J / Ctrl+J)").clicked() {
                 let c = app.player.current.clone().unwrap();
                 if app.player.viewing != c.list {
                     app.player.viewing = c.list;

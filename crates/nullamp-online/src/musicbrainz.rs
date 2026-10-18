@@ -90,7 +90,7 @@ pub(crate) fn search_url(artist: &str, title: &str) -> String {
     if !artist.trim().is_empty() {
         q.push_str(&format!(" AND artist:{}", phrase(artist.trim())));
     }
-    format!("https://musicbrainz.org/ws/2/recording/?query={}&fmt=json&limit=10", utf8_percent_encode(&q, NON_ALPHANUMERIC))
+    format!("https://musicbrainz.org/ws/2/recording/?query={}&fmt=json&limit=5", utf8_percent_encode(&q, NON_ALPHANUMERIC))
 }
 
 fn convert(r: Recording) -> RecordingMatch {

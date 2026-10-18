@@ -132,7 +132,7 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::Stop => {
-            painter.rect_filled(Rect::from_center_size(c, Vec2::splat(s * 1.05)), 1.5, color);
+            painter.rect_filled(Rect::from_center_size(c, Vec2::splat(s * 1.1)), 0.0, color);
         }
         Icon::Prev => {
             painter.rect_filled(Rect::from_center_size(pos2(c.x - s * 0.55, c.y), vec2(s * 0.18, s * 1.2)), 0.5, color);
