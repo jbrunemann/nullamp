@@ -76,9 +76,16 @@ pub fn on_now_playing(app: &mut App, info: &NowPlayingInfo) {
     if app.mix.token != info.token {
         return;
     }
+    // Only the first result after a track change carries the setlist to show; later
+    // ones follow a tag write and must not replace what the user sees.
+    let refresh = !app.mix.loading;
     app.mix.loading = false;
     app.mix.fingerprint = info.fingerprint.clone();
     app.mix.tracklist_urls = info.tracklist_urls.clone();
+    if refresh {
+        refresh_tag_entries(app, info.discovered.clone());
+        return;
+    }
     if let Some((s, origin)) = &info.setlist {
         app.mix.setlist = Some(s.clone());
         app.mix.origin = Some(origin.clone());
@@ -90,6 +97,44 @@ pub fn on_now_playing(app: &mut App, info: &NowPlayingInfo) {
             app.info(format!("Setlist found: {n} tracks from {src}"));
         }
     }
+}
+
+/// After the playing file's tags were rewritten: entries read from its Comment or
+/// Description follow the tag. Corrections by the user, and entries from any other
+/// source (chapters, imports, pasted lists), stay as they are.
+fn refresh_tag_entries(app: &mut App, discovered: Option<Setlist>) {
+    let from_tag = |e: &SetlistEntry| e.provenance == Provenance::TagDescription && !e.user_edited;
+    let key = |e: &SetlistEntry| (e.artist.clone(), e.title.clone(), e.version.clone(), e.label.clone(), e.start);
+    let (incoming_mix, incoming): (MixInfo, Vec<SetlistEntry>) = match discovered {
+        Some(s) => (s.mix, s.entries.into_iter().filter(|e| e.provenance == Provenance::TagDescription).collect()),
+        None => (MixInfo::default(), Vec::new()),
+    };
+    let current: Vec<_> = app.mix.setlist.iter().flat_map(|s| s.entries.iter()).filter(|e| from_tag(e)).map(key).collect();
+    if current == incoming.iter().map(key).collect::<Vec<_>>() {
+        return;
+    }
+    let was = app.mix.origin.clone();
+    let mut s = app.mix.setlist.take().unwrap_or_default();
+    s.entries.retain(|e| !from_tag(e));
+    // A kept correction of an entry the tag still lists must not appear twice.
+    let kept: Vec<String> = s.entries.iter().map(|e| format!("{}\u{1f}{}", e.artist.to_lowercase(), e.full_title().to_lowercase())).collect();
+    s.entries.extend(incoming.into_iter().filter(|e| !kept.contains(&format!("{}\u{1f}{}", e.artist.to_lowercase(), e.full_title().to_lowercase()))));
+    s.sort_by_start();
+    s.mix.fill_missing_from(incoming_mix);
+    let n = s.entries.iter().filter(|e| from_tag(e)).count();
+    app.mix.setlist = (!s.entries.is_empty()).then_some(s);
+    if app.mix.selected.is_some_and(|id| !app.mix.setlist.as_ref().is_some_and(|s| s.entries.iter().any(|e| e.id == id))) {
+        select(app, None);
+    }
+    app.mix.scroll_to_active = true;
+    if was == Some(SetlistOrigin::Saved) {
+        changed(app);
+    } else {
+        // Nothing of the user's is in it, so it stays a discovery and is not saved.
+        revalidate(app);
+        app.mix.origin = app.mix.setlist.is_some().then_some(SetlistOrigin::Discovered);
+    }
+    app.info(if n == 0 { "Setlist from the tags removed".to_owned() } else { format!("Setlist reloaded from the tags: {n} tracks") });
 }
 
 /// Track the active entry from the playback position (cheap: runs every frame).

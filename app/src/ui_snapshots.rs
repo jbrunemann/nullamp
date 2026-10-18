@@ -140,3 +140,63 @@ fn ui_glyphs_exist_in_bundled_fonts() {
     out.textures_delta.clear();
     assert!(missing.is_empty(), "glyphs missing from bundled fonts: {missing:?}");
 }
+
+/// Rewriting the Comment tag of the playing file reloads the setlist read from it,
+/// keeping the user's corrections.
+#[test]
+fn tag_edit_reloads_setlist_from_comment() {
+    use nullamp_meta::{Edit, Field, WriteOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mix.mp3");
+    std::fs::copy(fixtures().join("tagged_v24.mp3"), &file).unwrap();
+    let write_comment = |text: &str| {
+        let edit = Edit { fields: [(Field::Comment, Some(text.to_owned()))].into(), ..Default::default() };
+        nullamp_meta::write(&file, nullamp_meta::stamp(&file).unwrap(), &edit, &WriteOptions::default()).unwrap();
+    };
+    write_comment("1. A - One\n2. B - Two\n3. C - Three\n");
+
+    let paths = AppPaths { config: dir.path().join("config"), data: dir.path().join("data"), cache: dir.path().join("cache") };
+    let store = Store::new(paths);
+    let mut pl = nullamp_core::Playlist::new("Default");
+    pl.add_paths([file.clone()]);
+    store.save_playlist(&PlaylistDoc { key: "default".into(), playlist: pl }).unwrap();
+    store.save_settings(&crate::store::Settings { volume: 0.0, online_lookups: false, ..Default::default() }).unwrap();
+
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[0].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    let titles = |h: &Harness<'_, App>| -> Vec<String> {
+        h.state().mix.setlist.as_ref().map(|s| s.entries.iter().map(|e| e.title.clone()).collect()).unwrap_or_default()
+    };
+    let refresh = |h: &mut Harness<'_, App>| {
+        let app = h.state_mut();
+        let c = app.player.current.clone().unwrap();
+        app.workers.submit(crate::workers::Job::NowPlaying { token: c.token, path: c.path });
+        settle(h, 600);
+    };
+    settle(&mut h, 1200);
+    assert_eq!(titles(&h), ["One", "Two", "Three"]);
+
+    write_comment("1. A - One\n2. B - Two\n3. C - Three\n4. D - Four\n");
+    refresh(&mut h);
+    assert_eq!(titles(&h), ["One", "Two", "Three", "Four"]);
+    assert_eq!(h.state().mix.origin, Some(crate::workers::SetlistOrigin::Discovered));
+
+    // A corrected entry survives; the others follow the tag.
+    h.state_mut().mix.setlist.as_mut().unwrap().entries[1].user_edited = true;
+    h.state_mut().mix.origin = Some(crate::workers::SetlistOrigin::Saved);
+    write_comment("1. X - Ten\n2. Y - Eleven\n3. Z - Twelve\n");
+    refresh(&mut h);
+    let t = titles(&h);
+    assert!(t.contains(&"Two".to_owned()), "{t:?}");
+    assert!(t.contains(&"Eleven".to_owned()) && !t.contains(&"One".to_owned()) && !t.contains(&"Four".to_owned()), "{t:?}");
+
+    write_comment("Just a note.\n");
+    refresh(&mut h);
+    assert_eq!(titles(&h), ["Two"], "only the correction remains");
+    h.state_mut().player.stop();
+}

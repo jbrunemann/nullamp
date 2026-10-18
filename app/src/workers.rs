@@ -57,6 +57,9 @@ pub struct NowPlayingInfo {
     pub art_file: Option<PathBuf>,
     pub fingerprint: Option<String>,
     pub setlist: Option<(Setlist, SetlistOrigin)>,
+    /// What the file's own tags and neighbours yield now, even when a saved setlist
+    /// takes precedence. Lets a tag edit refresh the entries that came from the tags.
+    pub discovered: Option<Setlist>,
     /// Tracklist pages referenced in the file's tags.
     pub tracklist_urls: Vec<String>,
 }
@@ -374,12 +377,13 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     }
 
     let saved = fingerprint.as_deref().and_then(|fp| store::find_setlist(&ctx.paths, fp, &path));
+    let discovered = discover_local_setlist(&path, meta.as_ref().ok());
     let setlist = match saved {
         Some(s) => Some((s.setlist, SetlistOrigin::Saved)),
-        None => discover_local_setlist(&path, meta.as_ref().ok()).map(|s| (s, SetlistOrigin::Discovered)),
+        None => discovered.clone().map(|s| (s, SetlistOrigin::Discovered)),
     };
     let tracklist_urls = meta.as_ref().map(tracklist_urls).unwrap_or_default();
-    NowPlayingInfo { token, path, meta, art, art_file, fingerprint, setlist, tracklist_urls }
+    NowPlayingInfo { token, path, meta, art, art_file, fingerprint, setlist, discovered, tracklist_urls }
 }
 
 /// Local setlist sources, in order: embedded chapters, a cue sheet stored in a tag,
