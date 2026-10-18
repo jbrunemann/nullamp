@@ -1,0 +1,21 @@
+[package]
+name = "nullamp-audio"
+description = "Nullamp audio engine: decoding on a dedicated thread, resampling, and cpal output."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "alac", "aiff", "caf"] }
+rubato = "5.0"
+audioadapter-buffers = "5.1"
+rtrb = "0.3"
+crossbeam-channel.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18.2", features = ["pulseaudio"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = "0.18.2"

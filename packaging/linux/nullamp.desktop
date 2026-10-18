@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Nullamp
+GenericName=Music Player
+Comment=Fast music and DJ mix player with setlists and a metadata editor
+Exec=nullamp %F
+Icon=nullamp
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-wav;audio/mp4;audio/x-m4a;audio/x-mpegurl;
+StartupWMClass=nullamp

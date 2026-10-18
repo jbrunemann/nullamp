@@ -1,0 +1,16 @@
+[package]
+name = "nullamp-meta"
+description = "Nullamp metadata: tag reading/writing, artwork, chapters, technical properties."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nullamp-core.workspace = true
+lofty = "0.25.4"
+id3 = "1.17"
+thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

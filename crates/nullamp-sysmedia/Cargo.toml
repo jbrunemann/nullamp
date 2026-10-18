@@ -1,0 +1,16 @@
+[package]
+name = "nullamp-sysmedia"
+description = "Nullamp integration with OS media controls: media keys, Now Playing, MPRIS, SMTC."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nullamp-core.workspace = true
+log.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))'.dependencies]
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))'.dependencies]
+souvlaki = "0.8.3"

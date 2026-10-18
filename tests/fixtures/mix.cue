@@ -1,0 +1,11 @@
+PERFORMER "DJ Fixture"
+TITLE "Fixture Mix"
+FILE "mix_chapters.mp3" MP3
+  TRACK 01 AUDIO
+    TITLE "Cue Opening"
+    PERFORMER "Cue Artist"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Cue Middle"
+    PERFORMER "Cue Artist"
+    INDEX 01 00:02:00

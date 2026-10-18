@@ -1,0 +1,30 @@
+[package]
+name = "nullamp"
+description = "A fast, retro-inspired music and DJ mix player."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "nullamp"
+
+[dependencies]
+nullamp-core.workspace = true
+nullamp-audio.workspace = true
+nullamp-meta.workspace = true
+nullamp-online.workspace = true
+nullamp-sysmedia.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+log.workspace = true
+eframe = { version = "0.37", features = ["persistence"] }
+egui = "0.37"
+rfd = "0.17"
+pollster = "0.4"
+directories = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+raw-window-handle = "0.6"
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
+tempfile.workspace = true

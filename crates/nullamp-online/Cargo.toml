@@ -1,0 +1,18 @@
+[package]
+name = "nullamp-online"
+description = "Nullamp online metadata: provider-independent lookups, rate limiting and caching."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nullamp-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip"] }
+percent-encoding = "2"
+
+[dev-dependencies]
+tempfile.workspace = true
