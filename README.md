@@ -53,7 +53,7 @@ Download the latest build from the [Releases](https://github.com/jbrunemann/null
 | Platform | Status |
 |---|---|
 | macOS (Apple silicon) | Supported and tested. Unzip and drag `Nullamp.app` to Applications. The app is not signed or notarised yet, so the first launch needs a right-click and Open. |
-| Linux (x86_64) | A tarball is built by CI but has not been tested yet. |
+| Linux (x86_64) | A tarball is built by CI but has not been tested yet. Unpack it and run `./install.sh` to get a menu entry and dock icon (`./install.sh --uninstall` removes them). |
 | Windows | Not started. |
 
 ## Build from source

@@ -42,13 +42,7 @@ jobs:
       - name: Build
         run: cargo build --release -p nullamp
       - name: Package
-        run: |
-          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          DIR="Nullamp-${VERSION}-linux-x86_64"
-          mkdir "$DIR"
-          cp target/release/nullamp packaging/linux/nullamp.desktop "$DIR/"
-          cp packaging/icon-1024.png "$DIR/nullamp.png"
-          tar -czf "$DIR.tar.gz" "$DIR"
+        run: packaging/linux/package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Nullamp-linux-x86_64
