@@ -85,6 +85,11 @@ fn render_main_window_as(appearance: &str, suffix: &str) {
     settle(&mut h, 800);
     save(&mut h, &format!("02-mix-setlist{suffix}.png"));
 
+    crate::ui::select_setlist_entry(h.state_mut(), 1);
+    settle(&mut h, 300);
+    save(&mut h, &format!("02b-entry-editor{suffix}.png"));
+    crate::ui::select_setlist_entry(h.state_mut(), usize::MAX);
+
     {
         let app = h.state_mut();
         app.side_tab = crate::ui::SideTab::Inspector;
@@ -198,5 +203,36 @@ fn tag_edit_reloads_setlist_from_comment() {
     write_comment("Just a note.\n");
     refresh(&mut h);
     assert_eq!(titles(&h), ["Two"], "only the correction remains");
+    h.state_mut().player.stop();
+}
+
+/// The setlist entry editor can be dismissed, with or without saving.
+#[test]
+fn entry_editor_closes_on_cancel_and_save() {
+    use egui_kittest::kittest::Queryable;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    assert!(h.state().mix.setlist.is_some(), "the mix fixture has chapters");
+
+    crate::ui::select_setlist_entry(h.state_mut(), 1);
+    settle(&mut h, 200);
+    assert!(h.state().mix.selected.is_some());
+    h.get_by_label("Cancel").click();
+    settle(&mut h, 200);
+    assert!(h.state().mix.selected.is_none(), "cancel closes the editor");
+
+    crate::ui::select_setlist_entry(h.state_mut(), 1);
+    settle(&mut h, 200);
+    h.get_by_label("Save").click();
+    settle(&mut h, 200);
+    assert!(h.state().mix.selected.is_none(), "save closes the editor");
     h.state_mut().player.stop();
 }

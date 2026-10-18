@@ -612,7 +612,7 @@ fn source_summary(app: &mut App, ui: &mut Ui) {
     tracklist_links(app, ui);
 }
 
-fn select(app: &mut App, id: Option<EntryId>) {
+pub(super) fn select(app: &mut App, id: Option<EntryId>) {
     app.mix.selected = id;
     let Some(e) = id.and_then(|id| app.mix.setlist.as_ref()?.entries.iter().find(|e| e.id == id)) else {
         app.mix.edit = EntryEdit::default();
@@ -634,7 +634,8 @@ fn select(app: &mut App, id: Option<EntryId>) {
 
 fn entries(app: &mut App, ui: &mut Ui) {
     let Some(setlist) = app.mix.setlist.clone() else { return };
-    let max_h = (ui.available_height() * 0.62).max(160.0);
+    // With the editor open the list gives way so that the editor always fits.
+    let max_h = if app.mix.edit.id.is_some() { (ui.available_height() * 0.38).max(110.0) } else { (ui.available_height() - 30.0).max(160.0) };
     let scroll_to = std::mem::take(&mut app.mix.scroll_to_active);
     let mut clicked = None;
     let mut seek = None;
@@ -763,10 +764,26 @@ fn editor(app: &mut App, ui: &mut Ui) {
     };
     let pos = app.player.position();
     let mut apply = false;
+    let mut cancel = false;
     let mut delete = false;
     let mut lookup = false;
     let mut moved: Option<i32> = None;
+    egui::ScrollArea::vertical().id_salt("entry-editor").auto_shrink([false, true]).show(ui, |ui| {
     egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+        // Save and Cancel stay at the top, in view however small the panel.
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) && ui.ctx().egui_wants_keyboard_input() {
+                apply = true;
+            }
+            if ui.button("Cancel").on_hover_text("Close without saving").clicked() {
+                cancel = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(RichText::new("Delete").color(theme::err())).clicked() {
+                    delete = true;
+                }
+            });
+        });
         let ed = &mut app.mix.edit;
         egui::Grid::new("entry-edit").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             let row = |ui: &mut Ui, label: &str, value: &mut String| {
@@ -810,9 +827,6 @@ fn editor(app: &mut App, ui: &mut Ui) {
             });
         }
         ui.horizontal(|ui| {
-            if ui.button("Apply").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) && ui.ctx().egui_wants_keyboard_input() {
-                apply = true;
-            }
             if ui.small_button("Look up…").on_hover_text("Find release info and artwork on MusicBrainz").clicked() {
                 lookup = true;
             }
@@ -822,15 +836,12 @@ fn editor(app: &mut App, ui: &mut Ui) {
             if ui.small_button("▼").clicked() {
                 moved = Some(1);
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new("Delete").color(theme::err())).clicked() {
-                    delete = true;
-                }
-            });
         });
     });
-    if apply {
-        apply_edit(app, id);
+    });
+    if apply && apply_edit(app, id) || cancel {
+        select(app, None);
+        return;
     }
     if lookup {
         let (artist, title) = (app.mix.edit.artist.clone(), app.mix.edit.title.clone());
@@ -852,7 +863,8 @@ fn editor(app: &mut App, ui: &mut Ui) {
     }
 }
 
-fn apply_edit(app: &mut App, id: EntryId) {
+/// Write the editor's fields into the entry; false (with the error shown in the editor) when a time does not parse.
+fn apply_edit(app: &mut App, id: EntryId) -> bool {
     let ed = &app.mix.edit;
     let parse = |s: &str| -> Result<Option<f64>, String> {
         if s.trim().is_empty() {
@@ -865,7 +877,7 @@ fn apply_edit(app: &mut App, id: EntryId) {
         (Ok(s), Ok(e)) => (s, e),
         (Err(e), _) | (_, Err(e)) => {
             app.mix.edit.error = Some(e);
-            return;
+            return false;
         }
     };
     let opt = |s: &str| Some(s.trim().to_owned()).filter(|s| !s.is_empty());
@@ -893,6 +905,7 @@ fn apply_edit(app: &mut App, id: EntryId) {
     }
     app.mix.edit.error = None;
     changed(app);
+    true
 }
 
 fn paste_modal(app: &mut App, ctx: &egui::Context) {

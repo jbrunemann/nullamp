@@ -873,6 +873,13 @@ fn window_handle(_cc: &eframe::CreationContext<'_>) -> Option<*mut std::ffi::c_v
     None
 }
 
+/// Open the editor for the setlist entry at `index` (tests drive the UI through this).
+#[cfg(test)]
+pub fn select_setlist_entry(app: &mut App, index: usize) {
+    let id = app.mix.setlist.as_ref().and_then(|s| s.entries.get(index)).map(|e| e.id);
+    setlist_view::select(app, id);
+}
+
 #[cfg(test)]
 pub fn inspect_selection(app: &mut App) {
     inspector::load_from_selection(app);
