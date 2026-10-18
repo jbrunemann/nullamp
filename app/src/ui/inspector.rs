@@ -311,6 +311,7 @@ pub fn on_result(app: &mut App, r: JobResult) {
             if msg.1 { app.error(msg.0) } else { app.info(msg.0) }
             // Refresh what is shown everywhere from the files as written.
             app.workers.scan(ok.clone());
+            app.pl_view.art.forget(&ok);
             if app.player.current.as_ref().is_some_and(|c| ok.contains(&c.path)) {
                 let c = app.player.current.clone().unwrap();
                 app.workers.submit(Job::NowPlaying { token: c.token, path: c.path });
@@ -325,6 +326,7 @@ pub fn on_result(app: &mut App, r: JobResult) {
                 Ok(()) => {
                     app.info(format!("Restored {} from backup", target.display()));
                     app.inspector.last_backup = None;
+                    app.pl_view.art.forget(std::slice::from_ref(&target));
                     app.workers.scan(vec![target]);
                     reload(app);
                 }

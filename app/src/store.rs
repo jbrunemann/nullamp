@@ -40,6 +40,8 @@ pub struct Settings {
     pub playlist_open: bool,
     /// "dark", "light" or "system" (follow the OS).
     pub appearance: String,
+    /// Playlist columns shown, left to right (ids from `playlist_view::Col`). Empty means all, in the default order.
+    pub playlist_columns: Vec<String>,
 }
 
 impl Default for Settings {
@@ -62,6 +64,7 @@ impl Default for Settings {
             visualizer: "spectrum".into(),
             playlist_open: true,
             appearance: "dark".into(),
+            playlist_columns: Vec::new(),
         }
     }
 }

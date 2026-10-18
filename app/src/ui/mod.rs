@@ -411,6 +411,7 @@ impl App {
     fn on_job_result(&mut self, r: JobResult) {
         match r {
             JobResult::Info { path, info } => self.apply_info(path, info),
+            JobResult::Cover { path, art } => self.pl_view.art.insert(&self.ctx, path, art),
             JobResult::Missing { paths } => {
                 let set: HashSet<PathBuf> = paths.into_iter().collect();
                 for doc in &mut self.player.lists {

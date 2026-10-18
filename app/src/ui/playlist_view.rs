@@ -1,18 +1,19 @@
 //! The playlist editor: named playlists, a dense virtualized table, selection,
 //! drag-to-reorder and keyboard editing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::text::{LayoutJob, TextWrapping};
-use egui::{Align2, Color32, FontId, Key, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, FontId, Key, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
 use nullamp_core::{EntryId, EntryStatus, PlaylistEntry};
 
 use super::widgets::{self, Icon};
 use super::{App, SideTab, dialogs, inspector, theme};
 use crate::player::Status;
 use crate::store::PlaylistDoc;
+use crate::workers::Thumb;
 
 /// Geometry and drag state carried between frames.
 #[derive(Default)]
@@ -22,6 +23,9 @@ pub struct ViewState {
     pub rows: Vec<(usize, Rect)>,
     pub list_rect: Option<Rect>,
     pub drag: Option<Drag>,
+    /// The column whose header is being dragged to a new position.
+    header_drag: Option<Col>,
+    pub art: ArtCache,
 }
 
 pub struct Drag {
@@ -29,27 +33,160 @@ pub struct Drag {
     pub target: Option<usize>,
 }
 
-struct Columns {
-    num: Rect,
-    title: Rect,
-    artist: Rect,
-    album: Rect,
-    time: Rect,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Col {
+    Num,
+    Art,
+    Title,
+    Artist,
+    Album,
+    Time,
 }
 
-fn columns(row: Rect) -> Columns {
-    let num_w = 46.0;
-    let time_w = 62.0;
-    let flex = (row.width() - num_w - time_w - 16.0).max(60.0);
-    let (tw, aw) = (flex * 0.44, flex * 0.28);
-    let x0 = row.left();
-    let col = |x: f32, w: f32| Rect::from_min_size(pos2(x, row.top()), vec2(w, row.height()));
-    Columns {
-        num: col(x0, num_w),
-        title: col(x0 + num_w + 4.0, tw - 8.0),
-        artist: col(x0 + num_w + tw, aw - 8.0),
-        album: col(x0 + num_w + tw + aw, flex - tw - aw - 8.0),
-        time: col(row.right() - time_w - 8.0, time_w),
+const COLUMN_IDS: [&str; 6] = ["num", "art", "title", "artist", "album", "time"];
+
+/// Space between columns, taken from the right of each one.
+const GAP: f32 = 8.0;
+/// Row height without and with the artwork column; the thumbnail fills the row.
+const ROW_HEIGHT_ART: f32 = 24.0;
+
+impl Col {
+    const ALL: [Col; 6] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Time];
+
+    fn id(self) -> &'static str {
+        COLUMN_IDS[Self::ALL.iter().position(|c| *c == self).unwrap_or(0)]
+    }
+
+    fn from_id(id: &str) -> Option<Col> {
+        Self::ALL.iter().copied().find(|c| c.id() == id)
+    }
+
+    fn header(self) -> &'static str {
+        match self {
+            Col::Num => "#",
+            Col::Art => "",
+            Col::Title => "TITLE",
+            Col::Artist => "ARTIST",
+            Col::Album => "ALBUM",
+            Col::Time => "TIME",
+        }
+    }
+
+    fn menu_label(self) -> &'static str {
+        match self {
+            Col::Num => "Number",
+            Col::Art => "Artwork",
+            Col::Title => "Title",
+            Col::Artist => "Artist",
+            Col::Album => "Album",
+            Col::Time => "Time",
+        }
+    }
+
+    fn align(self) -> Align2 {
+        if matches!(self, Col::Num | Col::Time) { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER }
+    }
+}
+
+/// Saved column ids to columns: unknown and repeated ids dropped, never empty.
+pub fn parse_columns(ids: &[String]) -> Vec<Col> {
+    let mut out: Vec<Col> = Vec::new();
+    for c in ids.iter().filter_map(|id| Col::from_id(id)) {
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    if out.is_empty() { Col::ALL.to_vec() } else { out }
+}
+
+fn row_height(order: &[Col]) -> f32 {
+    if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
+}
+
+/// Cell rects for the visible columns, left to right. Number, artwork and time are
+/// fixed; title, artist and album share the rest by weight.
+fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
+    let fixed = |c: Col| match c {
+        Col::Num => Some(46.0 + GAP),
+        Col::Art => Some(ROW_HEIGHT_ART + GAP),
+        Col::Time => Some(62.0 + GAP),
+        _ => None,
+    };
+    let weight = |c: Col| match c {
+        Col::Title => 0.44,
+        _ => 0.28,
+    };
+    let fixed_total: f32 = order.iter().filter_map(|c| fixed(*c)).sum();
+    let weight_total: f32 = order.iter().filter(|c| fixed(**c).is_none()).map(|c| weight(*c)).sum();
+    let flex = (row.width() - fixed_total).max(60.0);
+    let mut x = row.left();
+    order
+        .iter()
+        .map(|&c| {
+            let slot = fixed(c).unwrap_or_else(|| flex * weight(c) / weight_total);
+            let rect = Rect::from_min_size(pos2(x, row.top()), vec2((slot - GAP).max(1.0), row.height()));
+            x += slot;
+            (c, rect)
+        })
+        .collect()
+}
+
+fn rect_of(cols: &[(Col, Rect)], c: Col) -> Option<Rect> {
+    cols.iter().find(|(k, _)| *k == c).map(|(_, r)| *r)
+}
+
+/// Cover thumbnails for the artwork column, loaded lazily for the rows on screen.
+#[derive(Default)]
+pub struct ArtCache {
+    /// Per file: the cover's content hash, `None` when it has no cover.
+    by_path: HashMap<PathBuf, Option<u64>>,
+    /// One texture per distinct image, shared by every track of an album.
+    textures: HashMap<u64, TextureHandle>,
+    inflight: HashSet<PathBuf>,
+}
+
+/// Textures kept before the cache is emptied (visible rows reload right away).
+const MAX_TEXTURES: usize = 1000;
+
+impl ArtCache {
+    fn texture(&self, path: &Path) -> Option<&TextureHandle> {
+        self.by_path.get(path).copied().flatten().and_then(|k| self.textures.get(&k))
+    }
+
+    /// The wanted paths to request now, when any of them is neither known nor on its way.
+    fn to_request<'a>(&mut self, wanted: impl Iterator<Item = &'a Path>) -> Option<Vec<PathBuf>> {
+        let missing: Vec<PathBuf> = wanted.filter(|p| !self.by_path.contains_key(*p)).map(Path::to_path_buf).collect();
+        if missing.iter().all(|p| self.inflight.contains(p)) {
+            return None;
+        }
+        self.inflight = missing.iter().cloned().collect();
+        Some(missing)
+    }
+
+    pub fn insert(&mut self, ctx: &egui::Context, path: PathBuf, art: Option<(u64, Thumb)>) {
+        self.inflight.remove(&path);
+        let Some((key, thumb)) = art else {
+            self.by_path.insert(path, None);
+            return;
+        };
+        if !self.textures.contains_key(&key) {
+            if self.textures.len() >= MAX_TEXTURES {
+                self.textures.clear();
+                self.by_path.clear();
+            }
+            let img = egui::ColorImage::from_rgba_unmultiplied(thumb.size, &thumb.rgba);
+            // Mipmaps keep the 22 pt row thumbnail from shimmering when it is scrolled.
+            let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+            self.textures.insert(key, ctx.load_texture(format!("cover-{key}"), img, options));
+        }
+        self.by_path.insert(path, Some(key));
+    }
+
+    /// Drop what is known about these files (their tags were rewritten).
+    pub fn forget(&mut self, paths: &[PathBuf]) {
+        for p in paths {
+            self.by_path.remove(p);
+        }
     }
 }
 
@@ -73,8 +210,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
     });
     egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| toolbar(app, ui));
-    header(ui);
-    table(app, ui);
+    let order = parse_columns(&app.settings.playlist_columns);
+    header(app, ui, &order);
+    table(app, ui, &order);
 }
 
 fn playlist_tabs(app: &mut App, ui: &mut Ui) {
@@ -221,23 +359,94 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
     });
 }
 
-fn header(ui: &mut Ui) {
+fn header(app: &mut App, ui: &mut Ui, order: &[Col]) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, theme::bg());
     ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, theme::border()));
-    let cols = columns(rect.shrink2(vec2(8.0, 0.0)));
+    let cols = columns(order, rect.shrink2(vec2(8.0, 0.0)));
     let font = theme::prop(11.0);
-    let c = theme::text_faint();
-    cell(ui, cols.num, "#", font.clone(), c, Align2::RIGHT_CENTER);
-    cell(ui, cols.title, "TITLE", font.clone(), c, Align2::LEFT_CENTER);
-    cell(ui, cols.artist, "ARTIST", font.clone(), c, Align2::LEFT_CENTER);
-    cell(ui, cols.album, "ALBUM", font.clone(), c, Align2::LEFT_CENTER);
-    cell(ui, cols.time, "TIME", font, c, Align2::RIGHT_CENTER);
+    let dragging = app.pl_view.header_drag;
+    let mut menu_change: Option<Vec<Col>> = None;
+    for &(col, cell_rect) in &cols {
+        // The whole slot is the drag handle and menu target, not just the label.
+        let slot = Rect::from_min_max(pos2(cell_rect.left() - GAP / 2.0, rect.top()), pos2(cell_rect.right() + GAP / 2.0, rect.bottom()));
+        let resp = ui.interact(slot, ui.make_persistent_id(("column-header", col.id())), Sense::click_and_drag());
+        if resp.drag_started() {
+            app.pl_view.header_drag = Some(col);
+        }
+        if dragging == Some(col) {
+            ui.painter().rect_filled(slot, 0.0, theme::select_bg());
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if resp.hovered() && dragging.is_none() {
+            ui.painter().rect_filled(slot, 0.0, theme::raised());
+        }
+        let color = if dragging == Some(col) { theme::text() } else { theme::text_faint() };
+        cell(ui, cell_rect, col.header(), font.clone(), color, col.align());
+        if dragging.is_none() {
+            resp.clone().on_hover_text("Drag to reorder · right-click to show or hide columns");
+        }
+        resp.context_menu(|ui| {
+            if let Some(next) = column_menu(ui, order) {
+                menu_change = Some(next);
+            }
+        });
+    }
+
+    if let Some(dragged) = dragging {
+        let others: Vec<&(Col, Rect)> = cols.iter().filter(|(c, _)| *c != dragged).collect();
+        let pointer_x = ui.input(|i| i.pointer.latest_pos()).map(|p| p.x);
+        let at = pointer_x.map_or(0, |x| others.iter().take_while(|(_, r)| r.center().x < x).count());
+        let x = others.get(at).map(|(_, r)| r.left() - GAP / 2.0).or_else(|| others.last().map(|(_, r)| r.right() + GAP / 2.0));
+        if let Some(x) = x {
+            ui.painter().line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, theme::accent()));
+        }
+        if ui.input(|i| i.pointer.any_released()) {
+            app.pl_view.header_drag = None;
+            let mut next: Vec<Col> = order.iter().copied().filter(|c| *c != dragged).collect();
+            next.insert(at.min(next.len()), dragged);
+            menu_change = Some(next);
+        }
+    }
+    if let Some(next) = menu_change.filter(|n| n != order) {
+        set_columns(app, &next);
+    }
 }
 
-fn table(app: &mut App, ui: &mut Ui) {
+/// Show/hide checkboxes for every column plus a reset; the new order when it changed.
+fn column_menu(ui: &mut Ui, order: &[Col]) -> Option<Vec<Col>> {
+    let mut next = None;
+    for c in Col::ALL {
+        let mut shown = order.contains(&c);
+        let only = shown && order.len() == 1;
+        if ui.add_enabled(!only, egui::Checkbox::new(&mut shown, c.menu_label())).clicked() {
+            let mut v: Vec<Col> = order.to_vec();
+            if shown {
+                // Back where it sits by default, as far as the other columns allow.
+                let home = Col::ALL.iter().position(|k| *k == c).unwrap_or(0);
+                v.insert(home.min(v.len()), c);
+            } else {
+                v.retain(|k| *k != c);
+            }
+            next = Some(v);
+        }
+    }
+    ui.separator();
+    if ui.button("Reset columns").clicked() {
+        next = Some(Col::ALL.to_vec());
+        ui.close();
+    }
+    next
+}
+
+fn set_columns(app: &mut App, order: &[Col]) {
+    app.settings.playlist_columns = order.iter().map(|c| c.id().to_owned()).collect();
+    app.mark_settings_dirty();
+}
+
+fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
     let n = app.player.viewed().len();
-    let row_h = theme::ROW_HEIGHT;
+    let row_h = row_height(order);
+    let show_art = order.contains(&Col::Art);
     ui.spacing_mut().item_spacing.y = 0.0;
     let list_rect = ui.available_rect_before_wrap();
     app.pl_view.list_rect = Some(list_rect);
@@ -263,12 +472,21 @@ fn table(app: &mut App, ui: &mut Ui) {
 
     let output = area.show_rows(ui, row_h, n, |ui, range| {
         app.pl_view.visible = range.clone();
+        if show_art {
+            // A few rows beyond the edge so covers are there before they scroll in.
+            let ahead = range.start..(range.end + 12).min(n);
+            let list = app.player.viewed().entries();
+            let wanted = list[ahead].iter().filter(|e| e.status.is_playable()).map(|e| e.path.as_path());
+            if let Some(paths) = app.pl_view.art.to_request(wanted) {
+                app.workers.request_covers(paths);
+            }
+        }
         for i in range {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
             rows.push((i, rect));
             let entry = app.player.viewed().entries()[i].clone();
             let id = entry.id;
-            paint_row(app, ui, rect, i, &entry, resp.hovered());
+            paint_row(app, ui, rect, order, i, &entry, resp.hovered());
 
             if resp.clicked() {
                 click_row(app, ui, id);
@@ -286,7 +504,15 @@ fn table(app: &mut App, ui: &mut Ui) {
                 app.pl_view.drag = Some(Drag { ids: app.selection.ids.clone(), target: None });
             }
             let tooltip = row_tooltip(&entry);
-            let resp = resp.on_hover_text_at_pointer(tooltip);
+            // Over the artwork cell the tooltip leads with a larger picture.
+            let over_art = rect_of(&columns(order, rect.shrink2(vec2(8.0, 0.0))), Col::Art).zip(pointer).is_some_and(|(r, p)| p.x >= r.left() && p.x <= r.right());
+            let preview = over_art.then(|| app.pl_view.art.texture(&entry.path).map(|t| (t.id(), t.size_vec2()))).flatten();
+            let resp = resp.on_hover_ui_at_pointer(|ui| {
+                if let Some((id, size)) = preview {
+                    ui.add(egui::Image::new((id, size)).corner_radius(2.0));
+                }
+                ui.label(tooltip);
+            });
             resp.context_menu(|ui| row_menu(app, ui, id));
         }
     });
@@ -361,7 +587,7 @@ pub fn drop_index(app: &App, ctx: &egui::Context) -> Option<usize> {
     insertion_index(&app.pl_view.rows, p.y, app.player.viewed().len())
 }
 
-fn paint_row(app: &App, ui: &Ui, rect: Rect, i: usize, e: &PlaylistEntry, hovered: bool) {
+fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &PlaylistEntry, hovered: bool) {
     let p = ui.painter();
     let selected = app.selection.ids.contains(&e.id);
     let current = app.player.is_current(app.player.viewing, e.id);
@@ -381,7 +607,7 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, i: usize, e: &PlaylistEntry, hovere
     if current {
         p.rect_filled(Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::accent());
     }
-    let cols = columns(rect.shrink2(vec2(8.0, 0.0)));
+    let cols = columns(order, rect.shrink2(vec2(8.0, 0.0)));
     let playable = e.status.is_playable();
     let (fg, dim) = match (current, playable) {
         (true, _) => (theme::accent(), theme::accent().gamma_multiply(0.8)),
@@ -389,24 +615,43 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, i: usize, e: &PlaylistEntry, hovere
         _ => (theme::text(), theme::text_dim()),
     };
     let font = theme::prop(12.5);
-    if current {
-        let icon = match app.player.status {
-            Status::Paused => Icon::Pause,
-            Status::Stopped => Icon::Stop,
-            _ => Icon::Play,
-        };
-        let r = Rect::from_center_size(pos2(cols.num.right() - 7.0, cols.num.center().y), vec2(10.0, 10.0));
-        widgets::paint_icon(p, r, icon, theme::accent());
-    } else if !playable {
-        cell(ui, cols.num, "⚠", font.clone(), theme::warn(), Align2::RIGHT_CENTER);
-    } else {
-        cell(ui, cols.num, &format!("{}", i + 1), theme::mono(11.0), theme::text_faint(), Align2::RIGHT_CENTER);
+    for &(col, r) in &cols {
+        match col {
+            Col::Num if current => {
+                let icon = match app.player.status {
+                    Status::Paused => Icon::Pause,
+                    Status::Stopped => Icon::Stop,
+                    _ => Icon::Play,
+                };
+                let r = Rect::from_center_size(pos2(r.right() - 7.0, r.center().y), vec2(10.0, 10.0));
+                widgets::paint_icon(p, r, icon, theme::accent());
+            }
+            Col::Num if !playable => cell(ui, r, "⚠", font.clone(), theme::warn(), col.align()),
+            Col::Num => cell(ui, r, &format!("{}", i + 1), theme::mono(11.0), theme::text_faint(), col.align()),
+            Col::Art => paint_cover(p, r, app.pl_view.art.texture(&e.path)),
+            Col::Title => cell(ui, r, &e.info.display_title(&e.path), font.clone(), fg, col.align()),
+            Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
+            Col::Album => cell(ui, r, e.info.album.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
+            Col::Time => {
+                let time = e.info.duration.map(nullamp_core::time::format_clock).unwrap_or_default();
+                cell(ui, r, &time, theme::mono(11.5), dim, col.align());
+            }
+        }
     }
-    cell(ui, cols.title, &e.info.display_title(&e.path), font.clone(), fg, Align2::LEFT_CENTER);
-    cell(ui, cols.artist, e.info.artist.as_deref().unwrap_or(""), font.clone(), dim, Align2::LEFT_CENTER);
-    cell(ui, cols.album, e.info.album.as_deref().unwrap_or(""), font, dim, Align2::LEFT_CENTER);
-    let time = e.info.duration.map(nullamp_core::time::format_clock).unwrap_or_default();
-    cell(ui, cols.time, &time, theme::mono(11.5), dim, Align2::RIGHT_CENTER);
+}
+
+/// A square thumbnail, centre-cropped to fill; a faint tile while there is none.
+fn paint_cover(p: &egui::Painter, cell: Rect, tex: Option<&TextureHandle>) {
+    let square = Rect::from_center_size(cell.center(), Vec2::splat(ROW_HEIGHT_ART - 2.0));
+    let Some(tex) = tex else {
+        p.rect_filled(square, 2.0, theme::raised());
+        return;
+    };
+    let size = tex.size_vec2();
+    let side = size.x.min(size.y);
+    let crop = vec2((size.x - side) / size.x / 2.0, (size.y - side) / size.y / 2.0);
+    let uv = Rect::from_min_max(pos2(crop.x, crop.y), pos2(1.0 - crop.x, 1.0 - crop.y));
+    p.add(egui::epaint::RectShape::filled(square, 2.0, Color32::WHITE).with_texture(tex.id(), uv));
 }
 
 fn row_tooltip(e: &PlaylistEntry) -> String {

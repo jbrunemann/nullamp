@@ -68,6 +68,9 @@ pub enum Job {
     ScanInfo { generation: u64, paths: Vec<PathBuf> },
     /// Cheap existence check (one `stat` per file) for entries whose info is cached.
     CheckExists { generation: u64, paths: Vec<PathBuf> },
+    /// Embedded cover thumbnails for visible playlist rows. Superseded by any later
+    /// request, so fast scrolling does not queue up work for rows already gone.
+    Covers { generation: u64, paths: Vec<PathBuf> },
     ExpandPaths { request: u64, paths: Vec<PathBuf> },
     ImportPlaylist { request: u64, path: PathBuf },
     ExportPlaylist { path: PathBuf, items: Vec<(PathBuf, TrackInfo)> },
@@ -93,6 +96,8 @@ pub enum OnlineJob {
 pub enum JobResult {
     Info { path: PathBuf, info: Result<TrackInfo, String> },
     Missing { paths: Vec<PathBuf> },
+    /// `art` is the image's content hash and a small thumbnail, `None` without cover.
+    Cover { path: PathBuf, art: Option<(u64, Thumb)> },
     Expanded { request: u64, paths: Vec<PathBuf>, skipped: usize },
     Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
     Exported { path: PathBuf, result: Result<(), String> },
@@ -118,6 +123,7 @@ pub struct Workers {
     online: Sender<OnlineJob>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
+    cover_generation: Arc<AtomicU64>,
     next_request: AtomicU64,
 }
 
@@ -128,15 +134,23 @@ impl Workers {
         let (online, online_rx) = crossbeam_channel::unbounded::<OnlineJob>();
         let (results_tx, results) = crossbeam_channel::unbounded();
         let scan_generation = Arc::new(AtomicU64::new(1));
+        let cover_generation = Arc::new(AtomicU64::new(1));
 
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 4);
         for i in 0..threads {
-            let (irx, brx, tx, w, gen_, p) =
-                (interactive_rx.clone(), bulk_rx.clone(), results_tx.clone(), Arc::clone(&waker), Arc::clone(&scan_generation), paths.clone());
+            let (irx, brx, tx, w, gen_, cover_gen, p) = (
+                interactive_rx.clone(),
+                bulk_rx.clone(),
+                results_tx.clone(),
+                Arc::clone(&waker),
+                Arc::clone(&scan_generation),
+                Arc::clone(&cover_generation),
+                paths.clone(),
+            );
             std::thread::Builder::new()
                 .name(format!("nullamp-worker-{i}"))
                 .spawn(move || {
-                    let ctx = Ctx { paths: p, scan_generation: gen_ };
+                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen };
                     loop {
                         let job = select_biased! {
                             recv(irx) -> j => j,
@@ -170,7 +184,7 @@ impl Workers {
             })
             .expect("spawn online worker");
 
-        Workers { interactive, bulk, online, results, scan_generation, next_request: AtomicU64::new(1) }
+        Workers { interactive, bulk, online, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
     }
 
     pub fn request_id(&self) -> u64 {
@@ -204,6 +218,15 @@ impl Workers {
         }
     }
 
+    /// Load cover thumbnails for these rows, abandoning any earlier request that has
+    /// not finished. Small chunks keep the interactive lane responsive.
+    pub fn request_covers(&self, paths: Vec<PathBuf>) {
+        let generation = self.cover_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        for chunk in paths.chunks(8) {
+            self.submit(Job::Covers { generation, paths: chunk.to_vec() });
+        }
+    }
+
     /// Abandon queued scans (e.g. after clearing a large playlist).
     pub fn cancel_scans(&self) {
         self.scan_generation.fetch_add(1, Ordering::Relaxed);
@@ -213,7 +236,11 @@ impl Workers {
 struct Ctx {
     paths: AppPaths,
     scan_generation: Arc<AtomicU64>,
+    cover_generation: Arc<AtomicU64>,
 }
+
+/// Longest side of playlist cover thumbnails: the hover preview at full size, the row thumbnail mipmapped down.
+const COVER_THUMB: u32 = 128;
 
 fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
     match job {
@@ -225,6 +252,21 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
                 }
                 let info = nullamp_meta::read_track_info(&path).map_err(|e| e.to_string());
                 out.push(JobResult::Info { path, info });
+            }
+            out
+        }
+        Job::Covers { generation, paths } => {
+            let mut out = Vec::with_capacity(paths.len());
+            for path in paths {
+                if ctx.cover_generation.load(Ordering::Relaxed) != generation {
+                    break;
+                }
+                let art = nullamp_meta::read_front_cover(&path).ok().flatten().and_then(|c| {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(&*c.data, &mut h);
+                    decode_thumb(&c.data, COVER_THUMB).map(|t| (std::hash::Hasher::finish(&h), t))
+                });
+                out.push(JobResult::Cover { path, art });
             }
             out
         }

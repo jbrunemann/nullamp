@@ -102,6 +102,23 @@ fn render_main_window_as(appearance: &str, suffix: &str) {
 
 #[test]
 #[ignore]
+fn render_playlist_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 420.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 1200);
+    save(&mut h, "04-columns-default.png");
+    // Artist before title, album hidden.
+    h.state_mut().settings.playlist_columns = ["num", "art", "artist", "title", "time"].map(String::from).to_vec();
+    settle(&mut h, 200);
+    save(&mut h, "04b-columns-reordered.png");
+    h.state_mut().settings.playlist_columns = ["title", "artist", "album", "time"].map(String::from).to_vec();
+    settle(&mut h, 200);
+    save(&mut h, "04c-columns-no-art.png");
+}
+
+#[test]
+#[ignore]
 fn render_player_only() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
