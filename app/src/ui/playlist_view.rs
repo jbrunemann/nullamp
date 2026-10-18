@@ -40,10 +40,11 @@ pub enum Col {
     Title,
     Artist,
     Album,
+    Format,
     Time,
 }
 
-const COLUMN_IDS: [&str; 6] = ["num", "art", "title", "artist", "album", "time"];
+const COLUMN_IDS: [&str; 7] = ["num", "art", "title", "artist", "album", "format", "time"];
 
 /// Space between columns, taken from the right of each one.
 const GAP: f32 = 8.0;
@@ -51,7 +52,7 @@ const GAP: f32 = 8.0;
 const ROW_HEIGHT_ART: f32 = 24.0;
 
 impl Col {
-    const ALL: [Col; 6] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Time];
+    const ALL: [Col; 7] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Time];
 
     fn id(self) -> &'static str {
         COLUMN_IDS[Self::ALL.iter().position(|c| *c == self).unwrap_or(0)]
@@ -68,6 +69,7 @@ impl Col {
             Col::Title => "TITLE",
             Col::Artist => "ARTIST",
             Col::Album => "ALBUM",
+            Col::Format => "FORMAT",
             Col::Time => "TIME",
         }
     }
@@ -79,6 +81,7 @@ impl Col {
             Col::Title => "Title",
             Col::Artist => "Artist",
             Col::Album => "Album",
+            Col::Format => "Format",
             Col::Time => "Time",
         }
     }
@@ -103,12 +106,13 @@ fn row_height(order: &[Col]) -> f32 {
     if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
 }
 
-/// Cell rects for the visible columns, left to right. Number, artwork and time are
+/// Cell rects for the visible columns, left to right. Number, artwork, format and time are
 /// fixed; title, artist and album share the rest by weight.
 fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
     let fixed = |c: Col| match c {
         Col::Num => Some(46.0 + GAP),
         Col::Art => Some(ROW_HEIGHT_ART + GAP),
+        Col::Format => Some(44.0 + GAP),
         Col::Time => Some(62.0 + GAP),
         _ => None,
     };
@@ -624,8 +628,10 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
                     Status::Stopped => Icon::Stop,
                     _ => Icon::Play,
                 };
-                let r = Rect::from_center_size(pos2(r.right() - 7.0, r.center().y), vec2(10.0, 10.0));
-                widgets::paint_icon(p, r, icon, theme::accent());
+                // At the left of the cell so the track number stays readable beside it.
+                let icon_rect = Rect::from_center_size(pos2(r.left() + 5.0, r.center().y), vec2(10.0, 10.0));
+                widgets::paint_icon(p, icon_rect, icon, theme::accent());
+                cell(ui, r, &format!("{}", i + 1), theme::mono(11.0), theme::accent().gamma_multiply(0.8), col.align());
             }
             Col::Num if !playable => cell(ui, r, "⚠", font.clone(), theme::warn(), col.align()),
             Col::Num => cell(ui, r, &format!("{}", i + 1), theme::mono(11.0), theme::text_faint(), col.align()),
@@ -633,12 +639,18 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
             Col::Title => cell(ui, r, &e.info.display_title(&e.path), font.clone(), fg, col.align()),
             Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
             Col::Album => cell(ui, r, e.info.album.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
+            Col::Format => cell(ui, r, &format_label(&e.path), theme::mono(10.5), if current { dim } else { theme::text_faint() }, col.align()),
             Col::Time => {
                 let time = e.info.duration.map(nullamp_core::time::format_clock).unwrap_or_default();
                 cell(ui, r, &time, theme::mono(11.5), dim, col.align());
             }
         }
     }
+}
+
+/// The container as the file extension names it, upper-cased (`MP3`, `FLAC`, `AIFF`).
+fn format_label(path: &Path) -> String {
+    path.extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
 
 /// A square thumbnail, centre-cropped to fill; a faint tile while there is none.
