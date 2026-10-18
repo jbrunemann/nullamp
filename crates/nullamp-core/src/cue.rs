@@ -39,11 +39,20 @@ pub struct CueTrack {
 /// Cue sheets are small; anything bigger than this is not a cue sheet.
 pub const MAX_CUE_BYTES: usize = 1024 * 1024;
 
+/// Whether text is a cue sheet, whatever file it came from (a pasted sheet or a
+/// `.txt` copy would otherwise be read line by line as a plain tracklist).
+pub fn looks_like_cue(text: &str) -> bool {
+    let upper = text.len() > 20 && text.contains("TRACK ") && text.contains("INDEX 01");
+    upper && text.lines().count() >= 3
+}
+
 pub fn parse(bytes: &[u8]) -> CueSheet {
     let bytes = &bytes[..bytes.len().min(MAX_CUE_BYTES)];
     let text = decode_lossy(bytes);
     let mut sheet = CueSheet::default();
     let mut current_track: Option<CueTrack> = None;
+    // rekordbox writes INDEX times as hh:mm:ss instead of mm:ss:ff.
+    let mut clock_times = false;
 
     fn flush(sheet: &mut CueSheet, track: &mut Option<CueTrack>) {
         if let Some(t) = track.take() {
@@ -105,7 +114,8 @@ pub fn parse(bytes: &[u8]) -> CueSheet {
             }
             "INDEX" => {
                 let (num, time) = split_word(rest);
-                match (num.parse::<u32>(), parse_msf(time.trim()), current_track.as_mut()) {
+                let secs = if clock_times { parse_hms(time.trim()) } else { parse_msf(time.trim()) };
+                match (num.parse::<u32>(), secs, current_track.as_mut()) {
                     (Ok(1), Some(secs), Some(t)) => t.start = Some(secs),
                     (Ok(0), Some(secs), Some(t)) => t.pregap = Some(secs),
                     (Ok(_), Some(_), Some(_)) => {}
@@ -115,6 +125,9 @@ pub fn parse(bytes: &[u8]) -> CueSheet {
             "REM" => {
                 let (key, value) = split_word(rest);
                 let value = Some(take_string(value).0).filter(|s| !s.is_empty());
+                if key.eq_ignore_ascii_case("RECORDED_BY") && value.as_deref().is_some_and(|v| v.to_ascii_lowercase().contains("rekordbox")) {
+                    clock_times = true;
+                }
                 if current_track.is_none() {
                     match key.to_ascii_uppercase().as_str() {
                         "DATE" => sheet.date = value,
@@ -172,6 +185,18 @@ pub fn parse_msf(s: &str) -> Option<f64> {
         return None;
     }
     Some((m * 60 + sec) as f64 + f as f64 / 75.0)
+}
+
+/// `hh:mm:ss`, the unit rekordbox puts in the same three-field slot.
+fn parse_hms(s: &str) -> Option<f64> {
+    let mut parts = s.split(':');
+    let h: u64 = parts.next()?.parse().ok()?;
+    let m: u64 = parts.next()?.parse().ok()?;
+    let sec: u64 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || m >= 60 || sec >= 60 {
+        return None;
+    }
+    Some((h * 3600 + m * 60 + sec) as f64)
 }
 
 pub fn format_msf(secs: f64) -> String {
@@ -298,6 +323,12 @@ FILE "mix.wav" WAVE
     }
 
     #[test]
+    fn cue_text_is_recognised_without_the_extension() {
+        assert!(looks_like_cue("FILE \"a.wav\" WAVE\n TRACK 01 AUDIO\n INDEX 01 00:00:00\n"));
+        assert!(!looks_like_cue("[00:00] Artist - Title\n[03:10] Other - Song\n[06:00] Third - Tune\n"));
+    }
+
+    #[test]
     fn multi_file_sheets_pick_the_right_file() {
         let text = "FILE \"a.flac\" WAVE\n TRACK 01 AUDIO\n TITLE \"A\"\n INDEX 01 00:00:00\nFILE \"b.flac\" WAVE\n TRACK 02 AUDIO\n TITLE \"B\"\n INDEX 01 00:00:00\n";
         let s = parse(text.as_bytes());
@@ -307,14 +338,15 @@ FILE "mix.wav" WAVE
 
     #[test]
     fn rekordbox_per_track_files_stay_in_the_recording() {
-        let text = "REM DATE 2026-10-18 12:50 PM\nREM RECORDED_BY \"rekordbox-dj\"\nTITLE \"REC-2026-10-18\"\nPERFORMER \"Mlbru\"\nFILE \"01 REC-2026-10-18.wav\" WAVE\n\tTRACK 01 AUDIO\n\t\tTITLE \"Ill Ghetto Funk\"\n\t\tPERFORMER \"Kolter\"\n\t\tFILE \"/Users/x/Kolter - Ill Ghetto Funk.mp3\" WAVE\n\t\tINDEX 01 00:00:00\n\tTRACK 02 AUDIO\n\t\tTITLE \"Deep Innocence (PIVLIM002)\"\n\t\tPERFORMER \"A2 Chris Stussy\"\n\t\tFILE \"/Users/x/A2 Chris Stussy - Deep Innocence (PIVLIM002).mp3\" WAVE\n\t\tINDEX 01 00:00:19\n";
+        let text = "REM DATE 2026-10-18 12:50 PM\nREM RECORDED_BY \"rekordbox-dj\"\nTITLE \"REC-2026-10-18\"\nPERFORMER \"Mlbru\"\nFILE \"01 REC-2026-10-18.wav\" WAVE\n\tTRACK 01 AUDIO\n\t\tTITLE \"Ill Ghetto Funk\"\n\t\tPERFORMER \"Kolter\"\n\t\tFILE \"/Users/x/Kolter - Ill Ghetto Funk.mp3\" WAVE\n\t\tINDEX 01 00:00:00\n\tTRACK 02 AUDIO\n\t\tTITLE \"Deep Innocence (PIVLIM002)\"\n\t\tPERFORMER \"A2 Chris Stussy\"\n\t\tFILE \"/Users/x/A2 Chris Stussy - Deep Innocence (PIVLIM002).mp3\" WAVE\n\t\tINDEX 01 00:00:19\n\tTRACK 03 AUDIO\n\t\tTITLE \"C\"\n\t\tINDEX 01 00:38:41\n";
         let s = parse(text.as_bytes());
         assert!(s.warnings.is_empty(), "{:?}", s.warnings);
         assert_eq!(s.files.len(), 1);
         let list = s.to_setlist("01 REC-2026-10-18.wav", "x.cue").unwrap();
-        assert_eq!(list.entries.len(), 2);
+        assert_eq!(list.entries.len(), 3);
+        assert_eq!(list.entries[2].start, Some(38.0 * 60.0 + 41.0));
         assert_eq!(list.entries[1].artist, "A2 Chris Stussy");
-        assert_eq!(list.entries[1].start, Some(19.0 / 75.0));
+        assert_eq!(list.entries[1].start, Some(19.0));
     }
 
     #[test]

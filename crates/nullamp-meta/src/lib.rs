@@ -350,7 +350,7 @@ pub fn read(path: &Path) -> Result<FileMetadata, MetaError> {
                 ItemValue::Text(t) | ItemValue::Locator(t) => t.clone(),
                 ItemValue::Binary(b) => format!("<{} bytes>", b.len()),
             };
-            if looks_like_cue(&text) && embedded_cue.is_none() {
+            if nullamp_core::cue::looks_like_cue(&text) && embedded_cue.is_none() {
                 embedded_cue = Some(text.clone());
             }
             if known.contains(&item.key()) {
@@ -450,11 +450,6 @@ pub fn read_front_cover(path: &Path) -> Result<Option<Artwork>, MetaError> {
         width: None,
         height: None,
     }))
-}
-
-fn looks_like_cue(text: &str) -> bool {
-    let upper = text.len() > 20 && text.contains("TRACK ") && text.contains("INDEX 01");
-    upper && text.lines().count() >= 3
 }
 
 fn truncate(s: &str, max: usize) -> String {

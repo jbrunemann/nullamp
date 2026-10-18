@@ -343,13 +343,9 @@ pub fn on_text_loaded(app: &mut App, request: u64, path: PathBuf, text: Result<S
         Err(e) => return app.error(format!("Cannot read {}: {e}", path.display())),
     };
     let audio_name = app.mix.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let is_cue = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cue"));
+    let is_cue = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cue")) || cue::looks_like_cue(&text);
     let incoming = if is_cue {
-        let sheet = cue::parse(text.as_bytes());
-        match sheet.to_setlist(&audio_name, &path.to_string_lossy()).or_else(|| {
-            // A sheet for another file name: use its first file section anyway.
-            sheet.files.first().and_then(|f| sheet.to_setlist(&f.name, &path.to_string_lossy()))
-        }) {
+        match cue_setlist(&text, &audio_name, &path.to_string_lossy()) {
             Some(s) => s,
             None => return app.warn("That cue sheet has no tracks"),
         }
@@ -357,6 +353,14 @@ pub fn on_text_loaded(app: &mut App, request: u64, path: PathBuf, text: Result<S
         tracklist_text::parse(&text, None).setlist
     };
     apply_incoming(app, incoming, true);
+}
+
+fn cue_setlist(text: &str, audio_name: &str, origin: &str) -> Option<Setlist> {
+    let sheet = cue::parse(text.as_bytes());
+    sheet.to_setlist(audio_name, origin).or_else(|| {
+        // A sheet for another file name: use its first file section anyway.
+        sheet.files.first().and_then(|f| sheet.to_setlist(&f.name, origin))
+    })
 }
 
 pub fn export_to(app: &mut App, format: ExportFormat, path: PathBuf) {
@@ -981,19 +985,25 @@ fn paste_modal(app: &mut App, ctx: &egui::Context) {
             ui.add(egui::TextEdit::singleline(&mut paste.url).desired_width(f32::INFINITY).hint_text("https://… (optional, kept as provenance)"));
         });
         let url = Some(paste.url.trim().to_owned()).filter(|u| !u.is_empty());
-        let parsed = tracklist_text::parse(&paste.text, url);
-        let timed = parsed.setlist.entries.iter().filter(|e| e.start.is_some()).count();
+        let (incoming, ignored) = if cue::looks_like_cue(&paste.text) {
+            let audio_name = app.mix.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            (cue_setlist(&paste.text, &audio_name, "pasted cue sheet").unwrap_or_default(), 0)
+        } else {
+            let parsed = tracklist_text::parse(&paste.text, url);
+            (parsed.setlist, parsed.ignored.len())
+        };
+        let timed = incoming.entries.iter().filter(|e| e.start.is_some()).count();
         ui.label(
-            RichText::new(format!("{} tracks recognised ({timed} with times), {} lines ignored", parsed.setlist.entries.len(), parsed.ignored.len()))
+            RichText::new(format!("{} tracks recognised ({timed} with times), {ignored} lines ignored", incoming.entries.len()))
                 .small()
-                .color(if parsed.setlist.entries.is_empty() { theme::warn() } else { theme::ok() }),
+                .color(if incoming.entries.is_empty() { theme::warn() } else { theme::ok() }),
         );
         if app.mix.setlist.as_ref().is_some_and(|s| !s.entries.is_empty()) {
             ui.checkbox(&mut paste.replace, "Replace current entries (your corrections are kept)");
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(!parsed.setlist.entries.is_empty(), egui::Button::new("Import")).clicked() {
-                apply_incoming(app, parsed.setlist.clone(), paste.replace);
+            if ui.add_enabled(!incoming.entries.is_empty(), egui::Button::new("Import")).clicked() {
+                apply_incoming(app, incoming.clone(), paste.replace);
                 keep = false;
             }
             if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
