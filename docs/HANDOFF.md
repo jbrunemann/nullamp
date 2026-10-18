@@ -13,7 +13,7 @@ Working on macOS: playback, playlists, media keys, setlists, metadata editing, p
 | 3. DJ mix support | Done: chapters, embedded and adjacent cue sheets, plain track lists in the comment or description tag (reference only when untimed), pasted tracklists, timeline segments, editing, persistence. |
 | 4. Metadata management | Done: inspector, batch edit, artwork, safe writes, backups and restore. |
 | 5. Online enrichment | Partly. MusicBrainz and Cover Art Archive lookups for single tracks work. Online tracklist search was built and then removed by request (section 7). |
-| 6. Hardening and release | Not started: no README, no CI, Linux and Windows untested, no signing or notarisation. |
+| 6. Hardening and release | Not started: no README, no CI, Linux and Windows untested (the Windows exe cross-builds and links, but has never been run), no signing or notarisation. |
 
 Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmedia 2, app 32 (1 screenshot render, ignored). All pass on macOS. Nothing is committed to git yet (branch `master`, no commits).
 
@@ -132,7 +132,7 @@ Online tracklist search was removed from the app at the user's request because i
 3. README with build instructions and limitations; clippy pass; commit to git (ask first).
 4. Polish ideas not yet built: a waveform overview of the mix on the timeline (background decode, cached), column sorting by clicking headers, playlist search/filter, a settings dialog (backups, online toggle, resume-on-start; these exist in `settings.json` but have no UI except the online toggle), opening files from Finder ("Open with" is declared in Info.plist but file-open events are not handled yet).
 5. Release work on macOS: universal binary (`bundle.sh --universal`), Developer ID signing and notarisation.
-6. Later, when the user says so: Linux (Dockerfile and .desktop are in `packaging/linux`; AppImage not written), Windows (SMTC needs the HWND, already passed through `window_handle()`), the YouTube provider, audio recognition.
+6. Later, when the user says so: Linux (Dockerfile and .desktop are in `packaging/linux`; AppImage not written), Windows (done as a build: `packaging/windows/package.sh` cross-builds with `cargo xwin` and zips; `app/build.rs` embeds the icon through a hand-written .res from `mkres.py`; release builds use the GUI subsystem; CI has a native `windows-x86_64` job; still to do on a real PC: run it, check audio devices, SMTC media keys, file dialogs and the tag-write-while-playing error; no code signing), the YouTube provider, audio recognition.
 
 ## 9. Known limitations
 
