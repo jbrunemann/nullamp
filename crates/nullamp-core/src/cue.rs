@@ -63,6 +63,12 @@ pub fn parse(bytes: &[u8]) -> CueSheet {
         let (command, rest) = split_word(line);
         match command.to_ascii_uppercase().as_str() {
             "FILE" => {
+                // rekordbox recordings name each track's source file inside the TRACK
+                // block, before its INDEX. That is metadata, not a new section. A FILE
+                // after INDEX 00 is the EAC gaps-appended layout and does start one.
+                if current_track.as_ref().is_some_and(|t| t.start.is_none() && t.pregap.is_none()) {
+                    continue;
+                }
                 flush(&mut sheet, &mut current_track);
                 let (name, _file_type) = take_string(rest);
                 sheet.files.push(CueFile { name, tracks: Vec::new() });
@@ -297,6 +303,26 @@ FILE "mix.wav" WAVE
         let s = parse(text.as_bytes());
         assert_eq!(s.file_for("b.flac").unwrap().tracks[0].title.as_deref(), Some("B"));
         assert!(s.file_for("c.flac").is_none());
+    }
+
+    #[test]
+    fn rekordbox_per_track_files_stay_in_the_recording() {
+        let text = "REM DATE 2026-10-18 12:50 PM\nREM RECORDED_BY \"rekordbox-dj\"\nTITLE \"REC-2026-10-18\"\nPERFORMER \"Mlbru\"\nFILE \"01 REC-2026-10-18.wav\" WAVE\n\tTRACK 01 AUDIO\n\t\tTITLE \"Ill Ghetto Funk\"\n\t\tPERFORMER \"Kolter\"\n\t\tFILE \"/Users/x/Kolter - Ill Ghetto Funk.mp3\" WAVE\n\t\tINDEX 01 00:00:00\n\tTRACK 02 AUDIO\n\t\tTITLE \"Deep Innocence (PIVLIM002)\"\n\t\tPERFORMER \"A2 Chris Stussy\"\n\t\tFILE \"/Users/x/A2 Chris Stussy - Deep Innocence (PIVLIM002).mp3\" WAVE\n\t\tINDEX 01 00:00:19\n";
+        let s = parse(text.as_bytes());
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        assert_eq!(s.files.len(), 1);
+        let list = s.to_setlist("01 REC-2026-10-18.wav", "x.cue").unwrap();
+        assert_eq!(list.entries.len(), 2);
+        assert_eq!(list.entries[1].artist, "A2 Chris Stussy");
+        assert_eq!(list.entries[1].start, Some(19.0 / 75.0));
+    }
+
+    #[test]
+    fn file_after_pregap_starts_a_new_section() {
+        let text = "FILE \"a.wav\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 00 03:00:00\nFILE \"b.wav\" WAVE\nINDEX 01 00:00:00\n";
+        let s = parse(text.as_bytes());
+        assert_eq!(s.files.len(), 2);
+        assert_eq!(s.files[0].tracks.len(), 2);
     }
 
     #[test]
