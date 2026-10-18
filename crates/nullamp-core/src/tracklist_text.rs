@@ -9,6 +9,7 @@
 //! 01. Artist - Title
 //! 1:02:03 Artist – Title
 //! 03 [12:30] Artist ft. Other - Title
+//! 04 * Artist - Title (Remix) LABEL NAME      (bullets, unbracketed all-caps label)
 //! w/ Artist - Title          (played together with the previous track)
 //! ID - ID
 //! ```
@@ -20,14 +21,21 @@ use regex::Regex;
 use crate::setlist::{Provenance, Setlist, SetlistEntry, Timing, Verification};
 use crate::time::parse_timestamp;
 
-static NUMBERING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}\s*[-–:.)]|#\d{1,3}|0\d|\d{1,3}\s+[\[(]\d)\s*").unwrap());
+static NUMBERING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(?:\d{1,3}\s*[-–:.)*•·]|#\d{1,3}|0\d|\d{1,3}\s+[\[(]\d)\s*").unwrap());
+static BULLET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[*•·▪‣]\s*").unwrap());
 static BRACKET_TIME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\[(](\d{1,3}(?::\d{1,2}){1,2}(?:\.\d+)?)[\])]\s*").unwrap());
 static BARE_TIME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d{1,3}(?::\d{1,2}){1,2}(?:\.\d+)?)(?:\s*[-–|.]\s*|\s+)").unwrap());
 static TRAILING_LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\[([^\[\]]+)\]\s*$").unwrap());
+/// A run of all-caps words closing the title, optionally ending in an all-caps
+/// parenthesis: "Song NAME RECORDS", "Song HELIX (PAYDAY)".
+static CAPS_LABEL: LazyLock<Regex> = LazyLock::new(|| {
+    let word = r"[\p{Lu}\d][\p{Lu}\d&.'/!+\-]*";
+    Regex::new(&format!(r"\s+({word}(?:\s+{word})*(?:\s+\({word}(?:\s+{word})*\))?)$")).unwrap()
+});
 static VERSION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\s*\(([^()]*\b(?:remix|mix|edit|dub|bootleg|rework|vip|version|remaster(?:ed)?|instrumental|re-?edit|flip|cut)\b[^()]*)\)\s*$").unwrap()
+    Regex::new(r"(?i)\s*\(([^()]*\b(?:remix|mix|edit|dub|bootleg|rework|vip|version|remaster(?:ed)?|instrumental|re-?edit|flip|cut|acapp?ella)\b[^()]*)\)\s*$").unwrap()
 });
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -85,8 +93,8 @@ const MIN_DESCRIPTION_TRACKS: usize = 3;
 fn take_time_and_numbering(line: &str) -> (Option<f64>, &str) {
     let mut rest = line;
     let mut start = None;
-    // Up to two passes: numbering and time can appear in either order.
-    for _ in 0..2 {
+    // Numbering, bullet and time can appear in several orders.
+    for _ in 0..3 {
         if start.is_none() {
             if let Some(c) = BRACKET_TIME.captures(rest) {
                 start = parse_timestamp(&c[1]);
@@ -101,6 +109,10 @@ fn take_time_and_numbering(line: &str) -> (Option<f64>, &str) {
                     continue;
                 }
             }
+        }
+        if let Some(m) = BULLET.find(rest) {
+            rest = &rest[m.end()..];
+            continue;
         }
         if let Some(m) = NUMBERING.find(rest) {
             // The bracketed-time alternative matches into the bracket; keep the bracket.
@@ -120,6 +132,14 @@ fn parse_track(text: &str, start: Option<f64>, provenance: &Provenance) -> Optio
     if let Some(c) = TRAILING_LABEL.captures(&title) {
         label = Some(c[1].trim().to_owned());
         title.truncate(c.get(0).unwrap().start());
+    } else if let Some(c) = CAPS_LABEL.captures(&title)
+        && let head = &title[..c.get(0).unwrap().start()]
+        // Keep all-caps titles and short tokens like "VIP" or "UK" in the title.
+        && head.chars().any(char::is_lowercase)
+        && c[1].chars().filter(|c| c.is_alphabetic()).count() >= 4
+    {
+        label = Some(c[1].trim().to_owned());
+        title.truncate(head.len());
     }
     let mut version = None;
     if let Some(c) = VERSION.captures(&title) {
@@ -197,6 +217,45 @@ mod tests {
             Booking: mail me.\nA - B\nC - D\nE - F\nMore words here.\nAnd more.\nAnd even more text.\n";
         assert!(parse_description(prose).is_none(), "prose with a few dashes is not a tracklist");
         assert!(parse_description("A - B\nC - D\n").is_none(), "too short");
+    }
+
+    #[test]
+    fn bulleted_list_with_unbracketed_labels() {
+        let text = "\
+01 * Korolova & MotherEarth ft. Tyoz - Nightshapes CAPTIVE SOUL
+03 * Cherry - Selene SIONA
+w/ * Mau P - Drugs From Amsterdam (Acapella) REPOPULATE MARS
+04 * Arodes - Kidz (CamelPhat Remix) UNRELEASED RECORDS
+08 * The Temper Trap - Sweet Disposition (John Summit & Silver Panda Remix) EXPERTS ONLY
+10 * MotherEarth - Varias Horas HELIX (PAYDAY)
+11 * Anyma & Baset - Neverland (From Japan) THE END OF GENESYS/INTERSCOPE
+13 * Vintage Culture & Bhaskar & Meca ft. The Vic - Tina HIGHER GROUND (MAD DECENT)
+15 * Agents Of Time - Zodiac TIME MACHINE REC.
+02 * MRAK & MotherEarth - Feel Alive
+9 * Someone - Song VIP
+10 * Someone - ALL CAPS TITLE
+";
+        let p = parse(text, None);
+        assert!(p.ignored.is_empty(), "{:?}", p.ignored);
+        let e = &p.setlist.entries;
+        let got: Vec<_> = e.iter().map(|x| (x.artist.as_str(), x.title.as_str(), x.version.as_deref(), x.label.as_deref())).collect();
+        assert_eq!(
+            got,
+            [
+                ("Korolova & MotherEarth ft. Tyoz", "Nightshapes", None, Some("CAPTIVE SOUL")),
+                ("Cherry", "Selene", None, Some("SIONA")),
+                ("Mau P", "Drugs From Amsterdam", Some("Acapella"), Some("REPOPULATE MARS")),
+                ("Arodes", "Kidz", Some("CamelPhat Remix"), Some("UNRELEASED RECORDS")),
+                ("The Temper Trap", "Sweet Disposition", Some("John Summit & Silver Panda Remix"), Some("EXPERTS ONLY")),
+                ("MotherEarth", "Varias Horas", None, Some("HELIX (PAYDAY)")),
+                ("Anyma & Baset", "Neverland (From Japan)", None, Some("THE END OF GENESYS/INTERSCOPE")),
+                ("Vintage Culture & Bhaskar & Meca ft. The Vic", "Tina", None, Some("HIGHER GROUND (MAD DECENT)")),
+                ("Agents Of Time", "Zodiac", None, Some("TIME MACHINE REC.")),
+                ("MRAK & MotherEarth", "Feel Alive", None, None),
+                ("Someone", "Song VIP", None, None),
+                ("Someone", "ALL CAPS TITLE", None, None),
+            ]
+        );
     }
 
     #[test]
