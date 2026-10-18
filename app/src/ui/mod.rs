@@ -539,7 +539,7 @@ impl App {
             duration: self.player.duration(),
             cover: self.now.art_file.clone(),
         };
-        if let Some((setlist, idx)) = self.mix.setlist.as_ref().zip(self.mix.active) {
+        if let Some((setlist, idx)) = setlist_view::shown(self).zip(self.mix.active) {
             let e = &setlist.entries[idx];
             let mix_name = setlist.mix.title.clone().unwrap_or_else(|| np.title.clone());
             let dj = setlist.mix.dj.clone().or(np.artist.clone());
@@ -683,10 +683,19 @@ impl App {
         }
     }
 
+    /// The side panel tab on screen. Single tracks show the inspector without changing
+    /// the saved choice, so the next mix opens on its setlist again.
+    pub fn shown_tab(&self) -> SideTab {
+        if self.side_tab == SideTab::Setlist && !self.mix.is_mix { SideTab::Inspector } else { self.side_tab }
+    }
+
     pub fn toggle_side(&mut self, tab: SideTab) {
-        if self.side_open && self.side_tab == tab {
+        if self.side_open && self.shown_tab() == tab {
             self.side_open = false;
         } else {
+            if tab == SideTab::Setlist && !self.mix.is_mix && self.player.current.is_some() {
+                setlist_view::pin(self);
+            }
             self.side_open = true;
             self.side_tab = tab;
             if tab == SideTab::Inspector && self.inspector.targets.is_empty() {
@@ -708,12 +717,13 @@ impl App {
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
+        let shown = self.shown_tab();
         ui.horizontal(|ui| {
-            if widgets::tab(ui, self.side_tab == SideTab::Setlist, "Setlist").clicked() {
+            if self.mix.is_mix && widgets::tab(ui, shown == SideTab::Setlist, "Setlist").clicked() {
                 self.side_tab = SideTab::Setlist;
                 self.mark_settings_dirty();
             }
-            if widgets::tab(ui, self.side_tab == SideTab::Inspector, "Inspector").clicked() {
+            if widgets::tab(ui, shown == SideTab::Inspector, "Inspector").clicked() {
                 self.side_tab = SideTab::Inspector;
                 if self.inspector.targets.is_empty() {
                     inspector::load_from_selection(self);
@@ -728,7 +738,7 @@ impl App {
             });
         });
         ui.add_space(4.0);
-        match self.side_tab {
+        match shown {
             SideTab::Setlist => setlist_view::show(self, ui),
             SideTab::Inspector => inspector::show(self, ui),
         }

@@ -163,7 +163,7 @@ fn lcd_lines(app: &App) -> (String, Color32, String, String) {
     let list = &app.player.lists[app.player.playing_list()].playlist;
     let pos_in_list = list.index_of(entry.id).map(|i| format!("FILE {}/{}", i + 1, list.len())).unwrap_or_default();
     let base_title = entry.info.display_line(&entry.path);
-    if let Some(setlist) = &app.mix.setlist {
+    if let Some(setlist) = super::setlist_view::shown(app) {
         let mix_name = setlist.mix.title.clone().unwrap_or_else(|| entry.info.display_title(&entry.path));
         let dj = setlist.mix.dj.clone().or(entry.info.artist.clone());
         let mix_line = match dj {
@@ -227,7 +227,7 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     let t_of = |x: f32, d: f64| ((x - bar.left()) / bar.width()).clamp(0.0, 1.0) as f64 * d;
 
     // Setlist spans.
-    if let (Some(d), Some(setlist)) = (dur, &app.mix.setlist) {
+    if let (Some(d), Some(setlist)) = (dur, super::setlist_view::shown(app)) {
         for (i, e) in setlist.entries.iter().enumerate() {
             let Some((s, end)) = setlist.span(i, Some(d)) else { continue };
             let r = Rect::from_min_max(pos2(x_of(s, d), bar.top()), pos2(x_of(end, d), bar.bottom()));
@@ -283,7 +283,7 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     if let (Some(d), Some(hover)) = (dur, resp.hover_pos()) {
         let t = t_of(hover.x, d);
         p.line_segment([pos2(hover.x, bar.top()), pos2(hover.x, bar.bottom())], Stroke::new(1.0, Color32::from_white_alpha(60)));
-        let track = app.mix.setlist.as_ref().and_then(|s| s.active_index(t).map(|i| &s.entries[i])).map(|e| {
+        let track = super::setlist_view::shown(app).and_then(|s| s.active_index(t).map(|i| &s.entries[i])).map(|e| {
             let approx = if e.timing == Timing::Approximate { "≈ " } else { "" };
             format!("{approx}{}", entry_line(e))
         });
@@ -375,17 +375,20 @@ fn transport(app: &mut App, ui: &mut Ui) {
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let ins = app.side_open && app.side_tab == SideTab::Inspector;
+            let ins = app.side_open && app.shown_tab() == SideTab::Inspector;
             if widgets::tab(ui, ins, "Inspector").on_hover_text("Metadata inspector (⌘I / Ctrl+I)").clicked() {
                 app.toggle_side(SideTab::Inspector);
             }
-            let set = app.side_open && app.side_tab == SideTab::Setlist;
-            let label = match &app.mix.setlist {
-                Some(s) => format!("Setlist · {}", s.entries.len()),
-                None => "Setlist".into(),
-            };
-            if widgets::tab(ui, set, &label).on_hover_text("DJ mix setlist (⌘L / Ctrl+L)").clicked() {
-                app.toggle_side(SideTab::Setlist);
+            // Single tracks hide it; ⌘L still opens it to add a setlist.
+            if app.mix.is_mix {
+                let set = app.side_open && app.shown_tab() == SideTab::Setlist;
+                let label = match &app.mix.setlist {
+                    Some(s) => format!("Setlist · {}", s.entries.len()),
+                    None => "Setlist".into(),
+                };
+                if widgets::tab(ui, set, &label).on_hover_text("DJ mix setlist (⌘L / Ctrl+L)").clicked() {
+                    app.toggle_side(SideTab::Setlist);
+                }
             }
             if widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text("Playlist (⌘P / Ctrl+P)").clicked() {
                 app.toggle_playlist();

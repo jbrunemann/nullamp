@@ -223,6 +223,42 @@ fn tag_edit_reloads_setlist_from_comment() {
     h.state_mut().player.stop();
 }
 
+/// Single tracks hide the setlist parts; mixes show them, and ⌘L brings them back for
+/// a single track that should get a setlist.
+#[test]
+fn setlist_hidden_for_single_tracks() {
+    use crate::ui::SideTab;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+    let play = |h: &mut Harness<'_, App>, index: usize| {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[index].id;
+        app.player.play_entry(0, id, 0.0);
+        settle(h, 1500);
+    };
+    h.state_mut().side_tab = SideTab::Setlist;
+
+    play(&mut h, 2);
+    assert!(!h.state().mix.is_mix, "tone.flac is a short single track");
+    assert_eq!(h.state().shown_tab(), SideTab::Inspector);
+    assert_eq!(h.state().side_tab, SideTab::Setlist, "the saved choice is kept for the next mix");
+
+    play(&mut h, 5);
+    assert!(h.state().mix.is_mix, "the mix fixture has chapters");
+    assert_eq!(h.state().shown_tab(), SideTab::Setlist);
+
+    play(&mut h, 2);
+    assert!(!h.state().mix.is_mix);
+    h.state_mut().side_open = false;
+    h.state_mut().toggle_side(SideTab::Setlist);
+    settle(&mut h, 100);
+    assert!(h.state().mix.is_mix && h.state().mix.pinned);
+    assert_eq!(h.state().shown_tab(), SideTab::Setlist);
+    h.state_mut().player.stop();
+}
+
 /// The setlist entry editor can be dismissed, with or without saving.
 #[test]
 fn entry_editor_closes_on_cancel_and_save() {

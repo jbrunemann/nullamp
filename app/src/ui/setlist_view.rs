@@ -51,6 +51,12 @@ pub struct MixState {
     pub selected: Option<EntryId>,
     pub loading: bool,
     pub tracklist_urls: Vec<String>,
+    /// Whether the playing file counts as a DJ mix, so the setlist parts of the UI show.
+    /// Kept from the previous file until the new one's setlist and duration are known,
+    /// so the panels do not flash on a track change.
+    pub is_mix: bool,
+    /// The user asked for the setlist panel on a file that does not look like a mix.
+    pub pinned: bool,
     dirty_at: Option<Instant>,
     issues: Vec<Issue>,
     edit: EntryEdit,
@@ -69,7 +75,39 @@ pub struct MixState {
 
 pub fn reset_for_track(app: &mut App, token: u64, path: PathBuf) {
     let entry_art = std::mem::take(&mut app.mix.entry_art);
-    app.mix = MixState { token, path: Some(path), loading: true, entry_art, ..Default::default() };
+    app.mix = MixState { token, path: Some(path), loading: true, entry_art, is_mix: app.mix.is_mix, ..Default::default() };
+}
+
+/// Files at least this long are treated as mixes even before they have a setlist;
+/// above nearly all single tracks, well below real DJ mixes.
+const MIX_MIN_SECONDS: f64 = 20.0 * 60.0;
+
+/// A file is a mix when it has a setlist, or failing that, when it is long. Single
+/// tracks rarely carry one: discovery wants two chapters or cue tracks, three
+/// description lines, and a single entry only counts when the user made it.
+fn detect_mix(app: &App) -> bool {
+    let m = &app.mix;
+    if app.player.current.is_none() {
+        return false;
+    }
+    if m.pinned || m.setlist.as_ref().is_some_and(|s| s.entries.len() >= 2 || (!s.entries.is_empty() && m.origin == Some(SetlistOrigin::Saved))) {
+        return true;
+    }
+    match app.player.duration().filter(|d| *d > 0.0) {
+        Some(d) if !m.loading => d >= MIX_MIN_SECONDS,
+        _ => m.is_mix,
+    }
+}
+
+/// The setlist of the playing file, when the UI shows it.
+pub fn shown(app: &App) -> Option<&Setlist> {
+    app.mix.setlist.as_ref().filter(|_| app.mix.is_mix)
+}
+
+/// Open the setlist panel on a file that does not look like a mix, to add one.
+pub fn pin(app: &mut App) {
+    app.mix.pinned = true;
+    app.mix.is_mix = true;
 }
 
 pub fn on_now_playing(app: &mut App, info: &NowPlayingInfo) {
@@ -139,6 +177,7 @@ fn refresh_tag_entries(app: &mut App, discovered: Option<Setlist>) {
 
 /// Track the active entry from the playback position (cheap: runs every frame).
 pub fn update_active(app: &mut App) {
+    app.mix.is_mix = detect_mix(app);
     let current_token = app.player.current.as_ref().map(|c| c.token);
     if current_token != Some(app.mix.token) {
         app.mix.active = None;
