@@ -612,6 +612,16 @@ fn source_summary(app: &mut App, ui: &mut Ui) {
     tracklist_links(app, ui);
 }
 
+/// A plain click only highlights the row; the editor follows along only when it is already open.
+fn click_entry(app: &mut App, id: EntryId) {
+    if app.mix.edit.id.is_some() {
+        select(app, Some(id));
+    } else {
+        app.mix.selected = Some(id);
+    }
+}
+
+/// Select the entry and open it in the editor.
 pub(super) fn select(app: &mut App, id: Option<EntryId>) {
     app.mix.selected = id;
     let Some(e) = id.and_then(|id| app.mix.setlist.as_ref()?.entries.iter().find(|e| e.id == id)) else {
@@ -700,6 +710,10 @@ fn entries(app: &mut App, ui: &mut Ui) {
                 seek = e.start;
             }
             resp.context_menu(|ui| {
+                if ui.button("Edit entry").clicked() {
+                    menu_action = Some((e.id, "edit"));
+                    ui.close();
+                }
                 if ui.add_enabled(e.start.is_some(), egui::Button::new("Jump here")).clicked() {
                     seek = e.start;
                     ui.close();
@@ -716,7 +730,7 @@ fn entries(app: &mut App, ui: &mut Ui) {
         }
     });
     if let Some(id) = clicked {
-        select(app, Some(id));
+        click_entry(app, id);
     }
     if let Some(t) = seek {
         app.player.command(Command::SeekTo(t), CommandSource::Ui);
@@ -735,6 +749,7 @@ fn entries(app: &mut App, ui: &mut Ui) {
             select(app, Some(id));
             changed(app);
         }
+        Some((id, "edit")) => select(app, Some(id)),
         Some((id, "delete")) => delete_entry(app, id),
         _ => {}
     }
@@ -759,7 +774,7 @@ fn delete_entry(app: &mut App, id: EntryId) {
 
 fn editor(app: &mut App, ui: &mut Ui) {
     let Some(id) = app.mix.edit.id else {
-        ui.label(RichText::new("Select an entry to edit it. Double-click to jump.").small().color(theme::text_faint()));
+        ui.label(RichText::new("Right-click an entry and choose Edit entry to change it. Double-click to jump.").small().color(theme::text_faint()));
         return;
     };
     let pos = app.player.position();
