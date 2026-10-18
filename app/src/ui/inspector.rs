@@ -390,18 +390,18 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     ui.add_space(4.0);
     let st = &app.inspector;
     if st.targets.is_empty() {
-        ui.label(RichText::new("Select tracks in the playlist to view and edit their metadata.").color(theme::TEXT_DIM));
+        ui.label(RichText::new("Select tracks in the playlist to view and edit their metadata.").color(theme::text_dim()));
         return;
     }
     if st.is_loading() {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new(format!("Reading {} file{}…", st.targets.len(), if st.targets.len() == 1 { "" } else { "s" })).color(theme::TEXT_DIM));
+            ui.label(RichText::new(format!("Reading {} file{}…", st.targets.len(), if st.targets.len() == 1 { "" } else { "s" })).color(theme::text_dim()));
         });
         return;
     }
     for (p, e) in st.errors.clone() {
-        ui.label(RichText::new(format!("⚠ {}: {e}", p.file_name().unwrap_or_default().to_string_lossy())).small().color(theme::WARN));
+        ui.label(RichText::new(format!("⚠ {}: {e}", p.file_name().unwrap_or_default().to_string_lossy())).small().color(theme::warn()));
     }
     if st.loaded.is_empty() {
         return;
@@ -427,15 +427,15 @@ fn header(app: &App, ui: &mut Ui) {
     if st.targets.len() == 1 {
         let p = &st.targets[0];
         ui.add(egui::Label::new(RichText::new(p.file_name().unwrap_or_default().to_string_lossy()).strong()).truncate());
-        ui.add(egui::Label::new(RichText::new(p.parent().map(|d| d.display().to_string()).unwrap_or_default()).small().color(theme::TEXT_FAINT)).truncate());
+        ui.add(egui::Label::new(RichText::new(p.parent().map(|d| d.display().to_string()).unwrap_or_default()).small().color(theme::text_faint())).truncate());
         if let Some(m) = st.loaded.get(p)
             && !m.writable
         {
-            ui.label(RichText::new("This file type cannot store tags; fields are read-only.").small().color(theme::WARN));
+            ui.label(RichText::new("This file type cannot store tags; fields are read-only.").small().color(theme::warn()));
         }
     } else {
         ui.label(RichText::new(format!("{} files selected", st.targets.len())).strong());
-        ui.label(RichText::new("Fields showing “multiple values” differ between files. Only the fields you change are written.").small().color(theme::TEXT_DIM));
+        ui.label(RichText::new("Fields showing “multiple values” differ between files. Only the fields you change are written.").small().color(theme::text_dim()));
     }
 }
 
@@ -449,14 +449,14 @@ fn fields(app: &mut App, ui: &mut Ui) {
                 continue;
             }
             let Some(f) = app.inspector.fields.get_mut(&field) else { continue };
-            let label_color = if f.touched { theme::ACCENT } else { theme::TEXT_DIM };
+            let label_color = if f.touched { theme::accent() } else { theme::text_dim() };
             // Number pairs on one row: "Track 3 of 12".
             if matches!(field, Field::TrackNumber | Field::DiscNumber) {
                 let total = if field == Field::TrackNumber { Field::TrackTotal } else { Field::DiscTotal };
                 ui.label(RichText::new(field.label()).color(label_color));
                 ui.horizontal(|ui| {
                     number_edit(ui, app.inspector.fields.get_mut(&field).unwrap(), writable);
-                    ui.label(RichText::new("of").color(theme::TEXT_DIM));
+                    ui.label(RichText::new("of").color(theme::text_dim()));
                     number_edit(ui, app.inspector.fields.get_mut(&total).unwrap(), writable);
                 });
                 ui.end_row();
@@ -481,7 +481,7 @@ fn fields(app: &mut App, ui: &mut Ui) {
                 if f.touched
                     && let Err(e) = field.validate(&f.value)
                 {
-                    ui.label(RichText::new(e).small().color(theme::ERR));
+                    ui.label(RichText::new(e).small().color(theme::err()));
                 }
             });
             ui.end_row();
@@ -521,14 +521,14 @@ fn actions(app: &mut App, ui: &mut Ui) {
         }
     });
     if let Some((msg, err)) = &app.inspector.status {
-        ui.label(RichText::new(msg).small().color(if *err { theme::ERR } else { theme::OK }));
+        ui.label(RichText::new(msg).small().color(if *err { theme::err() } else { theme::ok() }));
         if *err && msg.contains("changed on disk") && ui.small_button("Reload and re-apply manually").clicked() {
             reload(app);
         }
     }
     if let Some((backup, target)) = app.inspector.last_backup.clone() {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("A backup of the previous version was kept.").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("A backup of the previous version was kept.").small().color(theme::text_faint()));
             if ui.small_button("Restore it").clicked() {
                 let request = app.workers.request_id();
                 app.inspector.restore_request = Some(request);
@@ -543,7 +543,7 @@ fn artwork(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("Artwork").strong());
         if app.inspector.art_touched {
-            ui.label(RichText::new("changed").small().color(theme::ACCENT));
+            ui.label(RichText::new("changed").small().color(theme::accent()));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.add_enabled(writable, egui::Button::new("Import…").small()).clicked() {
@@ -552,10 +552,10 @@ fn artwork(app: &mut App, ui: &mut Ui) {
         });
     });
     if app.inspector.targets.len() > 1 {
-        ui.label(RichText::new("Showing the first file's artwork. Changing it replaces artwork in all selected files.").small().color(theme::TEXT_FAINT));
+        ui.label(RichText::new("Showing the first file's artwork. Changing it replaces artwork in all selected files.").small().color(theme::text_faint()));
     }
     if app.inspector.art.is_empty() {
-        ui.label(RichText::new("No embedded images.").small().color(theme::TEXT_DIM));
+        ui.label(RichText::new("No embedded images.").small().color(theme::text_dim()));
         return;
     }
     let mut remove = None;
@@ -573,7 +573,7 @@ fn artwork(app: &mut App, ui: &mut Ui) {
                 }
                 let dims = a.size.map(|[w, h]| format!("{w}×{h}")).unwrap_or_default();
                 let kb = a.data.len() / 1024;
-                ui.label(RichText::new(format!("{} · {dims} · {kb} KB", a.kind.label())).small().color(theme::TEXT_DIM));
+                ui.label(RichText::new(format!("{} · {dims} · {kb} KB", a.kind.label())).small().color(theme::text_dim()));
                 ui.horizontal(|ui| {
                     if a.kind != ArtworkKind::FrontCover && ui.add_enabled(writable, egui::Button::new("Front").small()).on_hover_text("Use as front cover").clicked() {
                         make_front = Some(i);
@@ -638,7 +638,7 @@ fn lookup(app: &mut App, ui: &mut Ui) {
 fn lookup_body(app: &mut App, ui: &mut Ui) {
     if let LookupTarget::SetlistEntry(_) = app.inspector.lookup.target {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("For a setlist entry").small().color(theme::LCD_AMBER));
+            ui.label(RichText::new("For a setlist entry").small().color(theme::now()));
             if ui.small_button("switch to file").clicked() {
                 app.inspector.lookup = Lookup::default();
                 build_fields(app);
@@ -656,24 +656,24 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
     if l.request.is_some() || l.images_request.is_some() {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Asking MusicBrainz…").small().color(theme::TEXT_DIM));
+            ui.label(RichText::new("Asking MusicBrainz…").small().color(theme::text_dim()));
         });
     }
     if let Some(e) = &l.error {
-        ui.label(RichText::new(e).small().color(theme::WARN));
+        ui.label(RichText::new(e).small().color(theme::warn()));
     }
     let file_duration = app.inspector.loaded.values().next().and_then(|m| m.technical.duration);
     let results = l.results.clone();
     let mut use_fields = None;
     let mut want_art = None;
     for r in results.iter().take(8) {
-        egui::Frame::new().fill(theme::RAISED).corner_radius(3.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+        egui::Frame::new().fill(theme::raised()).corner_radius(3.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(RichText::new(format!("{} — {}", r.artist, r.title)).strong()).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.hyperlink_to("↗", &r.url).on_hover_text("Open on MusicBrainz");
-                    ui.label(RichText::new(format!("{}%", r.score)).small().color(theme::TEXT_FAINT));
+                    ui.label(RichText::new(format!("{}%", r.score)).small().color(theme::text_faint()));
                 });
             });
             let len = r.length.map(format_clock).unwrap_or_else(|| "?".into());
@@ -682,7 +682,7 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
             if let Some(d) = &r.disambiguation {
                 sub.push_str(&format!(" · {d}"));
             }
-            ui.label(RichText::new(sub).small().color(if matches { theme::OK } else { theme::TEXT_DIM }));
+            ui.label(RichText::new(sub).small().color(if matches { theme::ok() } else { theme::text_dim() }));
             for rel in r.releases.iter().take(3) {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{} {}", rel.title, rel.date.as_deref().map(|d| format!("({d})")).unwrap_or_default())).small());
@@ -720,7 +720,7 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
                         let scale = (rect.width() / s.x).min(rect.height() / s.y);
                         ui.painter().image(tex.id(), egui::Rect::from_center_size(rect.center(), s * scale), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
                     } else {
-                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "…", theme::prop(14.0), theme::TEXT_FAINT);
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "…", theme::prop(14.0), theme::text_faint());
                     }
                     let label = if img.types.is_empty() { "image".to_owned() } else { img.types.join(", ") };
                     let resp = resp.on_hover_text(format!("{label}\nClick to use"));
@@ -731,7 +731,7 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
             }
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Images: Cover Art Archive.").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("Images: Cover Art Archive.").small().color(theme::text_faint()));
             if let Some(img) = images.first() {
                 ui.hyperlink_to(RichText::new("release page").small(), &img.source_page);
             }
@@ -740,7 +740,7 @@ fn lookup_body(app: &mut App, ui: &mut Ui) {
             use_image(app, &img);
         }
     }
-    ui.label(RichText::new("Metadata: MusicBrainz (CC0). Suggestions are not written until you save.").small().color(theme::TEXT_FAINT));
+    ui.label(RichText::new("Metadata: MusicBrainz (CC0). Suggestions are not written until you save.").small().color(theme::text_faint()));
 }
 
 fn apply_suggestion(app: &mut App, r: &RecordingMatch, rel: &nullamp_online::ReleaseRef) {
@@ -787,7 +787,7 @@ fn technical(app: &mut App, ui: &mut Ui) {
         let t = &m.technical;
         egui::Grid::new("tech").num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
             let mut row = |k: &str, v: String| {
-                ui.label(RichText::new(k).small().color(theme::TEXT_DIM));
+                ui.label(RichText::new(k).small().color(theme::text_dim()));
                 ui.label(RichText::new(v).small().monospace());
                 ui.end_row();
             };
@@ -825,7 +825,7 @@ fn technical(app: &mut App, ui: &mut Ui) {
             egui::CollapsingHeader::new(RichText::new(format!("Other tag items ({}) · preserved when saving", m.other_items.len())).small()).id_salt("other-items").show(ui, |ui| {
                 egui::Grid::new("other").num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
                     for (k, v) in &m.other_items {
-                        ui.label(RichText::new(k).small().color(theme::TEXT_DIM));
+                        ui.label(RichText::new(k).small().color(theme::text_dim()));
                         ui.add(egui::Label::new(RichText::new(v).small()).truncate());
                         ui.end_row();
                     }

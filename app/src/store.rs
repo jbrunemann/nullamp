@@ -38,6 +38,8 @@ pub struct Settings {
     pub visualizer: String,
     /// The playlist table. Hidden, the window shrinks to just the player.
     pub playlist_open: bool,
+    /// "dark", "light" or "system" (follow the OS).
+    pub appearance: String,
 }
 
 impl Default for Settings {
@@ -59,6 +61,7 @@ impl Default for Settings {
             last_dir: None,
             visualizer: "spectrum".into(),
             playlist_open: true,
+            appearance: "dark".into(),
         }
     }
 }

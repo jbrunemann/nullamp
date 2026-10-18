@@ -208,26 +208,26 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str
     if ui.is_rect_visible(rect) {
         let pressed = resp.is_pointer_button_down_on();
         let fill = if pressed {
-            theme::BG
+            theme::bg()
         } else if resp.hovered() {
-            theme::RAISED_HOVER
+            theme::raised_hover()
         } else {
-            theme::RAISED
+            theme::raised()
         };
         let p = ui.painter();
         p.rect_filled(rect, 4.0, fill);
         // Bevel: light top edge, dark bottom edge.
         if !pressed {
-            p.line_segment([rect.left_top() + vec2(3.0, 0.5), rect.right_top() + vec2(-3.0, 0.5)], Stroke::new(1.0, Color32::from_white_alpha(18)));
-            p.line_segment([rect.left_bottom() + vec2(3.0, -0.5), rect.right_bottom() + vec2(-3.0, -0.5)], Stroke::new(1.0, Color32::from_black_alpha(90)));
+            p.line_segment([rect.left_top() + vec2(3.0, 0.5), rect.right_top() + vec2(-3.0, 0.5)], Stroke::new(1.0, if theme::is_light() { Color32::WHITE } else { Color32::from_white_alpha(18) }));
+            p.line_segment([rect.left_bottom() + vec2(3.0, -0.5), rect.right_bottom() + vec2(-3.0, -0.5)], Stroke::new(1.0, Color32::from_black_alpha(if theme::is_light() { 28 } else { 90 })));
         }
-        p.rect_stroke(rect, 4.0, Stroke::new(1.0, if resp.has_focus() { theme::SELECT_STROKE } else { theme::BORDER }), StrokeKind::Inside);
-        let color = if lit { theme::ACCENT } else if resp.hovered() { Color32::WHITE } else { theme::TEXT };
+        p.rect_stroke(rect, 4.0, Stroke::new(1.0, if resp.has_focus() { theme::select_stroke() } else { theme::border() }), StrokeKind::Inside);
+        let color = if lit { theme::accent() } else if resp.hovered() { theme::text_strong() } else { theme::text() };
         let inner = rect.shrink(rect.height() * 0.24);
         paint_icon(p, inner.translate(if pressed { vec2(0.0, 1.0) } else { Vec2::ZERO }), icon, color);
         if lit {
             let led = Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 3.0), vec2(rect.width() * 0.35, 2.0));
-            p.rect_filled(led, 1.0, theme::ACCENT);
+            p.rect_filled(led, 1.0, theme::accent());
         }
     }
     resp.on_hover_text(tooltip)
@@ -258,11 +258,11 @@ pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color
 
 /// Small pill-shaped toggle for panel tabs and filters.
 pub fn tab(ui: &mut Ui, selected: bool, label: &str) -> Response {
-    let text = egui::RichText::new(label).size(12.0).color(if selected { theme::TEXT } else { theme::TEXT_DIM });
+    let text = egui::RichText::new(label).size(12.0).color(if selected { theme::text() } else { theme::text_dim() });
     let resp = ui.add(egui::Button::new(text).selected(selected).corner_radius(3.0).min_size(vec2(0.0, 22.0)));
     if selected {
         let r = resp.rect;
-        ui.painter().line_segment([pos2(r.left() + 4.0, r.bottom() - 1.0), pos2(r.right() - 4.0, r.bottom() - 1.0)], Stroke::new(2.0, theme::ACCENT));
+        ui.painter().line_segment([pos2(r.left() + 4.0, r.bottom() - 1.0), pos2(r.right() - 4.0, r.bottom() - 1.0)], Stroke::new(2.0, theme::accent()));
     }
     resp
 }

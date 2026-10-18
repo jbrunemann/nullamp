@@ -305,8 +305,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     if app.player.current.is_none() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Nothing playing").color(theme::TEXT_DIM));
-            ui.label(RichText::new("Play a DJ mix to see its setlist here.").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("Nothing playing").color(theme::text_dim()));
+            ui.label(RichText::new("Play a DJ mix to see its setlist here.").small().color(theme::text_faint()));
         });
         return;
     }
@@ -317,7 +317,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     if app.mix.loading {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Looking for a setlist…").color(theme::TEXT_DIM));
+            ui.label(RichText::new("Looking for a setlist…").color(theme::text_dim()));
         });
         return;
     }
@@ -336,13 +336,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 fn mix_card(app: &mut App, ui: &mut Ui) {
     let entry_title = app.player.current_entry().map(|e| e.info.display_title(&e.path)).unwrap_or_default();
     let entry_artist = app.player.current_entry().and_then(|e| e.info.artist.clone());
-    egui::Frame::new().fill(theme::RAISED).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some(edit) = app.mix.mix_edit.as_mut() {
             let mut done = None;
             egui::Grid::new("mix-edit").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
                 for (label, value) in [("Mix title", &mut edit.title), ("DJ", &mut edit.dj), ("Event", &mut edit.event), ("Date", &mut edit.date), ("URL", &mut edit.url)] {
-                    ui.label(RichText::new(label).color(theme::TEXT_DIM));
+                    ui.label(RichText::new(label).color(theme::text_dim()));
                     let mut s = value.clone().unwrap_or_default();
                     if ui.add(egui::TextEdit::singleline(&mut s).desired_width(f32::INFINITY)).changed() {
                         *value = Some(s).filter(|s| !s.trim().is_empty());
@@ -371,7 +371,7 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
         }
         let mix = app.mix.setlist.as_ref().map(|s| s.mix.clone()).unwrap_or_default();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("MIX").size(10.0).color(theme::LCD_MID).monospace());
+            ui.label(RichText::new("MIX").size(10.0).color(theme::mix_tag()).monospace());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("✎").on_hover_text("Edit mix information (does not touch the tracks)").clicked() {
                     let mut m = mix.clone();
@@ -397,7 +397,7 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
             sub.push(d.clone());
         }
         if !sub.is_empty() {
-            ui.label(RichText::new(sub.join(" · ")).color(theme::TEXT_DIM));
+            ui.label(RichText::new(sub.join(" · ")).color(theme::text_dim()));
         }
         if let Some(url) = &mix.url {
             ui.hyperlink_to(RichText::new(url).small(), url);
@@ -407,8 +407,8 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
             let e = &s.entries[i];
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("NOW").size(10.0).monospace().color(theme::LCD_AMBER));
-                ui.add(egui::Label::new(RichText::new(super::deck::entry_line(e)).color(theme::LCD_AMBER)).truncate());
+                ui.label(RichText::new("NOW").size(10.0).monospace().color(theme::now()));
+                ui.add(egui::Label::new(RichText::new(super::deck::entry_line(e)).color(theme::now())).truncate());
             });
         }
     });
@@ -497,11 +497,11 @@ pub fn on_rediscovered(app: &mut App, request: u64, setlist: Option<Setlist>) {
 
 fn empty_hint(app: &mut App, ui: &mut Ui) {
     ui.add_space(6.0);
-    ui.label(RichText::new("No setlist for this file.").color(theme::TEXT_DIM));
+    ui.label(RichText::new("No setlist for this file.").color(theme::text_dim()));
     ui.label(
         RichText::new("Nullamp looked for embedded chapters, a cue sheet in the tags, and a .cue file next to it. Import a cue sheet, paste a tracklist copied from a web page, or add entries at the playhead.")
             .small()
-            .color(theme::TEXT_FAINT),
+            .color(theme::text_faint()),
     );
     tracklist_links(app, ui);
 }
@@ -510,7 +510,7 @@ fn tracklist_links(app: &mut App, ui: &mut Ui) {
     let urls = app.mix.tracklist_urls.clone();
     for url in urls {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Tracklist link in tags:").small().color(theme::TEXT_DIM));
+            ui.label(RichText::new("Tracklist link in tags:").small().color(theme::text_dim()));
             ui.hyperlink_to(RichText::new(&url).small(), &url);
             if url.contains("1001tracklists.com") && ui.small_button("Paste from it…").on_hover_text("1001Tracklists has no API: open the page, copy the list, paste it here").clicked() {
                 app.mix.paste = Some(Paste { url: url.clone(), replace: true, ..Default::default() });
@@ -534,26 +534,26 @@ fn source_summary(app: &mut App, ui: &mut Ui) {
     let saved = app.mix.origin == Some(SetlistOrigin::Saved);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new(format!("{} tracks", s.entries.len())).small().color(theme::TEXT));
-        ui.label(RichText::new(format!("· {}", sources.join(", "))).small().color(theme::TEXT_DIM));
+        ui.label(RichText::new(format!("{} tracks", s.entries.len())).small().color(theme::text()));
+        ui.label(RichText::new(format!("· {}", sources.join(", "))).small().color(theme::text_dim()));
         if untimed {
-            ui.label(RichText::new("· no times, reference only").small().color(theme::TEXT_DIM));
+            ui.label(RichText::new("· no times, reference only").small().color(theme::text_dim()));
         } else if approx > 0 {
-            ui.label(RichText::new(format!("· ≈ {approx} approximate")).small().color(theme::WARN))
+            ui.label(RichText::new(format!("· ≈ {approx} approximate")).small().color(theme::warn()))
                 .on_hover_text("These start times are estimates from the source; boundaries are drawn dashed on the timeline.");
         } else {
-            ui.label(RichText::new("· exact timing").small().color(theme::OK));
+            ui.label(RichText::new("· exact timing").small().color(theme::ok()));
         }
         if edited > 0 {
-            ui.label(RichText::new(format!("· ✎ {edited} corrected")).small().color(theme::TEXT_DIM));
+            ui.label(RichText::new(format!("· ✎ {edited} corrected")).small().color(theme::text_dim()));
         }
         if saved {
-            ui.label(RichText::new("· saved locally").small().color(theme::TEXT_FAINT));
+            ui.label(RichText::new("· saved locally").small().color(theme::text_faint()));
         }
     });
     let issues = app.mix.issues.clone();
     if !issues.is_empty() {
-        egui::CollapsingHeader::new(RichText::new(format!("⚠ {} problem{}", issues.len(), if issues.len() == 1 { "" } else { "s" })).small().color(theme::WARN))
+        egui::CollapsingHeader::new(RichText::new(format!("⚠ {} problem{}", issues.len(), if issues.len() == 1 { "" } else { "s" })).small().color(theme::warn()))
             .id_salt("setlist-issues")
             .show(ui, |ui| {
                 for issue in issues.iter().take(30) {
@@ -601,10 +601,10 @@ fn entries(app: &mut App, ui: &mut Ui) {
             let selected = app.mix.selected == Some(e.id);
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
             let p = ui.painter();
-            let bg = if selected { theme::SELECT_BG } else if resp.hovered() { theme::RAISED } else if i % 2 == 1 { theme::ROW_ALT } else { theme::PANEL };
+            let bg = if selected { theme::select_bg() } else if resp.hovered() { theme::raised() } else if i % 2 == 1 { theme::row_alt() } else { theme::panel() };
             p.rect_filled(rect, 0.0, bg);
             if active {
-                p.rect_filled(egui::Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::LCD_AMBER);
+                p.rect_filled(egui::Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::now());
             }
             let time_text = match e.start {
                 Some(s) if e.timing == Timing::Approximate => format!("≈{}", format_clock(s)),
@@ -612,31 +612,31 @@ fn entries(app: &mut App, ui: &mut Ui) {
                 None if e.provenance == Provenance::TagDescription => String::new(),
                 None => "--:--".into(),
             };
-            let time_color = if e.start.is_none() { theme::WARN } else if active { theme::LCD_AMBER } else { theme::TEXT_DIM };
-            p.text(rect.left_top() + vec2(10.0, 9.0), Align2::LEFT_CENTER, format!("{:>2}", i + 1), theme::mono(10.0), theme::TEXT_FAINT);
+            let time_color = if e.start.is_none() { theme::warn() } else if active { theme::now() } else { theme::text_dim() };
+            p.text(rect.left_top() + vec2(10.0, 9.0), Align2::LEFT_CENTER, format!("{:>2}", i + 1), theme::mono(10.0), theme::text_faint());
             p.text(rect.left_top() + vec2(10.0, 24.0), Align2::LEFT_CENTER, time_text, theme::mono(10.5), time_color);
             let text_left = rect.left() + 70.0;
             let width = rect.right() - text_left - 24.0;
-            let title_color = if active { theme::LCD_AMBER } else if e.is_unidentified() { theme::TEXT_FAINT } else { theme::TEXT };
+            let title_color = if active { theme::now() } else if e.is_unidentified() { theme::text_faint() } else { theme::text() };
             clip_text(ui, egui::pos2(text_left, rect.top() + 9.0), width, &e.full_title(), theme::prop(12.5), title_color);
             let mut sub = e.display_artist().to_owned();
             if let Some(l) = &e.label {
                 sub.push_str(&format!("  [{l}]"));
             }
-            clip_text(ui, egui::pos2(text_left, rect.top() + 24.0), width, &sub, theme::prop(11.0), theme::TEXT_DIM);
+            clip_text(ui, egui::pos2(text_left, rect.top() + 24.0), width, &sub, theme::prop(11.0), theme::text_dim());
             let mark = if e.user_edited {
-                Some(("✎", theme::TEXT_DIM, "You corrected this entry"))
+                Some(("✎", theme::text_dim(), "You corrected this entry"))
             } else if e.verification == Verification::Confirmed {
-                Some(("✓", theme::OK, "Confirmed"))
+                Some(("✓", theme::ok(), "Confirmed"))
             } else if e.is_unidentified() {
-                Some(("?", theme::TEXT_FAINT, "Unidentified track"))
+                Some(("?", theme::text_faint(), "Unidentified track"))
             } else {
                 None
             };
             if let Some((m, c, _)) = mark {
                 p.text(egui::pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, m, theme::prop(12.0), c);
             }
-            p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, Color32::from_black_alpha(60)));
+            p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, Color32::from_black_alpha(if theme::is_light() { 18 } else { 60 })));
             if active && scroll_to {
                 ui.scroll_to_rect(rect, Some(egui::Align::Center));
             }
@@ -713,7 +713,7 @@ fn delete_entry(app: &mut App, id: EntryId) {
 
 fn editor(app: &mut App, ui: &mut Ui) {
     let Some(id) = app.mix.edit.id else {
-        ui.label(RichText::new("Select an entry to edit it. Double-click to jump.").small().color(theme::TEXT_FAINT));
+        ui.label(RichText::new("Select an entry to edit it. Double-click to jump.").small().color(theme::text_faint()));
         return;
     };
     let pos = app.player.position();
@@ -721,11 +721,11 @@ fn editor(app: &mut App, ui: &mut Ui) {
     let mut delete = false;
     let mut lookup = false;
     let mut moved: Option<i32> = None;
-    egui::Frame::new().fill(theme::RAISED).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
         let ed = &mut app.mix.edit;
         egui::Grid::new("entry-edit").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             let row = |ui: &mut Ui, label: &str, value: &mut String| {
-                ui.label(RichText::new(label).color(theme::TEXT_DIM));
+                ui.label(RichText::new(label).color(theme::text_dim()));
                 ui.add(egui::TextEdit::singleline(value).desired_width(f32::INFINITY));
                 ui.end_row();
             };
@@ -733,7 +733,7 @@ fn editor(app: &mut App, ui: &mut Ui) {
             row(ui, "Title", &mut ed.title);
             row(ui, "Version", &mut ed.version);
             row(ui, "Label", &mut ed.label);
-            ui.label(RichText::new("Start").color(theme::TEXT_DIM));
+            ui.label(RichText::new("Start").color(theme::text_dim()));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut ed.start).desired_width(90.0).hint_text("m:ss"));
                 if ui.small_button("→ playhead").on_hover_text(format!("Set to {}", format_precise(pos))).clicked() {
@@ -743,7 +743,7 @@ fn editor(app: &mut App, ui: &mut Ui) {
                 ui.checkbox(&mut ed.exact, "exact").on_hover_text("Unchecked: the time is an estimate (shown with ≈)");
             });
             ui.end_row();
-            ui.label(RichText::new("End").color(theme::TEXT_DIM));
+            ui.label(RichText::new("End").color(theme::text_dim()));
             ui.add(egui::TextEdit::singleline(&mut ed.end).desired_width(90.0).hint_text("optional"));
             ui.end_row();
             ui.label("");
@@ -751,14 +751,14 @@ fn editor(app: &mut App, ui: &mut Ui) {
             ui.end_row();
         });
         if let Some(err) = &ed.error {
-            ui.label(RichText::new(err).small().color(theme::ERR));
+            ui.label(RichText::new(err).small().color(theme::err()));
         }
         if let Some(e) = app.mix.setlist.as_ref().and_then(|s| s.entries.iter().find(|e| e.id == id)) {
             if let Some(r) = &e.release {
-                ui.label(RichText::new(format!("Release: {r}")).small().color(theme::TEXT_DIM));
+                ui.label(RichText::new(format!("Release: {r}")).small().color(theme::text_dim()));
             }
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Source: {}", e.provenance.label())).small().color(theme::TEXT_FAINT));
+                ui.label(RichText::new(format!("Source: {}", e.provenance.label())).small().color(theme::text_faint()));
                 if let Some(url) = e.provenance.url().or(e.source_url.as_deref()) {
                     ui.hyperlink_to(RichText::new("open").small(), url);
                 }
@@ -778,7 +778,7 @@ fn editor(app: &mut App, ui: &mut Ui) {
                 moved = Some(1);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new("Delete").color(theme::ERR)).clicked() {
+                if ui.button(RichText::new("Delete").color(theme::err())).clicked() {
                     delete = true;
                 }
             });
@@ -859,7 +859,7 @@ fn paste_modal(app: &mut App, ctx: &egui::Context) {
         ui.label(
             RichText::new("Copy a tracklist from a web page (1001Tracklists, Mixcloud, a forum post…) and paste it below. Lines like “[12:30] Artist - Title (Remix)” are recognised; timestamps are treated as approximate.")
                 .small()
-                .color(theme::TEXT_DIM),
+                .color(theme::text_dim()),
         );
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
             ui.add(egui::TextEdit::multiline(&mut paste.text).desired_rows(12).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
@@ -874,7 +874,7 @@ fn paste_modal(app: &mut App, ctx: &egui::Context) {
         ui.label(
             RichText::new(format!("{} tracks recognised ({timed} with times), {} lines ignored", parsed.setlist.entries.len(), parsed.ignored.len()))
                 .small()
-                .color(if parsed.setlist.entries.is_empty() { theme::WARN } else { theme::OK }),
+                .color(if parsed.setlist.entries.is_empty() { theme::warn() } else { theme::ok() }),
         );
         if app.mix.setlist.as_ref().is_some_and(|s| !s.entries.is_empty()) {
             ui.checkbox(&mut paste.replace, "Replace current entries (your corrections are kept)");
@@ -900,7 +900,7 @@ fn confirm_modals(app: &mut App, ctx: &egui::Context) {
             ui.heading("Clear the setlist?");
             ui.label("All entries for this file are removed, including your corrections.");
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Clear").color(theme::ERR)).clicked() {
+                if ui.button(RichText::new("Clear").color(theme::err())).clicked() {
                     app.mix.setlist = None;
                     app.mix.confirm_clear = false;
                     select(app, None);

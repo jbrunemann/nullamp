@@ -104,7 +104,6 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, mut store: Store) -> Self {
-        theme::apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let waker = {
             let ctx = ctx.clone();
@@ -112,6 +111,7 @@ impl App {
         };
 
         let settings = store.load_settings();
+        theme::apply(&ctx, theme::Appearance::from_setting(&settings.appearance));
         let lists = store.load_playlists(&settings.playlist_order);
         let (engine, engine_events) = AudioEngine::start(waker.clone());
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7);
@@ -745,22 +745,22 @@ impl App {
                     nullamp_core::time::format_clock(total),
                     if incomplete { "+" } else { "" }
                 ))
-                .color(theme::TEXT_DIM)
+                .color(theme::text_dim())
                 .size(11.5),
             );
             if !self.selection.ids.is_empty() {
-                ui.label(egui::RichText::new(format!("· {} selected", self.selection.ids.len())).color(theme::TEXT_DIM).size(11.5));
+                ui.label(egui::RichText::new(format!("· {} selected", self.selection.ids.len())).color(theme::text_dim()).size(11.5));
             }
             if missing > 0 {
-                ui.label(egui::RichText::new(format!("· {missing} unavailable")).color(theme::WARN).size(11.5));
+                ui.label(egui::RichText::new(format!("· {missing} unavailable")).color(theme::warn()).size(11.5));
             }
             if let Some(m) = &self.message {
                 let ttl = if m.kind == MessageKind::Error { 12.0 } else { 6.0 };
                 if m.at.elapsed().as_secs_f32() < ttl {
                     let color = match m.kind {
-                        MessageKind::Info => theme::TEXT_DIM,
-                        MessageKind::Warn => theme::WARN,
-                        MessageKind::Error => theme::ERR,
+                        MessageKind::Info => theme::text_dim(),
+                        MessageKind::Warn => theme::warn(),
+                        MessageKind::Error => theme::err(),
                     };
                     ui.separator();
                     ui.add(egui::Label::new(egui::RichText::new(&m.text).color(color).size(11.5)).truncate());
@@ -770,14 +770,22 @@ impl App {
                 if ui.small_button("?").on_hover_text("Keyboard shortcuts (F1)").clicked() {
                     self.dialogs.shortcuts_open = true;
                 }
+                let appearance = theme::Appearance::from_setting(&self.settings.appearance);
+                let resp = ui.add(egui::Label::new(egui::RichText::new(format!("theme: {}", appearance.setting())).size(11.0).color(theme::text_faint())).sense(egui::Sense::click()));
+                if resp.on_hover_text("Click to switch between dark, light and system appearance").clicked() {
+                    let next = appearance.next();
+                    self.settings.appearance = next.setting().into();
+                    theme::set_appearance(ui.ctx(), next);
+                    self.mark_settings_dirty();
+                }
                 let online = if self.settings.online_lookups { "online lookups on" } else { "offline mode" };
-                let resp = ui.add(egui::Label::new(egui::RichText::new(online).size(11.0).color(theme::TEXT_FAINT)).sense(egui::Sense::click()));
+                let resp = ui.add(egui::Label::new(egui::RichText::new(online).size(11.0).color(theme::text_faint())).sense(egui::Sense::click()));
                 if resp.on_hover_text("Click to toggle online lookups").clicked() {
                     self.settings.online_lookups = !self.settings.online_lookups;
                     self.mark_settings_dirty();
                 }
                 if self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {
-                    ui.label(egui::RichText::new("media keys unavailable").size(11.0).color(theme::WARN))
+                    ui.label(egui::RichText::new("media keys unavailable").size(11.0).color(theme::warn()))
                         .on_hover_text("The system media service could not be reached; in-app shortcuts still work.");
                 }
             });
@@ -801,22 +809,23 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        theme::sync(&ctx);
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
 
         let deck = egui::Panel::top("deck")
-            .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(10, 8)))
+            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 8)))
             .resizable(false)
             .show(ui, |ui| deck::show(self, ui));
         self.fit_window(&ctx, deck.response.rect.height());
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(10, 3)))
+            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 3)))
             .exact_size(STATUS_HEIGHT)
             .resizable(false)
             .show(ui, |ui| self.status_bar(ui));
         if self.side_open && self.playlist_open {
             egui::Panel::right("side")
-                .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(8)))
+                .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(8)))
                 .default_size(380.0)
                 .size_range(300.0..=720.0)
                 .resizable(true)
@@ -826,14 +835,14 @@ impl eframe::App for App {
         let central = egui::CentralPanel::default();
         if !self.playlist_open {
             let margin = if self.side_open { egui::Margin::same(8) } else { egui::Margin::same(0) };
-            central.frame(egui::Frame::new().fill(if self.side_open { theme::PANEL } else { theme::BG }).inner_margin(margin)).show(ui, |ui| {
+            central.frame(egui::Frame::new().fill(if self.side_open { theme::panel() } else { theme::bg() }).inner_margin(margin)).show(ui, |ui| {
                 if self.side_open {
                     self.side_panel(ui);
                 }
             });
         } else {
             central
-                .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(0)))
+                .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(0)))
                 .show(ui, |ui| playlist_view::show(self, ui));
         }
 

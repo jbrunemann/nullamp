@@ -70,6 +70,7 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 
   Tests prove the audio bytes, unknown frames (PRIV, TXXX) and CHAP/CTOC chapters survive.
 - **Workers**: an interactive lane (now-playing info, inspector, writes) always served before a bulk lane (playlist scans, folder expansion), plus a separate online thread so network never delays local work.
+- **Themes**: dark (default), light, or follow the OS, cycled by the "theme:" label in the status bar and saved as `appearance` in settings. `ui/theme.rs` holds a `Palette` per theme; UI code calls `theme::text()`, `theme::panel()` etc., which read the palette synced from egui each frame. The LCD (`LCD_*` consts) stays dark in both themes; chrome that borrows LCD hues uses `now()`, `mix_tag()`, `key()` for legibility on light surfaces. The palette flag is process-global, so run snapshot tests with `--test-threads=1`. `render_main_window_light` writes the `*-light.png` shots.
 - **Fonts**: egui 0.37's bundled fonts lack arrows, ⌘ ⌥ ⇧, ⚠ ✓ ✎ ✕ ▲▼▶▸ ◎ and similar. A 3.9 KB subset of DejaVu Sans (`app/assets/fonts/NullampSymbols.ttf`, licence beside it) is installed as a fallback for both families. To add glyphs, install fonttools in a venv and re-subset DejaVuSans.ttf 2.37 with `pyftsubset DejaVuSans.ttf --text="<all symbols>" --no-hinting --layout-features='' --output-file=NullampSymbols.ttf`.
 
 ### UI layout (single window)

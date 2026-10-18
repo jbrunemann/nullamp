@@ -264,7 +264,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
             ui.heading(format!("Clear “{name}”?"));
             ui.label("All entries are removed from the playlist. Files on disk are not touched.");
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Clear").color(theme::ERR)).clicked() {
+                if ui.button(RichText::new("Clear").color(theme::err())).clicked() {
                     app.workers.cancel_scans();
                     app.player.edit_list(index, |p| p.clear());
                     app.selection = Default::default();
@@ -287,7 +287,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
             ui.heading(format!("Delete playlist “{name}”?"));
             ui.label("The playlist is removed from Nullamp. Audio files are not touched.");
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Delete").color(theme::ERR)).clicked() {
+                if ui.button(RichText::new("Delete").color(theme::err())).clicked() {
                     match app.player.remove_list(index) {
                         Some(doc) => {
                             if let Err(e) = app.store.delete_playlist(&doc.key) {
@@ -336,13 +336,13 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
             ];
             egui::Grid::new("shortcuts").num_columns(2).spacing([18.0, 4.0]).show(ui, |ui| {
                 for (k, v) in rows {
-                    ui.label(RichText::new(k).monospace().color(theme::LCD_FG));
+                    ui.label(RichText::new(k).monospace().color(theme::key()));
                     ui.label(v);
                     ui.end_row();
                 }
             });
             ui.add_space(6.0);
-            ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::TEXT_DIM));
+            ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
         });
         app.dialogs.shortcuts_open = open;
     }

@@ -25,7 +25,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 
 ```sh
 cargo test --workspace                       # all tests (about 120, all pass on macOS)
-cargo test -p nullamp ui_snapshots -- --ignored   # renders the real UI offscreen to target/screenshots/*.png
+cargo test -p nullamp ui_snapshots -- --ignored --test-threads=1   # renders the real UI offscreen to target/screenshots/*.png
 cargo test -p nullamp-online --test live -- --ignored   # hits MusicBrainz/CAA/Mixcloud for real
 cargo run --release -p nullamp-audio --example probe -- FILE [NEXT_FILE] [--audible]   # engine latency probe, silent by default
 packaging/macos/bundle.sh                    # builds target/bundle/Nullamp.app

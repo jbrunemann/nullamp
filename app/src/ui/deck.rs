@@ -34,7 +34,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 5.0, theme::LCD_BG);
-    p.rect_stroke(rect, 5.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+    p.rect_stroke(rect, 5.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
     // Faint scanlines for the display texture.
     let mut y = rect.top() + 2.0;
     while y < rect.bottom() {
@@ -211,7 +211,7 @@ fn artwork(app: &App, ui: &Ui, rect: Rect) {
         }
         p.circle_filled(c, rect.width() * 0.07, theme::ACCENT_DIM);
     }
-    p.rect_stroke(rect, 5.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+    p.rect_stroke(rect, 5.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
 }
 
 fn timeline(app: &mut App, ui: &mut Ui) {
@@ -266,15 +266,15 @@ fn timeline(app: &mut App, ui: &mut Ui) {
         let shown = drag_target.unwrap_or(pos);
         let px = x_of(shown, d);
         p.rect_filled(Rect::from_min_max(bar.left_top(), pos2(px, bar.bottom())), 3.0, theme::LCD_FG.gamma_multiply(0.18));
-        p.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(2.0, theme::ACCENT));
-        p.circle_filled(pos2(px, rect.top() + 2.0), 3.0, theme::ACCENT);
+        p.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(2.0, theme::LCD_ACCENT));
+        p.circle_filled(pos2(px, rect.top() + 2.0), 3.0, theme::LCD_ACCENT);
     }
-    p.rect_stroke(bar, 3.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+    p.rect_stroke(bar, 3.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
 
     // Time labels inside the bar ends.
-    p.text(pos2(bar.left() + 6.0, bar.center().y), Align2::LEFT_CENTER, format_clock(drag_target.unwrap_or(pos)), theme::mono(10.5), theme::TEXT);
+    p.text(pos2(bar.left() + 6.0, bar.center().y), Align2::LEFT_CENTER, format_clock(drag_target.unwrap_or(pos)), theme::mono(10.5), theme::LCD_TEXT);
     if let Some(d) = dur {
-        p.text(pos2(bar.right() - 6.0, bar.center().y), Align2::RIGHT_CENTER, format_clock(d), theme::mono(10.5), theme::TEXT_DIM);
+        p.text(pos2(bar.right() - 6.0, bar.center().y), Align2::RIGHT_CENTER, format_clock(d), theme::mono(10.5), theme::LCD_TEXT_DIM);
     }
 
     if let (Some(d), Some(hover)) = (dur, resp.hover_pos()) {

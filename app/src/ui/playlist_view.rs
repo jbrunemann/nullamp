@@ -67,7 +67,7 @@ fn cell(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32, align: Al
 }
 
 pub fn show(app: &mut App, ui: &mut Ui) {
-    egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+    egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
         ui.horizontal(|ui| {
             playlist_tabs(app, ui);
         });
@@ -223,11 +223,11 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
 
 fn header(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, theme::BG);
-    ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, theme::BORDER));
+    ui.painter().rect_filled(rect, 0.0, theme::bg());
+    ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, theme::border()));
     let cols = columns(rect.shrink2(vec2(8.0, 0.0)));
     let font = theme::prop(11.0);
-    let c = theme::TEXT_FAINT;
+    let c = theme::text_faint();
     cell(ui, cols.num, "#", font.clone(), c, Align2::RIGHT_CENTER);
     cell(ui, cols.title, "TITLE", font.clone(), c, Align2::LEFT_CENTER);
     cell(ui, cols.artist, "ARTIST", font.clone(), c, Align2::LEFT_CENTER);
@@ -307,7 +307,7 @@ fn table(app: &mut App, ui: &mut Ui) {
                 let y = rows.iter().find(|(i, _)| *i == t).map(|(_, r)| r.top()).or_else(|| rows.last().map(|(_, r)| r.bottom()));
                 if let Some(y) = y {
                     let x = output.inner_rect.x_range();
-                    ui.painter().line_segment([pos2(x.min + 4.0, y), pos2(x.max - 4.0, y)], Stroke::new(2.0, theme::ACCENT));
+                    ui.painter().line_segment([pos2(x.min + 4.0, y), pos2(x.max - 4.0, y)], Stroke::new(2.0, theme::accent()));
                 }
             }
         }
@@ -330,7 +330,7 @@ fn table(app: &mut App, ui: &mut Ui) {
     {
         let y = rows.iter().find(|(i, _)| *i == t).map(|(_, r)| r.top()).or_else(|| rows.last().map(|(_, r)| r.bottom()));
         if let Some(y) = y {
-            ui.painter().line_segment([pos2(list_rect.left() + 4.0, y), pos2(list_rect.right() - 4.0, y)], Stroke::new(2.0, theme::OK));
+            ui.painter().line_segment([pos2(list_rect.left() + 4.0, y), pos2(list_rect.right() - 4.0, y)], Stroke::new(2.0, theme::ok()));
         }
     }
     app.pl_view.rows = rows;
@@ -366,27 +366,27 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, i: usize, e: &PlaylistEntry, hovere
     let selected = app.selection.ids.contains(&e.id);
     let current = app.player.is_current(app.player.viewing, e.id);
     let bg = if selected {
-        theme::SELECT_BG
+        theme::select_bg()
     } else if hovered {
-        theme::RAISED
+        theme::raised()
     } else if i % 2 == 1 {
-        theme::ROW_ALT
+        theme::row_alt()
     } else {
-        theme::PANEL
+        theme::panel()
     };
     p.rect_filled(rect, 0.0, bg);
     if app.selection.cursor == Some(e.id) && selected {
-        p.rect_stroke(rect.shrink(0.5), 0.0, Stroke::new(1.0, theme::SELECT_STROKE), egui::StrokeKind::Inside);
+        p.rect_stroke(rect.shrink(0.5), 0.0, Stroke::new(1.0, theme::select_stroke()), egui::StrokeKind::Inside);
     }
     if current {
-        p.rect_filled(Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::ACCENT);
+        p.rect_filled(Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::accent());
     }
     let cols = columns(rect.shrink2(vec2(8.0, 0.0)));
     let playable = e.status.is_playable();
     let (fg, dim) = match (current, playable) {
-        (true, _) => (theme::ACCENT, theme::ACCENT.gamma_multiply(0.8)),
-        (false, false) => (theme::TEXT_FAINT, theme::TEXT_FAINT),
-        _ => (theme::TEXT, theme::TEXT_DIM),
+        (true, _) => (theme::accent(), theme::accent().gamma_multiply(0.8)),
+        (false, false) => (theme::text_faint(), theme::text_faint()),
+        _ => (theme::text(), theme::text_dim()),
     };
     let font = theme::prop(12.5);
     if current {
@@ -396,11 +396,11 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, i: usize, e: &PlaylistEntry, hovere
             _ => Icon::Play,
         };
         let r = Rect::from_center_size(pos2(cols.num.right() - 7.0, cols.num.center().y), vec2(10.0, 10.0));
-        widgets::paint_icon(p, r, icon, theme::ACCENT);
+        widgets::paint_icon(p, r, icon, theme::accent());
     } else if !playable {
-        cell(ui, cols.num, "⚠", font.clone(), theme::WARN, Align2::RIGHT_CENTER);
+        cell(ui, cols.num, "⚠", font.clone(), theme::warn(), Align2::RIGHT_CENTER);
     } else {
-        cell(ui, cols.num, &format!("{}", i + 1), theme::mono(11.0), theme::TEXT_FAINT, Align2::RIGHT_CENTER);
+        cell(ui, cols.num, &format!("{}", i + 1), theme::mono(11.0), theme::text_faint(), Align2::RIGHT_CENTER);
     }
     cell(ui, cols.title, &e.info.display_title(&e.path), font.clone(), fg, Align2::LEFT_CENTER);
     cell(ui, cols.artist, e.info.artist.as_deref().unwrap_or(""), font.clone(), dim, Align2::LEFT_CENTER);
@@ -461,13 +461,13 @@ fn empty_state(app: &mut App, ui: &mut Ui, rect: Rect) {
     let resp = ui.allocate_rect(rect, Sense::click());
     let p = ui.painter();
     let c = rect.center();
-    p.text(c - vec2(0.0, 14.0), Align2::CENTER_CENTER, "This playlist is empty", theme::prop(15.0), theme::TEXT_DIM);
+    p.text(c - vec2(0.0, 14.0), Align2::CENTER_CENTER, "This playlist is empty", theme::prop(15.0), theme::text_dim());
     p.text(
         c + vec2(0.0, 10.0),
         Align2::CENTER_CENTER,
         "Drop files or folders here, or click to add files",
         theme::prop(12.5),
-        theme::TEXT_FAINT,
+        theme::text_faint(),
     );
     if resp.clicked() {
         dialogs::open_files(app);
