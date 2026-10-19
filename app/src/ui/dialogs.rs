@@ -311,60 +311,108 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
             app.dialogs.confirm_delete = Some(index);
         }
     }
+}
 
-    if app.dialogs.shortcuts_open {
-        let mut open = true;
-        egui::Window::new("Keyboard shortcuts").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
-            let rows: Vec<(String, &str)> = vec![
-                ("Space / C".into(), "Play / pause"),
-                ("X".into(), "Play"),
-                ("V".into(), "Stop"),
-                ("Z / B".into(), "Previous / next track"),
-                ("← / →".into(), "Seek 5 s"),
-                ("⇧← / ⇧→".into(), "Previous / next setlist entry"),
-                ("+ / − / M".into(), "Volume up / down / mute"),
-                ("S / R".into(), "Shuffle / cycle repeat"),
-                ("↑ / ↓, Home / End".into(), "Move selection (⇧ extends)"),
-                ("Enter".into(), "Play selected"),
-                ("Delete / Backspace".into(), "Remove selected"),
-                (format!("{alt}↑ / {alt}↓"), "Move selected entries"),
-                (widgets::cmd_key('A', false), "Select all"),
-                (format!("{} / {}", widgets::cmd_key('O', false), widgets::cmd_key('O', true)), "Add files / folder"),
-                (format!("{} / {} / {}", widgets::cmd_key('I', false), widgets::cmd_key('L', false), widgets::cmd_key('P', false)), "Inspector / setlist / playlist panel"),
-                (widgets::cmd_key('J', false), "Scroll to playing track"),
-                ("F1".into(), "This help"),
-            ];
-            egui::Grid::new("shortcuts").num_columns(2).spacing([18.0, 4.0]).show(ui, |ui| {
-                for (k, v) in rows {
-                    ui.label(RichText::new(k).monospace().color(theme::key()));
-                    ui.label(v);
-                    ui.end_row();
+/// The shortcuts and About pages take over the deck instead of floating over the window: in
+/// the compact layout the window is only as tall as the deck, and a free window would be cut off.
+pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
+    if !app.dialogs.shortcuts_open && !app.dialogs.about_open {
+        return;
+    }
+    let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    let inner = deck.size() - egui::vec2(20.0, 16.0);
+    egui::Area::new(egui::Id::NULL.with("deck-overlay")).order(egui::Order::Foreground).fixed_pos(deck.min).show(ctx, |ui| {
+        theme::with_dark(ui, |ui| {
+            egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+                ui.set_min_size(inner);
+                ui.set_max_size(inner);
+                let title = if app.dialogs.about_open { "About Nullamp" } else { "Keyboard shortcuts" };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(title).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Close").clicked() {
+                            close = true;
+                        }
+                        if app.dialogs.shortcuts_open {
+                            ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
+                        }
+                    });
+                });
+                ui.separator();
+                if app.dialogs.about_open {
+                    about_body(app, ui);
+                } else {
+                    shortcuts_body(ui);
                 }
             });
-            ui.add_space(6.0);
-            ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
         });
-        app.dialogs.shortcuts_open = open;
+    });
+    if close {
+        app.dialogs.shortcuts_open = false;
+        app.dialogs.about_open = false;
     }
+}
 
-    if app.dialogs.about_open {
-        let mut open = true;
-        egui::Window::new("About Nullamp").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            let icon = app.dialogs.about_icon.get_or_insert_with(|| {
-                let data = crate::app_icon();
-                let image = egui::ColorImage::from_rgba_unmultiplied([data.width as usize, data.height as usize], &data.rgba);
-                ui.ctx().load_texture("about-icon", image, egui::TextureOptions::LINEAR)
-            });
-            ui.horizontal(|ui| {
-                ui.add(egui::Image::new(&*icon).fit_to_exact_size(egui::vec2(72.0, 72.0)));
-                ui.vertical(|ui| {
-                    ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
-                    ui.label("A fast, retro-inspired music and DJ mix player.");
-                    ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
+/// The shortcut list in as many columns as the deck is wide, so it fits its height.
+fn shortcuts_body(ui: &mut egui::Ui) {
+    let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
+    let rows: Vec<(String, &str)> = vec![
+        ("Space / C".into(), "Play / pause"),
+        ("X".into(), "Play"),
+        ("V".into(), "Stop"),
+        ("Z / B".into(), "Prev / next track"),
+        ("← / →".into(), "Seek 5 s"),
+        ("⇧← / ⇧→".into(), "Prev / next setlist entry"),
+        ("+ / − / M".into(), "Volume / mute"),
+        ("S / R".into(), "Shuffle / repeat"),
+        ("↑ ↓ Home End".into(), "Select (⇧ extends)"),
+        ("Enter".into(), "Play selected"),
+        ("Del / Backspace".into(), "Remove selected"),
+        (format!("{alt}↑ / {alt}↓"), "Move selected"),
+        (widgets::cmd_key('A', false), "Select all"),
+        (format!("{} / {}", widgets::cmd_key('O', false), widgets::cmd_key('O', true)), "Add files / folder"),
+        (format!("{} / {} / {}", widgets::cmd_key('I', false), widgets::cmd_key('L', false), widgets::cmd_key('P', false)), "Inspector / setlist / list"),
+        (widgets::cmd_key('J', false), "Show playing track"),
+        ("F1".into(), "This help"),
+    ];
+    const COLUMNS: usize = 3;
+    let per_column = rows.len().div_ceil(COLUMNS);
+    egui::ScrollArea::both().id_salt("shortcuts-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        ui.horizontal_top(|ui| {
+            for (n, chunk) in rows.chunks(per_column).enumerate() {
+                if n > 0 {
+                    ui.add_space(10.0);
+                }
+                egui::Grid::new(("shortcuts", n)).num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
+                    for (k, v) in chunk {
+                        ui.label(RichText::new(k).size(12.0).strong().color(theme::key()));
+                        ui.label(RichText::new(*v).size(12.0));
+                        ui.end_row();
+                    }
                 });
-            });
-            ui.add_space(6.0);
+            }
+        });
+    });
+}
+
+/// Product info on the left, the log tail on the right.
+fn about_body(app: &mut App, ui: &mut egui::Ui) {
+    let icon = app.dialogs.about_icon.get_or_insert_with(|| {
+        let data = crate::app_icon();
+        let image = egui::ColorImage::from_rgba_unmultiplied([data.width as usize, data.height as usize], &data.rgba);
+        ui.ctx().load_texture("about-icon", image, egui::TextureOptions::LINEAR)
+    });
+    let height = ui.available_height();
+    ui.horizontal_top(|ui| {
+        ui.add(egui::Image::new(&*icon).fit_to_exact_size(egui::vec2(72.0, 72.0)));
+        ui.vertical(|ui| {
+            ui.set_width(250.0);
+            ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
+            ui.label("A fast, retro-inspired music and DJ mix player.");
+            ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
+        });
+        ui.separator();
+        ui.vertical(|ui| {
             let lines = crate::logbuf::tail();
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Log (last {} lines)", lines.len())).small().color(theme::text_dim()));
@@ -372,8 +420,10 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
                     ui.ctx().copy_text(lines.join("\n"));
                 }
             });
-            egui::Frame::new().fill(theme::bg()).stroke(egui::Stroke::new(1.0, theme::border())).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-                egui::ScrollArea::both().id_salt("about-log").min_scrolled_width(560.0).max_height(200.0).auto_shrink([false, true]).stick_to_bottom(true).show(ui, |ui| {
+            egui::Frame::new().fill(theme::bg()).stroke(egui::Stroke::new(1.0, theme::border())).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+                let size = egui::vec2(ui.available_width(), (height - 30.0).max(40.0));
+                ui.set_min_size(size);
+                egui::ScrollArea::both().id_salt("about-log").max_height(size.y).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                     if lines.is_empty() {
                         ui.label(RichText::new("Nothing logged yet.").small().color(theme::text_faint()));
                     }
@@ -383,6 +433,5 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
                 });
             });
         });
-        app.dialogs.about_open = open;
-    }
+    });
 }

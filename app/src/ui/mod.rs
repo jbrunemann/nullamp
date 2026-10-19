@@ -1061,6 +1061,7 @@ impl eframe::App for App {
         }
 
         dialogs::show_modals(self, &ctx);
+        dialogs::show_deck_overlay(self, &ctx, deck.response.rect);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {

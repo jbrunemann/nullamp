@@ -407,7 +407,19 @@ fn render_output_menu() {
     icons.render().expect("render").save(out_dir().join("05b-output-icons.png")).unwrap();
 }
 
-/// The About window with a few log lines.
+/// The shortcuts page, which takes over the deck.
+#[test]
+#[ignore]
+fn render_shortcuts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(640.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.shortcuts_open = true;
+    settle(&mut h, 300);
+    save(&mut h, "06b-shortcuts.png");
+}
+
+/// The About page with a few log lines, taking over the deck.
 #[test]
 #[ignore]
 fn render_about() {
