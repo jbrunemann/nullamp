@@ -68,7 +68,7 @@ Tests: core 54, audio 9, meta 15, sysmedia 2, app 32 (1 screenshot render, ignor
   5. Mirror the edits to any ID3v1 or APE tags.
   6. Verify: tags read back as written, and duration and sample rate are unchanged.
   7. Check the original again for external edits.
-  8. Optionally back up the original. The backup directory has a size budget, oldest deleted first, default 2 GB.
+  8. Optionally back up the original. The backup directory has a size budget, oldest deleted first, default 256 MB. Backups are off by default.
   9. Atomically rename the temp file over the original.
 
   Tests prove the audio bytes, unknown frames (PRIV, TXXX) and CHAP/CTOC chapters survive.

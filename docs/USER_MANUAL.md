@@ -249,9 +249,9 @@ Nullamp never edits your file in place. Each save:
 4. Optionally keeps a backup of the original.
 5. Swaps the copy in atomically.
 
-If anything fails, your original is untouched. Chapters, artwork you did not change, and unknown frames survive. The audio itself is never rewritten. After a save you can click **Restore it** to put the previous version back from the backup.
+If anything fails, your original is untouched. Chapters, artwork you did not change, and unknown frames survive. The audio itself is never rewritten. With backups on, you can click **Restore it** after a save to put the previous version back.
 
-Backups are on by default. They are stored in the data folder (see [section 9](#9-where-nullamp-keeps-your-data)), with a size budget of 2 GB by default. The oldest backups go first.
+Backups are off by default; turn them on with `backup_before_tag_writes` (see [Settings file](#settings-file)). They are stored in the data folder (see [section 9](#9-where-nullamp-keeps-your-data)), with a size budget of 256 MB by default. A file larger than half the budget is not backed up. The oldest backups go first.
 
 ## 8. Keyboard shortcuts
 
@@ -304,8 +304,8 @@ Nullamp writes `settings.json` in the config folder. Quit the app before editing
 | Key | Meaning |
 |---|---|
 | `resume_playback` | Resume the last track at start. Default off. |
-| `backup_before_tag_writes` | Keep a backup on every tag write. Default on. |
-| `backup_budget_mb` | Size budget for backups. Default 2048. |
+| `backup_before_tag_writes` | Keep a backup on every tag write. Default off. |
+| `backup_budget_mb` | Size budget for backups. Default 256. |
 | `appearance` | `dark`, `light` or `system`. |
 | `visualizer` | `spectrum`, `scope` or `off`. |
 
