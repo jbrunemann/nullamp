@@ -15,7 +15,7 @@ chmod 755 "$DIR/nullamp" "$DIR/install.sh"
 # Icon themes want real sizes; the generator is standard-library Python, so no image tools are needed.
 for s in 48 64 128 256 512; do
   mkdir -p "$DIR/icons/${s}x${s}"
-  python3 packaging/icon.py "$DIR/icons/${s}x${s}/nullamp.png" "$s"
+  python3 packaging/icon.py "$DIR/icons/${s}x${s}/nullamp.png" "$s" --full
 done
 tar -czf "$DIR.tar.gz" "$DIR"
 echo "Built $DIR.tar.gz"

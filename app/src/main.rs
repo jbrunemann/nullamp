@@ -43,8 +43,13 @@ fn main() -> eframe::Result {
 }
 
 /// The window icon: the same artwork as the bundle icon, rendered by `packaging/icon.py` at 256 px.
+/// Other platforms get the `--full` variant, since their docks and taskbars show icons edge to edge.
 pub(crate) fn app_icon() -> egui::IconData {
-    let img = image::load_from_memory_with_format(include_bytes!("../assets/icon-256.png"), image::ImageFormat::Png)
+    #[cfg(target_os = "macos")]
+    const PNG: &[u8] = include_bytes!("../assets/icon-256.png");
+    #[cfg(not(target_os = "macos"))]
+    const PNG: &[u8] = include_bytes!("../assets/icon-256-full.png");
+    let img = image::load_from_memory_with_format(PNG, image::ImageFormat::Png)
         .expect("bundled icon is a valid PNG")
         .into_rgba8();
     let (width, height) = img.dimensions();

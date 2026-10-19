@@ -53,13 +53,21 @@ def cov(d, px):
     return min(max(0.5 - d / px, 0.0), 1.0)
 
 
-def shade(x, y, px):
+# Linux docks and Windows taskbars show icons edge to edge, so the macOS grid's margin
+# (the plate spans about 80% of the canvas, the rest is room for the shadow) makes Nullamp look
+# smaller than its neighbours there. The full variant drops the shadow and fills about 90%.
+FULL_SCALE = 412 / 460
+
+
+def shade(x, y, px, full=False):
     out = (0.0, 0.0, 0.0, 0.0)
+    if full:
+        x, y, px = 512 + (x - 512) * FULL_SCALE, 512 + (y - 512) * FULL_SCALE, px * FULL_SCALE
     body = squircle(x, y, 412)
 
     # Soft shadow under the plate.
     sd = squircle(x, y - 22, 412)
-    if sd < 40:
+    if sd < 40 and not full:
         out = over(out, (0, 0, 0), 0.45 * min(max((40 - sd) / 70, 0), 1) ** 2)
 
     # Plate: graphite, lit from the top, with a thin rim light.
@@ -114,14 +122,14 @@ def shade(x, y, px):
     return out
 
 
-def render(size):
+def render(size, full=False):
     px = 1024 / size
     rows = bytearray()
     for j in range(size):
         rows.append(0)
         y = (j + 0.5) * px
         for i in range(size):
-            r, g, b, a = shade((i + 0.5) * px, y, px)
+            r, g, b, a = shade((i + 0.5) * px, y, px, full)
             rows += bytes((int(r + 0.5), int(g + 0.5), int(b + 0.5), int(a * 255 + 0.5)))
 
     def chunk(t, d):
@@ -130,6 +138,9 @@ def render(size):
 
 
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else "icon-1024.png"
-    size = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
-    open(out, "wb").write(render(size))
+    # Usage: icon.py [OUT] [SIZE] [--full]   (--full for Linux and Windows, see FULL_SCALE)
+    full = "--full" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--full"]
+    out = args[0] if args else "icon-1024.png"
+    size = int(args[1]) if len(args) > 1 else 1024
+    open(out, "wb").write(render(size, full))

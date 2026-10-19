@@ -14,7 +14,7 @@ def resource(rtype, rid, data, flags=0x1030, lang=0x0409):
     return head + data + b"\0" * (-len(data) % 4)
 
 def main(out):
-    pngs = [(s, render(s)) for s in SIZES]
+    pngs = [(s, render(s, full=True)) for s in SIZES]
     # Vista and later read PNG payloads inside icons directly.
     group = struct.pack("<HHH", 0, 1, len(pngs))
     for i, (s, png) in enumerate(pngs, 1):
