@@ -415,6 +415,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         return;
     }
 
+    // A solid bar takes its own gutter; the floating one would cover right-aligned buttons and fields.
+    ui.spacing_mut().scroll.floating = false;
     egui::ScrollArea::vertical().id_salt("inspector").auto_shrink([false, false]).show(ui, |ui| {
         header(app, ui);
         ui.add_space(6.0);
@@ -568,31 +570,29 @@ fn artwork(app: &mut App, ui: &mut Ui) {
     }
     let mut remove = None;
     let mut make_front = None;
-    ui.horizontal_wrapped(|ui| {
-        for (i, a) in app.inspector.art.iter().enumerate() {
+    for (i, a) in app.inspector.art.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(96.0, 96.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 3.0, theme::LCD_BG);
+            if let Some(t) = &a.texture {
+                let s = t.size_vec2();
+                let scale = (rect.width() / s.x).min(rect.height() / s.y);
+                ui.painter().image(t.id(), egui::Rect::from_center_size(rect.center(), s * scale), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+            }
             ui.vertical(|ui| {
-                ui.set_width(104.0);
-                let (rect, _) = ui.allocate_exact_size(vec2(104.0, 104.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 3.0, theme::LCD_BG);
-                if let Some(t) = &a.texture {
-                    let s = t.size_vec2();
-                    let scale = (rect.width() / s.x).min(rect.height() / s.y);
-                    ui.painter().image(t.id(), egui::Rect::from_center_size(rect.center(), s * scale), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                ui.label(a.kind.label());
+                let dims = a.size.map(|[w, h]| format!("{w}×{h} · ")).unwrap_or_default();
+                ui.label(RichText::new(format!("{dims}{} KB", a.data.len() / 1024)).small().color(theme::text_dim()));
+                ui.add_space(4.0);
+                if a.kind != ArtworkKind::FrontCover && ui.add_enabled(writable, egui::Button::new("Set as front cover").small()).on_hover_text("Tag this image as the front cover, the one other players show as album art").clicked() {
+                    make_front = Some(i);
                 }
-                let dims = a.size.map(|[w, h]| format!("{w}×{h}")).unwrap_or_default();
-                let kb = a.data.len() / 1024;
-                ui.label(RichText::new(format!("{} · {dims} · {kb} KB", a.kind.label())).small().color(theme::text_dim()));
-                ui.horizontal(|ui| {
-                    if a.kind != ArtworkKind::FrontCover && ui.add_enabled(writable, egui::Button::new("Front").small()).on_hover_text("Use as front cover").clicked() {
-                        make_front = Some(i);
-                    }
-                    if ui.add_enabled(writable, egui::Button::new("Remove").small()).clicked() {
-                        remove = Some(i);
-                    }
-                });
+                if ui.add_enabled(writable, egui::Button::new("Remove").small()).clicked() {
+                    remove = Some(i);
+                }
             });
-        }
-    });
+        });
+    }
     if let Some(i) = make_front {
         for (j, a) in app.inspector.art.iter_mut().enumerate() {
             if j == i {

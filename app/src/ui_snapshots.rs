@@ -97,6 +97,17 @@ fn render_main_window_as(appearance: &str, suffix: &str) {
     }
     settle(&mut h, 1200);
     save(&mut h, &format!("03-inspector{suffix}.png"));
+
+    // A file with embedded artwork, to look at the artwork section.
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[0].id;
+        app.selection.ids = [id].into();
+        app.selection.cursor = Some(id);
+        crate::ui::inspect_selection(app);
+    }
+    settle(&mut h, 1200);
+    save(&mut h, &format!("03b-inspector-artwork{suffix}.png"));
     h.state_mut().player.stop();
 }
 

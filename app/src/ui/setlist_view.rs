@@ -693,6 +693,7 @@ fn entries(app: &mut App, ui: &mut Ui) {
     let mut clicked = None;
     let mut seek = None;
     let mut menu_action: Option<(EntryId, &'static str)> = None;
+    ui.spacing_mut().scroll.floating = false;
     egui::ScrollArea::vertical().id_salt("setlist-entries").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for (i, e) in setlist.entries.iter().enumerate() {
@@ -826,6 +827,7 @@ fn editor(app: &mut App, ui: &mut Ui) {
     let mut delete = false;
     let mut lookup = false;
     let mut moved: Option<i32> = None;
+    ui.spacing_mut().scroll.floating = false;
     egui::ScrollArea::vertical().id_salt("entry-editor").auto_shrink([false, true]).show(ui, |ui| {
     egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
         // Save and Cancel stay at the top, in view however small the panel.

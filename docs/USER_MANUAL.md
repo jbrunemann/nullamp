@@ -228,7 +228,7 @@ Select up to 500 files and open the Inspector. A field that differs between the 
 
 ### Artwork
 
-The artwork section shows every embedded image with its type, size and weight. **Import…** adds an image, **Remove** deletes one, and **Front** makes an image the front cover. With several files selected, changing artwork changes it in all of them.
+The artwork section lists every embedded image with its thumbnail on the left and its type, size and weight beside it. **Import…** adds an image and **Remove** deletes one. **Set as front cover** tags an image as the front cover and moves it to the first position. The front cover is the image other players show as album art, so use it when an image is labelled "Other" and some apps do not display it. Nullamp itself falls back to the first image when none is tagged as the front cover. The button only appears on images that are not already the front cover. With several files selected, changing artwork changes it in all of them.
 
 ### Read-only information
 
