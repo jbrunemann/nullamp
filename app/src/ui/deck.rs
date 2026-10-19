@@ -408,7 +408,8 @@ fn artwork(app: &App, ui: &Ui, rect: Rect) {
         let size = tex.size_vec2();
         let scale = (rect.width() / size.x).min(rect.height() / size.y);
         let r = Rect::from_center_size(rect.center(), size * scale);
-        p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        // Rounded like the frame, or the picture's square corners poke out past it.
+        egui::Image::new(egui::load::SizedTexture::new(tex.id(), r.size())).corner_radius(5.0).paint_at(ui, r);
     } else {
         // Placeholder: a stylised record.
         let c = rect.center();
