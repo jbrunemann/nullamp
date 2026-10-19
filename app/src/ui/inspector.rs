@@ -459,8 +459,8 @@ fn fields(app: &mut App, ui: &mut Ui) {
             let Some(f) = app.inspector.fields.get_mut(&field) else { continue };
             let label_color = if f.touched { theme::accent() } else { theme::text_dim() };
             // Number pairs on one row: "Track 3 of 12".
-            if matches!(field, Field::TrackNumber | Field::DiscNumber) {
-                let total = if field == Field::TrackNumber { Field::TrackTotal } else { Field::DiscTotal };
+            if field == Field::TrackNumber {
+                let total = Field::TrackTotal;
                 ui.label(RichText::new(field.label()).color(label_color));
                 ui.horizontal(|ui| {
                     number_edit(ui, app.inspector.fields.get_mut(&field).unwrap(), writable);

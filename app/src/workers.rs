@@ -539,7 +539,8 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
     }
     // A plain track list in the description, often without times: reference only.
     let described = meta.and_then(|m| {
-        [nullamp_meta::Field::Comment, nullamp_meta::Field::Description].iter().find_map(|f| tracklist_text::parse_description(m.fields.get(f)?))
+        let description = m.other_items.iter().find(|(k, _)| k == "Description").map(|(_, v)| v);
+        m.fields.get(&nullamp_meta::Field::Comment).or(description).and_then(|t| tracklist_text::parse_description(t))
     });
     described.map(|mut s| {
         fill_mix(&mut s.mix, &mix);

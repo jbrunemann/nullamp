@@ -79,39 +79,23 @@ pub enum Field {
     Title,
     Artist,
     Album,
-    AlbumArtist,
     Date,
     Genre,
     TrackNumber,
     TrackTotal,
-    DiscNumber,
-    DiscTotal,
-    Composer,
     Comment,
-    Description,
-    Copyright,
-    ArtistUrl,
-    FileUrl,
 }
 
 impl Field {
-    pub const ALL: [Field; 16] = [
+    pub const ALL: [Field; 8] = [
         Field::Title,
         Field::Artist,
         Field::Album,
-        Field::AlbumArtist,
         Field::Date,
         Field::Genre,
         Field::TrackNumber,
         Field::TrackTotal,
-        Field::DiscNumber,
-        Field::DiscTotal,
-        Field::Composer,
         Field::Comment,
-        Field::Description,
-        Field::Copyright,
-        Field::ArtistUrl,
-        Field::FileUrl,
     ];
 
     pub fn label(self) -> &'static str {
@@ -119,19 +103,11 @@ impl Field {
             Field::Title => "Title",
             Field::Artist => "Artist",
             Field::Album => "Album",
-            Field::AlbumArtist => "Album artist",
             Field::Date => "Date / year",
             Field::Genre => "Genre",
             Field::TrackNumber => "Track",
             Field::TrackTotal => "of tracks",
-            Field::DiscNumber => "Disc",
-            Field::DiscTotal => "of discs",
-            Field::Composer => "Composer",
             Field::Comment => "Comment",
-            Field::Description => "Description",
-            Field::Copyright => "Copyright",
-            Field::ArtistUrl => "Artist URL",
-            Field::FileUrl => "File URL",
         }
     }
 
@@ -140,28 +116,20 @@ impl Field {
             Field::Title => ItemKey::TrackTitle,
             Field::Artist => ItemKey::TrackArtist,
             Field::Album => ItemKey::AlbumTitle,
-            Field::AlbumArtist => ItemKey::AlbumArtist,
             Field::Date => ItemKey::RecordingDate,
             Field::Genre => ItemKey::Genre,
             Field::TrackNumber => ItemKey::TrackNumber,
             Field::TrackTotal => ItemKey::TrackTotal,
-            Field::DiscNumber => ItemKey::DiscNumber,
-            Field::DiscTotal => ItemKey::DiscTotal,
-            Field::Composer => ItemKey::Composer,
             Field::Comment => ItemKey::Comment,
-            Field::Description => ItemKey::Description,
-            Field::Copyright => ItemKey::CopyrightMessage,
-            Field::ArtistUrl => ItemKey::TrackArtistUrl,
-            Field::FileUrl => ItemKey::AudioFileUrl,
         }
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, Field::TrackNumber | Field::TrackTotal | Field::DiscNumber | Field::DiscTotal)
+        matches!(self, Field::TrackNumber | Field::TrackTotal)
     }
 
     pub fn is_multiline(self) -> bool {
-        matches!(self, Field::Comment | Field::Description)
+        self == Field::Comment
     }
 
     /// Check a value before writing. Empty values mean "remove".
@@ -181,9 +149,6 @@ impl Field {
         }
         if self == Field::Date && !valid_date(v) {
             return Err("use YYYY, YYYY-MM or YYYY-MM-DD".into());
-        }
-        if matches!(self, Field::ArtistUrl | Field::FileUrl) && !(v.starts_with("http://") || v.starts_with("https://")) {
-            return Err("must start with http:// or https://".into());
         }
         if !self.is_multiline() && v.contains(['\n', '\r']) {
             return Err("must be a single line".into());
@@ -558,7 +523,6 @@ mod tests {
         let m = read(&fixture("tagged_v23.mp3")).unwrap();
         assert_eq!(m.fields.get(&Field::Title).map(String::as_str), Some("Fixture Tone"));
         assert_eq!(m.fields.get(&Field::Artist).map(String::as_str), Some("Nullamp Tests"));
-        assert_eq!(m.fields.get(&Field::AlbumArtist).map(String::as_str), Some("Various"));
         assert_eq!(m.fields.get(&Field::TrackNumber).map(String::as_str), Some("3"));
         assert_eq!(m.fields.get(&Field::TrackTotal).map(String::as_str), Some("12"));
         assert_eq!(m.fields.get(&Field::Genre).map(String::as_str), Some("Techno"));
@@ -615,7 +579,6 @@ mod tests {
         assert!(Field::Date.validate("2024-02-30").is_ok(), "day range only, not calendar");
         assert!(Field::Date.validate("2024-13").is_err());
         assert!(Field::Date.validate("24").is_err());
-        assert!(Field::ArtistUrl.validate("ftp://x").is_err());
         assert!(Field::Title.validate("a\nb").is_err());
         assert!(Field::Comment.validate("a\nb").is_ok());
         assert!(Field::Title.validate("").is_ok());
