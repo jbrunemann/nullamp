@@ -11,7 +11,7 @@ mod visualizer;
 pub(crate) mod widgets;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -414,7 +414,12 @@ impl App {
             for e in doc.playlist.entries_with_path_mut(&path) {
                 match &info {
                     Ok(info) => {
+                        let detected = e.info.bpm.filter(|_| e.info.bpm_detected);
                         e.info = info.clone();
+                        // A tempo found by listening stays until the tags state one.
+                        if e.info.bpm.is_none() && detected.is_some() {
+                            (e.info.bpm, e.info.bpm_detected) = (detected, true);
+                        }
                         if e.status != EntryStatus::Ok {
                             e.status = EntryStatus::Unknown;
                         }
@@ -566,7 +571,12 @@ impl App {
             JobResult::Tempo { token, span, result } => {
                 if self.player.current.as_ref().is_some_and(|c| c.token == token) {
                     match (result, span) {
-                        (Ok(tempo), None) => self.now.tempo = tempo,
+                        (Ok(tempo), None) => {
+                            self.now.tempo = tempo;
+                            if let (Some(t), Some(path)) = (tempo, self.player.current.as_ref().map(|c| c.path.clone())) {
+                                self.note_detected_bpm(&path, t.bpm);
+                            }
+                        }
                         // The active track may have changed again while this was being worked out.
                         (Ok(tempo), Some(span)) if self.now.segment_requested == Some(span) => self.now.segment_tempo = tempo,
                         (Ok(_), Some(_)) => {}
@@ -605,6 +615,23 @@ impl App {
         }
         let title = self.player.current_entry().map(|e| e.info.display_line(&e.path)).unwrap_or_default();
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{title} — Nullamp")));
+    }
+
+    /// Show a tempo found by listening in the playlist rows of `path` (never over one from the tags).
+    fn note_detected_bpm(&mut self, path: &Path, bpm: f32) {
+        let mut touched = Vec::new();
+        for (i, doc) in self.player.lists.iter_mut().enumerate() {
+            for e in doc.playlist.entries_with_path_mut(path) {
+                if e.info.bpm.is_none() || e.info.bpm_detected {
+                    (e.info.bpm, e.info.bpm_detected) = (Some(bpm), true);
+                    touched.push(i);
+                }
+            }
+        }
+        touched.dedup();
+        for i in touched {
+            self.mark_list_dirty(i);
+        }
     }
 
     /// While a mix plays, ask for the tempo of its active track whenever that changes: the

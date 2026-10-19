@@ -284,6 +284,11 @@ fn tempo_is_detected_unless_the_tags_have_one() {
     let tempo = h.state().now.tempo.expect("tempo for the playing track");
     assert!((tempo.bpm - 120.0).abs() < 0.5, "{tempo:?}");
     assert_eq!(h.state().current_bpm(), Some((tempo.bpm, true)));
+    let row_bpm = |h: &Harness<'_, App>, name: &str| {
+        let e = h.state().player.lists[0].playlist.entries().iter().find(|e| e.path.file_name().is_some_and(|n| n == name)).unwrap();
+        (e.info.bpm, e.info.bpm_detected)
+    };
+    assert_eq!(row_bpm(&h, "beat_120.mp3"), (Some(tempo.bpm), true), "the playlist row shows it");
     assert!(std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).any(|e| e.path().extension().is_some_and(|x| x == "bpm")), "tempo is cached");
 
     // Another track clears it: a tone has no beat.
@@ -299,6 +304,8 @@ fn tempo_is_detected_unless_the_tags_have_one() {
     play_file(&mut h, tagged);
     assert_eq!(h.state().now.tempo, None, "not analysed");
     assert_eq!(h.state().current_bpm(), Some((87.0, false)));
+    assert_eq!(row_bpm(&h, "tagged_beat.mp3"), (Some(87.0), false), "the tag, not a detected value");
+    assert_eq!(row_bpm(&h, "beat_120.mp3"), (Some(tempo.bpm), true), "the detected value stays");
     h.state_mut().player.stop();
 }
 

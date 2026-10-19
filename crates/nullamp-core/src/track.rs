@@ -17,6 +17,11 @@ pub struct TrackInfo {
     /// Duration in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Beats per minute, from the file's tags or, when `bpm_detected`, found by listening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bpm: Option<f32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bpm_detected: bool,
 }
 
 impl TrackInfo {

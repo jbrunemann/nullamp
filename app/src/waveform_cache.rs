@@ -40,7 +40,10 @@ fn write_entry(path: &Path, bytes: &[u8]) {
     if fs::create_dir_all(dir).is_err() {
         return;
     }
-    let tmp = path.with_extension("tmp");
+    // Named after the whole entry: the waveform and the tempo of one file are written at the same time.
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
     if fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_err() {
         let _ = fs::remove_file(&tmp);
     }

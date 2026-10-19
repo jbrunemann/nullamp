@@ -309,6 +309,8 @@ impl FileMetadata {
             artist: self.fields.get(&Field::Artist).cloned(),
             album: self.fields.get(&Field::Album).cloned(),
             duration: self.technical.duration,
+            bpm: self.fields.get(&Field::Bpm).and_then(|v| parse_bpm(v)),
+            bpm_detected: false,
         }
     }
 
@@ -439,15 +441,22 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         artist: get(ItemKey::TrackArtist),
         album: get(ItemKey::AlbumTitle),
         duration: (duration > 0.0).then_some(duration),
+        bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
+        bpm_detected: false,
     })
+}
+
+/// A BPM tag value, if it is a sensible number.
+fn parse_bpm(text: &str) -> Option<f32> {
+    let bpm: f32 = text.trim().parse().ok()?;
+    (1.0..1000.0).contains(&bpm).then_some(bpm)
 }
 
 /// The BPM stored in the file's tags, if any and sensible.
 pub fn read_bpm(path: &Path) -> Option<f32> {
     let tagged = open_tagged(path, false).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    let bpm: f32 = Field::Bpm.get(tag)?.trim().parse().ok()?;
-    (1.0..1000.0).contains(&bpm).then_some(bpm)
+    parse_bpm(Field::Bpm.get(tag)?)
 }
 
 /// Only the embedded artwork, for the now-playing display.
@@ -636,6 +645,7 @@ mod tests {
             write(&path, stamp(&path).unwrap(), &set(Some("128")), &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(read_bpm(&path), Some(128.0), "{name}");
             assert_eq!(read(&path).unwrap().fields.get(&Field::Bpm).map(String::as_str), Some("128"), "{name}");
+            assert_eq!(read_track_info(&path).unwrap().bpm, Some(128.0), "{name}");
             write(&path, stamp(&path).unwrap(), &set(Some("127.5")), &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
             let got = read_bpm(&path).unwrap();
             assert_eq!(got, if decimals { 127.5 } else { 128.0 }, "{name}");
