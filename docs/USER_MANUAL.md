@@ -98,7 +98,7 @@ The **Setlist** button carries the number of entries (`Setlist · 6`). It only a
 
 The left area holds your playlists. The right area is the side panel, which shows either the **Setlist** or the **Inspector**. Drag the divider between them to resize. The `×` closes the side panel.
 
-The status bar at the bottom shows track counts and total time, messages, the theme, and a `?` button for the shortcut list.
+The status bar at the bottom shows track counts and total time and messages. Right-click the display to open the settings (General, Audio device, Shortcuts and About tabs).
 
 ## 4. Playing music
 
@@ -113,7 +113,7 @@ The status bar at the bottom shows track counts and total time, messages, the th
 
 ### Themes
 
-Click **theme:** in the status bar to cycle through dark, light and system. The LCD stays dark in every theme. The choice is remembered.
+Right-click the display, choose **General** and pick dark, light or system on the **General** tab. The LCD stays dark in every theme. The choice is remembered.
 
 ## 5. Playlists
 
@@ -255,7 +255,7 @@ Backups are off by default; turn them on with `backup_before_tag_writes` (see [S
 
 ## 8. Keyboard shortcuts
 
-Press F1 or click `?` in the status bar to see this list in the app.
+Press F1, or right-click the display, choose **Keyboard shortcuts**, to see this list in the app.
 
 | Key | Action |
 |---|---|

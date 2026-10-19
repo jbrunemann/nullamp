@@ -1,7 +1,7 @@
 //! The single-window user interface and the glue between UI, controller and workers.
 
 pub mod deck;
-mod dialogs;
+pub mod dialogs;
 mod inspector;
 mod menu;
 mod playlist_view;
@@ -237,7 +237,7 @@ impl App {
     fn on_menu_action(&mut self, action: menu::MenuAction) {
         match action {
             menu::MenuAction::About => {
-                self.dialogs.about_open = true;
+                self.dialogs.settings = Some(dialogs::SettingsTab::About);
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             menu::MenuAction::OpenConfig => self.open_config_file(),
@@ -793,7 +793,7 @@ impl App {
             self.scroll_to = self.player.current.as_ref().map(|c| c.entry);
         }
         if consume(KeyboardShortcut::new(Modifiers::NONE, Key::F1)) {
-            self.dialogs.shortcuts_open = !self.dialogs.shortcuts_open;
+            self.dialogs.settings = if self.dialogs.settings == Some(dialogs::SettingsTab::Shortcuts) { None } else { Some(dialogs::SettingsTab::Shortcuts) };
         }
         if typing {
             return;
@@ -985,23 +985,6 @@ impl App {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("?").on_hover_text("Keyboard shortcuts (F1)").clicked() {
-                    self.dialogs.shortcuts_open = true;
-                }
-                let appearance = theme::Appearance::from_setting(&self.settings.appearance);
-                let resp = ui.add(egui::Label::new(egui::RichText::new(format!("theme: {}", appearance.setting())).size(11.0).color(theme::text_faint())).sense(egui::Sense::click()));
-                if resp.on_hover_text("Click to switch between dark, light and system appearance").clicked() {
-                    let next = appearance.next();
-                    self.settings.appearance = next.setting().into();
-                    theme::set_appearance(ui.ctx(), next);
-                    self.mark_settings_dirty();
-                }
-                let (label, tip) = if self.settings.retro_artwork { ("art: retro", "Click to show covers as they are") } else { ("art: original", "Click to show covers as green pixel art") };
-                if ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(theme::text_faint())).sense(egui::Sense::click())).on_hover_text(tip).clicked() {
-                    self.settings.retro_artwork = !self.settings.retro_artwork;
-                    self.now.show_original_art = false;
-                    self.mark_settings_dirty();
-                }
                 if self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {
                     ui.label(egui::RichText::new("media keys unavailable").size(11.0).color(theme::warn()))
                         .on_hover_text("The system media service could not be reached; in-app shortcuts still work.");

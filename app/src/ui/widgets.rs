@@ -344,6 +344,46 @@ pub fn level_slider(ui: &mut Ui, value: &mut f32, width: f32, muted: bool) -> Re
 
 /// A small picture of how an audio output connects. Real hardware is drawn solid;
 /// virtual devices are drawn as a dashed outline.
+/// Moon, sun and a monitor for the appearance choices.
+pub fn paint_appearance_icon(painter: &Painter, rect: Rect, appearance: theme::Appearance, color: Color32) {
+    use theme::Appearance;
+    let c = rect.center();
+    let s = rect.width().min(rect.height()) * 0.5;
+    let stroke = Stroke::new((s * 0.17).max(1.2), color);
+    match appearance {
+        Appearance::Dark => {
+            // A crescent: the outer circle's arc, then back along a smaller circle pushed to the upper right.
+            let (r, cut, shift) = (s * 0.85, s * 0.7, vec2(s * 0.45, -s * 0.35));
+            let hole = c + shift;
+            // Where the two circles cross, measured from the outer centre.
+            let d = shift.length();
+            let a = (r * r + d * d - cut * cut) / (2.0 * r * d);
+            let half = a.clamp(-1.0, 1.0).acos();
+            let base = shift.y.atan2(shift.x);
+            let outer = (0..=16).map(|i| {
+                let t = base + half + (std::f32::consts::TAU - 2.0 * half) * i as f32 / 16.0;
+                pos2(c.x + r * t.cos(), c.y + r * t.sin())
+            });
+            let inner_start = (pos2(c.x + r * (base - half).cos(), c.y + r * (base - half).sin()) - hole).angle();
+            let inner_end = (pos2(c.x + r * (base + half).cos(), c.y + r * (base + half).sin()) - hole).angle();
+            let sweep = (inner_start - inner_end).rem_euclid(std::f32::consts::TAU);
+            let inner = (0..=12).map(|i| {
+                let t = inner_end + sweep * i as f32 / 12.0;
+                pos2(hole.x + cut * t.cos(), hole.y + cut * t.sin())
+            });
+            painter.add(Shape::closed_line(outer.chain(inner).collect(), stroke));
+        }
+        Appearance::Light => {
+            painter.circle_stroke(c, s * 0.42, stroke);
+            for k in 0..8 {
+                let a = std::f32::consts::TAU * k as f32 / 8.0;
+                painter.line_segment([pos2(c.x + s * 0.68 * a.cos(), c.y + s * 0.68 * a.sin()), pos2(c.x + s * 0.95 * a.cos(), c.y + s * 0.95 * a.sin())], stroke);
+            }
+        }
+        Appearance::System => paint_output_icon(painter, rect, nullamp_audio::OutputKind::Display, color),
+    }
+}
+
 pub fn paint_output_icon(painter: &Painter, rect: Rect, kind: nullamp_audio::OutputKind, color: Color32) {
     use nullamp_audio::OutputKind;
     let c = rect.center();

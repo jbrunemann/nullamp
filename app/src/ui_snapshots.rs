@@ -489,6 +489,47 @@ fn render_output_menu() {
     icons.render().expect("render").save(out_dir().join("05b-output-icons.png")).unwrap();
 }
 
+/// Right-clicking the display (on its empty part and on the clock) opens the settings menu, and a
+/// menu entry opens its tab.
+#[test]
+#[ignore]
+fn render_settings_menu() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 300);
+    let right_click = |h: &mut Harness<'_, App>, at: egui::Pos2| {
+        h.event(egui::Event::PointerMoved(at));
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() });
+        }
+        settle(h, 300);
+    };
+    right_click(&mut h, egui::pos2(500.0, 70.0));
+    save(&mut h, "06d-settings-menu.png");
+    assert!(h.state().dialogs.settings.is_none());
+    let entry = h.get_by_label("Keyboard shortcuts").rect().center();
+    h.event(egui::Event::PointerMoved(entry));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: entry, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+    }
+    settle(&mut h, 300);
+    assert_eq!(h.state().dialogs.settings, Some(crate::ui::dialogs::SettingsTab::Shortcuts));
+}
+
+/// The General settings page, which takes over the deck.
+#[test]
+#[ignore]
+fn render_settings_general() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::General);
+    settle(&mut h, 300);
+    save(&mut h, "06a-settings-general.png");
+}
+
 /// The shortcuts page, which takes over the deck.
 #[test]
 #[ignore]
@@ -496,7 +537,7 @@ fn render_shortcuts() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(640.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
-    h.state_mut().dialogs.shortcuts_open = true;
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Shortcuts);
     settle(&mut h, 300);
     save(&mut h, "06b-shortcuts.png");
 }
@@ -516,7 +557,7 @@ fn render_outputs_page() {
     let app = h.state_mut();
     app.output_devices = vec![device("MacBook Pro Speakers", BuiltIn, true), device("External Headphones", BuiltIn, false), device("Studio Display Speakers", Display, false), device("AirPods Pro", Bluetooth, false), device("BlackHole 2ch", Virtual, false)];
     app.settings.output_device = Some("AirPods Pro".into());
-    app.dialogs.outputs_open = true;
+    app.dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Audio);
     settle(&mut h, 300);
     save(&mut h, "06c-outputs-page.png");
 }
@@ -532,7 +573,7 @@ fn render_about() {
     for i in 0..60 {
         log::info!("nullamp: sample log line {i}");
     }
-    h.state_mut().dialogs.about_open = true;
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::About);
     settle(&mut h, 500);
     save(&mut h, "06-about.png");
 }

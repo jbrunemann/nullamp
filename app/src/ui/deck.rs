@@ -19,8 +19,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let art_size = LCD_HEIGHT;
         let lcd_w = (full - art_size - 8.0).max(200.0);
-        let (lcd, _) = ui.allocate_exact_size(vec2(lcd_w, LCD_HEIGHT), Sense::hover());
+        let (lcd, lcd_resp) = ui.allocate_exact_size(vec2(lcd_w, LCD_HEIGHT), Sense::hover());
         lcd_display(app, ui, lcd);
+        settings_menu(app, ui, &lcd_resp);
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
         let retro = app.settings.retro_artwork && app.now.retro_art.is_some();
@@ -41,6 +42,23 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     timeline(app, ui);
     ui.add_space(6.0);
     transport(app, ui);
+}
+
+/// Right-click anywhere on the display for the settings pages. The clock and the output label
+/// sit on top of the display and take their own clicks, so the click is read from the pointer
+/// instead of from the display's response.
+fn settings_menu(app: &mut App, ui: &mut Ui, lcd: &egui::Response) {
+    let opened = ui.input(|i| i.pointer.secondary_clicked() && i.pointer.interact_pos().is_some_and(|p| lcd.rect.contains(p)));
+    egui::Popup::menu(lcd).open_memory(opened.then_some(egui::SetOpenCommand::Bool(true))).at_pointer_fixed().show(|ui| {
+        use super::dialogs::SettingsTab;
+        ui.label(RichText::new("Settings").strong().color(theme::text_dim()));
+        ui.separator();
+        for (label, tab) in [("General", SettingsTab::General), ("Audio device", SettingsTab::Audio), ("Keyboard shortcuts", SettingsTab::Shortcuts), ("About Nullamp", SettingsTab::About)] {
+            if ui.button(label).clicked() {
+                app.dialogs.settings = Some(tab);
+            }
+        }
+    });
 }
 
 fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
@@ -283,9 +301,7 @@ fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::
     if resp.clicked() {
         app.player.engine.request_output_devices();
         if !fits {
-            app.dialogs.shortcuts_open = false;
-            app.dialogs.about_open = false;
-            app.dialogs.outputs_open = true;
+            app.dialogs.settings = Some(super::dialogs::SettingsTab::Audio);
         }
     }
     resp.clone().on_hover_text(tip);
@@ -296,9 +312,8 @@ fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::
     }
 }
 
-/// The device picker as a deck page: the same rows in as many columns as the deck needs.
-/// Returns true once a device is chosen, so the page closes.
-pub fn output_page(app: &mut App, ui: &mut Ui) -> bool {
+/// The device picker as a settings page: the same rows in as many columns as the deck needs.
+pub fn output_page(app: &mut App, ui: &mut Ui) {
     const COLUMN: f32 = 260.0;
     let chosen = app.settings.output_device.clone();
     let devices = app.output_devices.clone();
@@ -324,9 +339,7 @@ pub fn output_page(app: &mut App, ui: &mut Ui) -> bool {
     });
     if let Some(id) = picked {
         app.choose_output(id);
-        return true;
     }
-    false
 }
 
 /// The device picker: one row per output, real hardware first and in full colour,
@@ -367,6 +380,11 @@ const ROW_ICON: f32 = 15.0;
 
 /// A full-width menu row with an icon. Returns whether it was clicked.
 fn device_row(ui: &mut Ui, label: &str, kind: nullamp_audio::OutputKind, bright: bool, selected: bool) -> bool {
+    choice_row(ui, label, bright, selected, |p, rect, color| widgets::paint_output_icon(p, rect, kind, color))
+}
+
+/// A row of a pick-one list: a painted icon, the label, and the selection highlight.
+pub fn choice_row(ui: &mut Ui, label: &str, bright: bool, selected: bool, paint_icon: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     let visuals = ui.visuals();
     let fill = if selected {
@@ -380,7 +398,7 @@ fn device_row(ui: &mut Ui, label: &str, kind: nullamp_audio::OutputKind, bright:
     let p = ui.painter();
     p.rect_filled(rect, 3.0, fill);
     let icon = Rect::from_center_size(pos2(rect.left() + ROW_PAD + ROW_ICON / 2.0, rect.center().y), Vec2::splat(ROW_ICON));
-    widgets::paint_output_icon(p, icon, kind, text_color);
+    paint_icon(p, icon, text_color);
     // The menu width is capped, so long names (Linux reports things like "Ellesmere HDMI Audio
     // [Radeon RX 470/480 / 570/580/590] Digital Stereo (HDMI 3)") end in an ellipsis instead of
     // running past the border; the full name is in the tooltip.

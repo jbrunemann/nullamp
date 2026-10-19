@@ -173,14 +173,6 @@ impl Appearance {
         }
     }
 
-    pub fn next(self) -> Self {
-        match self {
-            Appearance::Dark => Appearance::Light,
-            Appearance::Light => Appearance::System,
-            Appearance::System => Appearance::Dark,
-        }
-    }
-
     fn preference(self) -> egui::ThemePreference {
         match self {
             Appearance::System => egui::ThemePreference::System,

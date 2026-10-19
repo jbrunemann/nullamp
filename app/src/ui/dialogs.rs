@@ -17,6 +17,28 @@ pub enum DialogResult {
     Artwork(PathBuf),
 }
 
+/// The pages of the settings screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsTab {
+    General,
+    Audio,
+    Shortcuts,
+    About,
+}
+
+impl SettingsTab {
+    const ALL: [SettingsTab; 4] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::About];
+
+    fn label(self) -> &'static str {
+        match self {
+            SettingsTab::General => "General",
+            SettingsTab::Audio => "Audio device",
+            SettingsTab::Shortcuts => "Shortcuts",
+            SettingsTab::About => "About",
+        }
+    }
+}
+
 pub struct Dialogs {
     tx: Sender<DialogResult>,
     pub results: Receiver<DialogResult>,
@@ -24,17 +46,15 @@ pub struct Dialogs {
     pub new_playlist: Option<String>,
     pub confirm_clear: Option<usize>,
     pub confirm_delete: Option<usize>,
-    pub shortcuts_open: bool,
-    pub about_open: bool,
-    /// The audio output picker as a deck page, for when its menu would not fit below the deck.
-    pub outputs_open: bool,
+    /// The settings page taking over the deck, on this tab.
+    pub settings: Option<SettingsTab>,
     about_icon: Option<egui::TextureHandle>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false, outputs_open: false, about_icon: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None }
     }
 }
 
@@ -315,12 +335,10 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// The shortcuts, About and audio output pages take over the deck instead of floating over the
-/// window: in the compact layout the window is only as tall as the deck, and a free window would be cut off.
+/// The settings page takes over the deck instead of floating over the window: in the compact
+/// layout the window is only as tall as the deck, and a free window would be cut off.
 pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
-    if !app.dialogs.shortcuts_open && !app.dialogs.about_open && !app.dialogs.outputs_open {
-        return;
-    }
+    let Some(mut tab) = app.dialogs.settings else { return };
     let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
     let inner = deck.size() - egui::vec2(20.0, 16.0);
     egui::Area::new(egui::Id::NULL.with("deck-overlay")).order(egui::Order::Foreground).fixed_pos(deck.min).show(ctx, |ui| {
@@ -328,41 +346,50 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
             egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
-                // The output page yields to the others, which open from menus and keys without closing it.
-                let title = if app.dialogs.about_open {
-                    "About Nullamp"
-                } else if app.dialogs.shortcuts_open {
-                    "Keyboard shortcuts"
-                } else {
-                    "Audio output"
-                };
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(title).strong());
+                    for t in SettingsTab::ALL {
+                        if widgets::tab(ui, tab == t, t.label()).clicked() {
+                            tab = t;
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Close").clicked() {
                             close = true;
                         }
-                        if app.dialogs.shortcuts_open {
+                        if tab == SettingsTab::Shortcuts {
                             ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
                         }
                     });
                 });
                 ui.separator();
-                if app.dialogs.about_open {
-                    about_body(app, ui);
-                } else if app.dialogs.shortcuts_open {
-                    shortcuts_body(ui);
-                } else if super::deck::output_page(app, ui) {
-                    close = true;
+                match tab {
+                    SettingsTab::General => general_body(app, ui),
+                    SettingsTab::Audio => super::deck::output_page(app, ui),
+                    SettingsTab::Shortcuts => shortcuts_body(ui),
+                    SettingsTab::About => about_body(app, ui),
                 }
             });
         });
     });
-    if close {
-        app.dialogs.shortcuts_open = false;
-        app.dialogs.about_open = false;
-        app.dialogs.outputs_open = false;
-    }
+    app.dialogs.settings = if close { None } else { Some(tab) };
+}
+
+/// Appearance, as a pick-one list like the audio outputs. The deck stays dark in every theme, so
+/// the rest of the window shows the change.
+fn general_body(app: &mut App, ui: &mut egui::Ui) {
+    let current = theme::Appearance::from_setting(&app.settings.appearance);
+    ui.label(RichText::new("Appearance").small().weak());
+    ui.vertical(|ui| {
+        ui.set_width(260.0);
+        let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, "System (follow macOS)")];
+        for (appearance, label) in rows {
+            if super::deck::choice_row(ui, label, true, current == appearance, |p, rect, color| widgets::paint_appearance_icon(p, rect, appearance, color)) && current != appearance {
+                app.settings.appearance = appearance.setting().into();
+                theme::set_appearance(ui.ctx(), appearance);
+                app.mark_settings_dirty();
+            }
+        }
+    });
 }
 
 /// The shortcut list in as many columns as the deck is wide, so it fits its height.
