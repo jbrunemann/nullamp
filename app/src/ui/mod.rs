@@ -7,7 +7,7 @@ mod playlist_view;
 mod setlist_view;
 pub mod theme;
 mod visualizer;
-mod widgets;
+pub(crate) mod widgets;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use egui::{Key, KeyboardShortcut, Modifiers, TextureHandle, vec2};
-use nullamp_audio::{AudioEngine, EngineEvent, OutputDevice};
+use nullamp_audio::{AudioEngine, EngineEvent, OutputDevice, OutputKind};
 use nullamp_core::command::{Command, CommandSource};
 use nullamp_core::{EntryId, EntryStatus, PlaylistEntry};
 use nullamp_meta::FileMetadata;
@@ -73,6 +73,7 @@ pub struct NowState {
 pub struct OutputState {
     pub name: String,
     pub id: String,
+    pub kind: OutputKind,
     pub sample_rate: u32,
     pub channels: u16,
     /// The chosen device is unavailable, so the system default plays instead.
@@ -428,11 +429,13 @@ impl App {
 
     fn on_output_event(&mut self, ev: &EngineEvent) {
         match ev {
-            EngineEvent::OutputOpened { name, id, sample_rate, channels, fell_back } => {
+            EngineEvent::OutputOpened { name, id, kind, sample_rate, channels, fell_back } => {
+                // Have the picker's list ready before the first click, so it opens at its full size.
+                self.player.engine.request_output_devices();
                 if *fell_back && self.output.as_ref().is_none_or(|o| !o.fell_back) {
                     self.warn(format!("The chosen audio output is not available; using {name}"));
                 }
-                self.output = Some(OutputState { name: name.clone(), id: id.clone(), sample_rate: *sample_rate, channels: *channels, fell_back: *fell_back });
+                self.output = Some(OutputState { name: name.clone(), id: id.clone(), kind: *kind, sample_rate: *sample_rate, channels: *channels, fell_back: *fell_back });
             }
             EngineEvent::DeviceLost { .. } => self.output = None,
             EngineEvent::OutputDevices(devices) => self.output_devices = devices.clone(),

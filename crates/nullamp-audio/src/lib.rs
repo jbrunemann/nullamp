@@ -18,6 +18,7 @@
 
 mod decode;
 mod engine;
+mod kind;
 mod output;
 
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::engine::Cmd;
 use crate::output::Shared;
+pub use crate::kind::OutputKind;
 pub use crate::output::OutputDevice;
 
 /// Properties of the decoded audio stream.
@@ -74,7 +76,7 @@ pub enum EngineEvent {
     /// The output stream was (re)opened, at start, after choosing a device or after
     /// the system changed. `fell_back` means the chosen device is unavailable and the
     /// system default is used instead.
-    OutputOpened { name: String, id: String, sample_rate: u32, channels: u16, fell_back: bool },
+    OutputOpened { name: String, id: String, kind: OutputKind, sample_rate: u32, channels: u16, fell_back: bool },
     /// Answer to [`AudioEngine::request_output_devices`].
     OutputDevices(Vec<OutputDevice>),
 }

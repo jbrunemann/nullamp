@@ -205,6 +205,7 @@ impl Engine {
                 let opened = EngineEvent::OutputOpened {
                     name: name.clone(),
                     id: out.device_id.clone(),
+                    kind: out.kind,
                     sample_rate: out.rate,
                     channels: out.channels as u16,
                     fell_back: out.fell_back,

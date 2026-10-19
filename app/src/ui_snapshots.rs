@@ -289,3 +289,34 @@ fn entry_editor_closes_on_cancel_and_save() {
     assert!(h.state().mix.selected.is_none(), "save closes the editor");
     h.state_mut().player.stop();
 }
+
+/// The output picker opened with a click on the LCD label, and every output icon.
+#[test]
+#[ignore]
+fn render_output_menu() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 420.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 800);
+    let at = egui::pos2(830.0, 66.0);
+    h.event(egui::Event::PointerMoved(at));
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+        h.step();
+    }
+    settle(&mut h, 200);
+    save(&mut h, "05-output-menu.png");
+
+    use nullamp_audio::OutputKind::*;
+    let mut icons = Harness::builder().with_size(egui::vec2(420.0, 70.0)).with_pixels_per_point(3.0).with_theme(egui::Theme::Dark).build_ui(|ui| {
+        ui.horizontal(|ui| {
+            for kind in [Unknown, BuiltIn, Usb, Bluetooth, Display, Network, Card, Virtual] {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+                crate::ui::widgets::paint_output_icon(ui.painter(), rect, kind, ui.visuals().text_color());
+            }
+        });
+    });
+    icons.run();
+    icons.render().expect("render").save(out_dir().join("05b-output-icons.png")).unwrap();
+}

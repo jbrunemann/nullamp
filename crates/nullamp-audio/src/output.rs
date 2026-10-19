@@ -13,6 +13,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use crossbeam_channel::Sender;
 
+use crate::kind::{OutputKind, kind_of};
+
 /// Seconds of decoded audio held in the ring buffer.
 const RING_SECONDS: f64 = 2.0;
 /// Length of the fade applied to pause, resume and volume changes.
@@ -149,6 +151,7 @@ pub(crate) struct Output {
     pub channels: usize,
     pub device_name: String,
     pub device_id: String,
+    pub kind: OutputKind,
     /// A specific device was requested but is not available, so the system default is used.
     pub fell_back: bool,
     /// Frames pushed since the last flush (engine-side counterpart of `Playhead::total`).
@@ -169,6 +172,7 @@ pub struct OutputDevice {
     pub id: String,
     pub name: String,
     pub is_default: bool,
+    pub kind: OutputKind,
 }
 
 /// Every output device the system currently offers, in the host's order.
@@ -179,7 +183,7 @@ pub(crate) fn list_output_devices() -> Vec<OutputDevice> {
     devices
         .filter_map(|d| {
             let id = d.id().ok()?;
-            Some(OutputDevice { name: d.to_string(), is_default: default_id.as_ref() == Some(&id), id: id.to_string() })
+            Some(OutputDevice { name: d.to_string(), is_default: default_id.as_ref() == Some(&id), kind: kind_of(&id, &d), id: id.to_string() })
         })
         .collect()
 }
@@ -202,7 +206,9 @@ impl Output {
             None => host.default_output_device().ok_or("no audio output device")?,
         };
         let device_name = device.to_string();
-        let device_id = device.id().map(|i| i.to_string()).unwrap_or_default();
+        let id = device.id().ok();
+        let device_id = id.as_ref().map(|i| i.to_string()).unwrap_or_default();
+        let kind = id.as_ref().map_or(OutputKind::Unknown, |id| kind_of(id, &device));
         let supported = device.default_output_config().map_err(|e| format!("output config: {e}"))?;
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
@@ -238,7 +244,7 @@ impl Output {
             other => return Err(format!("unsupported device sample format {other}")),
         }?;
         log::info!("audio output: {device_name}, {rate} Hz, {channels} ch, {format}");
-        Ok(Output { stream, producer, playhead, rate, channels, device_name, device_id, fell_back, pushed_total: 0, stream_running: false })
+        Ok(Output { stream, producer, playhead, rate, channels, device_name, device_id, kind, fell_back, pushed_total: 0, stream_running: false })
     }
 
     pub fn set_running(&mut self, running: bool) -> Result<(), String> {

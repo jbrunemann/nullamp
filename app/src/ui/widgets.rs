@@ -305,3 +305,67 @@ pub fn level_slider(ui: &mut Ui, value: &mut f32, width: f32, muted: bool) -> Re
     }
     resp.on_hover_text(format!("Volume {:.0}%  (scroll to adjust)", *value * 100.0))
 }
+
+/// A small picture of how an audio output connects. Real hardware is drawn solid;
+/// virtual devices are drawn as a dashed outline.
+pub fn paint_output_icon(painter: &Painter, rect: Rect, kind: nullamp_audio::OutputKind, color: Color32) {
+    use nullamp_audio::OutputKind;
+    let c = rect.center();
+    let s = rect.width().min(rect.height()) * 0.5;
+    let stroke = Stroke::new((s * 0.17).max(1.2), color);
+    let outline = |painter: &Painter, r: Rect| painter.rect_stroke(r, 1.0, stroke, StrokeKind::Middle);
+    match kind {
+        OutputKind::BuiltIn => {
+            // A laptop: screen above a wider base.
+            outline(painter, Rect::from_center_size(pos2(c.x, c.y - s * 0.15), vec2(s * 1.3, s * 0.9)));
+            painter.line_segment([pos2(c.x - s * 0.95, c.y + s * 0.6), pos2(c.x + s * 0.95, c.y + s * 0.6)], Stroke::new(stroke.width * 1.3, color));
+        }
+        OutputKind::Usb => {
+            // A plug: connector with two pins, and the cable.
+            painter.rect_filled(Rect::from_center_size(pos2(c.x, c.y - s * 0.1), vec2(s * 1.0, s * 0.6)), 1.0, color);
+            for dx in [-0.25, 0.25] {
+                painter.rect_filled(Rect::from_center_size(pos2(c.x + dx * s, c.y - s * 0.6), vec2(s * 0.2, s * 0.3)), 0.0, color);
+            }
+            painter.line_segment([pos2(c.x, c.y + s * 0.2), pos2(c.x, c.y + s * 0.85)], stroke);
+        }
+        OutputKind::Bluetooth => {
+            let pts = [(-0.45, -0.35), (0.4, 0.4), (0.0, 0.8), (0.0, -0.8), (0.4, -0.4), (-0.45, 0.35)];
+            painter.add(Shape::line(pts.iter().map(|(x, y)| pos2(c.x + x * s, c.y + y * s)).collect(), stroke));
+        }
+        OutputKind::Display => {
+            // A monitor on a stand.
+            outline(painter, Rect::from_center_size(pos2(c.x, c.y - s * 0.2), vec2(s * 1.6, s * 1.0)));
+            painter.line_segment([pos2(c.x, c.y + s * 0.3), pos2(c.x, c.y + s * 0.6)], stroke);
+            painter.line_segment([pos2(c.x - s * 0.45, c.y + s * 0.65), pos2(c.x + s * 0.45, c.y + s * 0.65)], stroke);
+        }
+        OutputKind::Network => {
+            // Radiating arcs over a dot.
+            let o = pos2(c.x, c.y + s * 0.55);
+            painter.circle_filled(o, s * 0.14, color);
+            for k in [0.55, 1.0, 1.45] {
+                let pts: Vec<Pos2> = (0..=8)
+                    .map(|i| {
+                        let a = -std::f32::consts::FRAC_PI_2 - 0.85 + 1.7 * i as f32 / 8.0;
+                        pos2(o.x + s * k * a.cos(), o.y + s * k * a.sin())
+                    })
+                    .collect();
+                painter.add(Shape::line(pts, Stroke::new(stroke.width * 0.9, color)));
+            }
+        }
+        OutputKind::Card => {
+            // A sound card: board with its gold contacts along the bottom edge.
+            let board = Rect::from_center_size(pos2(c.x, c.y - s * 0.15), vec2(s * 1.6, s * 1.0));
+            outline(painter, board);
+            for i in 0..4 {
+                let x = board.left() + s * 0.2 + i as f32 * s * 0.4;
+                painter.line_segment([pos2(x, board.bottom() + 1.0), pos2(x, board.bottom() + s * 0.35)], stroke);
+            }
+        }
+        OutputKind::Virtual => {
+            let r = Rect::from_center_size(c, Vec2::splat(s * 1.4));
+            let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+            painter.extend(Shape::dashed_line(&pts, stroke, s * 0.35, s * 0.3));
+        }
+        OutputKind::Unknown => paint_icon(painter, rect, Icon::Speaker, color),
+    }
+}

@@ -1,7 +1,8 @@
 //! The deck: LCD display, artwork, mix timeline and transport controls.
 
 use egui::emath::GuiRounding;
-use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use nullamp_audio::OutputDevice;
 use nullamp_core::command::{Command, CommandSource};
 use nullamp_core::setlist::Timing;
 use nullamp_core::time::{format_clock, format_precise};
@@ -146,6 +147,7 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
 
 /// The audio output in small print at the right end of line 3; click to choose another.
 fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::Pos2, max_width: f32) {
+    const ICON: f32 = 11.0;
     if max_width < 40.0 {
         return;
     }
@@ -154,13 +156,15 @@ fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::
         None => "OUT NONE".into(),
     };
     let mut job = egui::text::LayoutJob::simple_singleline(text, theme::mono(10.0), theme::LCD_MID);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width - ICON - 4.0);
     let g = ui.fonts_mut(|f| f.layout_job(job));
     let r = Rect::from_min_size(pos2(top_right.x - g.size().x, top_right.y), g.size());
+    let icon = Rect::from_center_size(pos2(r.left() - 4.0 - ICON / 2.0, r.center().y), vec2(ICON, ICON));
     // A stable id, so the popup's open state survives from frame to frame.
-    let resp = ui.interact(r.expand2(vec2(2.0, 3.0)), ui.scope_id().with("lcd-output"), Sense::click());
+    let resp = ui.interact(r.union(icon).expand2(vec2(2.0, 3.0)), ui.scope_id().with("lcd-output"), Sense::click());
     let color = if app.output.is_none() { theme::LCD_OFF } else if resp.hovered() { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.75) };
     p.galley(r.min, g, color);
+    widgets::paint_output_icon(p, icon, app.output.as_ref().map(|o| o.kind).unwrap_or_default(), color);
     let tip = match &app.output {
         Some(o) => format!(
             "Audio output: {} · {:.1} kHz · {} ch{}\nClick to choose another",
@@ -175,19 +179,62 @@ fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::
         app.player.engine.request_output_devices();
     }
     resp.clone().on_hover_text(tip);
-    egui::Popup::menu(&resp).show(|ui| {
-        ui.label(RichText::new("Audio output").small().weak());
-        let chosen = app.settings.output_device.clone();
-        let default = app.output_devices.iter().find(|d| d.is_default).map(|d| format!("System default ({})", d.name)).unwrap_or_else(|| "System default".into());
-        if ui.selectable_label(chosen.is_none(), default).clicked() {
-            app.choose_output(None);
+    egui::Popup::menu(&resp).show(|ui| output_menu(app, ui));
+}
+
+/// The device picker: one row per output, real hardware first and in full colour,
+/// virtual devices dimmed under a divider.
+fn output_menu(app: &mut App, ui: &mut Ui) {
+    let chosen = app.settings.output_device.clone();
+    let devices = app.output_devices.clone();
+    let default = devices.iter().find(|d| d.is_default);
+    let default_label = default.map(|d| format!("System default ({})", d.name)).unwrap_or_else(|| "System default".into());
+    let rows: Vec<&OutputDevice> = devices.iter().filter(|d| d.kind.is_hardware()).chain(devices.iter().filter(|d| !d.kind.is_hardware())).collect();
+
+    let font = theme::prop(13.0);
+    let widest = std::iter::once(&default_label).chain(rows.iter().map(|d| &d.name)).map(|t| ui.painter().layout_no_wrap(t.clone(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max);
+    // Rows fill the width they are given, so fix it: the menu would otherwise stretch across the window.
+    ui.set_width((widest + ROW_PAD * 2.0 + ROW_ICON + 14.0).clamp(240.0, 440.0));
+
+    ui.label(RichText::new("Audio output").small().weak());
+    if device_row(ui, &default_label, default.map(|d| d.kind).unwrap_or_default(), true, chosen.is_none()) {
+        app.choose_output(None);
+    }
+    ui.separator();
+    let mut divided = false;
+    for d in rows {
+        if !d.kind.is_hardware() && !divided {
+            divided = true;
+            ui.separator();
+            ui.label(RichText::new("Virtual").small().weak());
         }
-        for d in app.output_devices.clone() {
-            if ui.selectable_label(chosen.as_deref() == Some(d.id.as_str()), &d.name).clicked() {
-                app.choose_output(Some(d.id));
-            }
+        if device_row(ui, &d.name, d.kind, d.kind.is_hardware(), chosen.as_deref() == Some(d.id.as_str())) {
+            app.choose_output(Some(d.id.clone()));
         }
-    });
+    }
+}
+
+const ROW_PAD: f32 = 6.0;
+const ROW_ICON: f32 = 15.0;
+
+/// A full-width menu row with an icon. Returns whether it was clicked.
+fn device_row(ui: &mut Ui, label: &str, kind: nullamp_audio::OutputKind, bright: bool, selected: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+    let visuals = ui.visuals();
+    let fill = if selected {
+        visuals.selection.bg_fill
+    } else if resp.hovered() {
+        visuals.widgets.hovered.bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    let text_color = if selected { visuals.selection.stroke.color } else if bright { visuals.text_color() } else { visuals.weak_text_color() };
+    let p = ui.painter();
+    p.rect_filled(rect, 3.0, fill);
+    let icon = Rect::from_center_size(pos2(rect.left() + ROW_PAD + ROW_ICON / 2.0, rect.center().y), Vec2::splat(ROW_ICON));
+    widgets::paint_output_icon(p, icon, kind, text_color);
+    p.text(pos2(icon.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, label, theme::prop(13.0), text_color);
+    resp.clicked()
 }
 
 /// Upper case with plain quotes, like the rest of the display's small print.
