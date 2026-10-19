@@ -22,6 +22,9 @@ pub struct TrackInfo {
     pub bpm: Option<f32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bpm_detected: bool,
+    /// The tags say `-1`: no BPM is shown for the track and none is detected.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bpm_off: bool,
 }
 
 impl TrackInfo {

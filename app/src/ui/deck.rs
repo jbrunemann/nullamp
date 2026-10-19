@@ -207,8 +207,9 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
     if app.player.current_entry().is_none() {
         return 0.0;
     }
+    let off = app.current_bpm_off();
     let bpm = app.current_bpm();
-    let text = bpm.map(|(bpm, _)| super::format_bpm(bpm)).unwrap_or_default();
+    let text = if off { "---".to_owned() } else { bpm.map(|(bpm, _)| super::format_bpm(bpm)).unwrap_or_default() };
     // Room for three digits, and a decimal when there is one.
     let ghost: String = if text.contains('.') { "888.8".into() } else { "888".into() };
     let label = p.layout_no_wrap("BPM".into(), theme::mono(7.0), theme::LCD_MID);
@@ -225,7 +226,8 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
     let origin = pos2(digits_x, frame.top() + 3.0);
     let ghost_cells: String = ghost.chars().map(|c| if c == '.' { '.' } else { '8' }).collect();
     widgets::seven_segment_spaced(p, origin, digits, &ghost_cells, theme::LCD_OFF, Color32::TRANSPARENT, DIGIT_GAP);
-    if let Some((_, detected)) = bpm {
+    if off || bpm.is_some() {
+        let detected = bpm.is_some_and(|(_, detected)| detected);
         // Right-aligned in the cells, so a two-digit tempo leaves its first cell unlit.
         let used = widgets::seven_segment_width_spaced(&text, digits, DIGIT_GAP);
         widgets::seven_segment_spaced(p, pos2(digits_x + digits_w - used, origin.y), digits, &text, theme::LCD_FG, Color32::TRANSPARENT, DIGIT_GAP);
@@ -234,6 +236,7 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
         }
     }
     let tip = match bpm {
+        _ if off => "Tempo switched off in the file's tags (BPM -1)",
         Some((_, true)) => "Tempo found by listening to the audio",
         Some((_, false)) => "Tempo from the file's tags",
         None => "Tempo: none found yet",

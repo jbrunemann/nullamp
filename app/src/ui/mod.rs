@@ -420,7 +420,7 @@ impl App {
                         let detected = e.info.bpm.filter(|_| e.info.bpm_detected);
                         e.info = info.clone();
                         // A tempo found by listening stays until the tags state one.
-                        if e.info.bpm.is_none() && detected.is_some() {
+                        if e.info.bpm.is_none() && !e.info.bpm_off && detected.is_some() {
                             (e.info.bpm, e.info.bpm_detected) = (detected, true);
                         }
                         if e.status != EntryStatus::Ok {
@@ -625,7 +625,7 @@ impl App {
         let mut touched = Vec::new();
         for (i, doc) in self.player.lists.iter_mut().enumerate() {
             for e in doc.playlist.entries_with_path_mut(path) {
-                if e.info.bpm.is_none() || e.info.bpm_detected {
+                if !e.info.bpm_off && (e.info.bpm.is_none() || e.info.bpm_detected) {
                     (e.info.bpm, e.info.bpm_detected) = (Some(bpm), true);
                     touched.push(i);
                 }
@@ -656,9 +656,17 @@ impl App {
         }
     }
 
+    /// Whether the playing file's tags switch the tempo off (BPM `-1`).
+    pub fn current_bpm_off(&self) -> bool {
+        self.now.meta.as_ref().and_then(|m| m.fields.get(&nullamp_meta::Field::Bpm)).is_some_and(|v| nullamp_meta::is_bpm_off(v))
+    }
+
     /// BPM of the playing track (of the active track while a mix plays) and whether it was
-    /// detected (else it is from the file's tags).
+    /// detected (else it is from the file's tags). `None` when it is switched off.
     pub fn current_bpm(&self) -> Option<(f32, bool)> {
+        if self.current_bpm_off() {
+            return None;
+        }
         if self.now.segment_requested.is_some() {
             return self.now.segment_tempo.map(|t| (t.bpm, true));
         }

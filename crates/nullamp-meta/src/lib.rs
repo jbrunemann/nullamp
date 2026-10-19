@@ -190,8 +190,8 @@ impl Field {
                 _ => Err("must be a whole number between 1 and 9999".into()),
             };
         }
-        if self == Field::Bpm && !v.parse::<f64>().is_ok_and(|b| (1.0..1000.0).contains(&b)) {
-            return Err("must be a number between 1 and 999".into());
+        if self == Field::Bpm && !is_bpm_off(v) && !v.parse::<f64>().is_ok_and(|b| (0.0..=200.0).contains(&b)) {
+            return Err("must be a number between -1 and 200".into());
         }
         if self == Field::Date && !valid_date(v) {
             return Err("use YYYY, YYYY-MM or YYYY-MM-DD".into());
@@ -311,6 +311,7 @@ impl FileMetadata {
             duration: self.technical.duration,
             bpm: self.fields.get(&Field::Bpm).and_then(|v| parse_bpm(v)),
             bpm_detected: false,
+            bpm_off: self.fields.get(&Field::Bpm).is_some_and(|v| is_bpm_off(v)),
         }
     }
 
@@ -443,6 +444,7 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         duration: (duration > 0.0).then_some(duration),
         bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
         bpm_detected: false,
+        bpm_off: tag.and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off),
     })
 }
 
@@ -452,11 +454,22 @@ fn parse_bpm(text: &str) -> Option<f32> {
     (1.0..1000.0).contains(&bpm).then_some(bpm)
 }
 
+/// Whether a BPM tag value is the `-1` that switches the tempo off for the track.
+pub fn is_bpm_off(text: &str) -> bool {
+    text.trim().parse::<f32>().is_ok_and(|b| b == -1.0)
+}
+
 /// The BPM stored in the file's tags, if any and sensible.
 pub fn read_bpm(path: &Path) -> Option<f32> {
     let tagged = open_tagged(path, false).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
     parse_bpm(Field::Bpm.get(tag)?)
+}
+
+/// Whether the file's BPM tag is `-1` (see [`is_bpm_off`]).
+pub fn read_bpm_off(path: &Path) -> bool {
+    let Ok(tagged) = open_tagged(path, false) else { return false };
+    tagged.primary_tag().or_else(|| tagged.first_tag()).and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off)
 }
 
 /// Only the embedded artwork, for the now-playing display.
@@ -635,6 +648,22 @@ mod tests {
     }
 
     #[test]
+    fn bpm_minus_one_switches_the_tempo_off() {
+        use crate::{Edit, WriteOptions, stamp, write};
+        for name in ["tagged_v24.mp3", "tone.flac", "tone.ogg"] {
+            let (_dir, path) = test_support::scratch_copy(name);
+            assert!(!read_bpm_off(&path), "{name}");
+            let edit = Edit { fields: [(Field::Bpm, Some("-1".to_owned()))].into(), ..Default::default() };
+            write(&path, stamp(&path).unwrap(), &edit, &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(read_bpm_off(&path), "{name}");
+            assert_eq!(read_bpm(&path), None, "{name}");
+            let info = read_track_info(&path).unwrap();
+            assert_eq!((info.bpm, info.bpm_off), (None, true), "{name}");
+            assert!(read(&path).unwrap().track_info().bpm_off, "{name}");
+        }
+    }
+
+    #[test]
     fn bpm_round_trips_in_every_format() {
         use crate::{Edit, WriteOptions, stamp, write};
         let set = |v: Option<&str>| Edit { fields: [(Field::Bpm, v.map(str::to_owned))].into(), ..Default::default() };
@@ -668,7 +697,11 @@ mod tests {
     fn field_validation() {
         assert!(Field::Bpm.validate("128").is_ok());
         assert!(Field::Bpm.validate("127.5").is_ok());
-        assert!(Field::Bpm.validate("0").is_err());
+        assert!(Field::Bpm.validate("-1").is_ok());
+        assert!(Field::Bpm.validate("-2").is_err());
+        assert!(Field::Bpm.validate("200").is_ok());
+        assert!(Field::Bpm.validate("201").is_err());
+        assert!(Field::Bpm.validate("0").is_ok());
         assert!(Field::Bpm.validate("1000").is_err());
         assert!(Field::Bpm.validate("fast").is_err());
         assert!(Field::Bpm.validate("").is_ok());

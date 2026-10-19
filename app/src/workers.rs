@@ -318,11 +318,12 @@ fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Op
     }
 }
 
-/// `None` when a newer request replaced this one while it ran, or for a whole file whose tags
-/// already state a BPM (that is the user's or another program's word and is shown as it is).
+/// `None` when a newer request replaced this one while it ran, for a whole file whose tags
+/// already state a BPM (that is the user's or another program's word and is shown as it is), or
+/// for a file whose tags switch the tempo off with `-1`.
 fn run_tempo(dir: &Path, current: &AtomicU64, request: TempoRequest) -> Option<JobResult> {
     let TempoRequest { generation, token, path, span } = request;
-    if span.is_none() && nullamp_meta::read_bpm(&path).is_some() {
+    if (span.is_none() && nullamp_meta::read_bpm(&path).is_some()) || nullamp_meta::read_bpm_off(&path) {
         return None;
     }
     // A track of a mix is cached under its own key, so editing its boundaries analyses it again.
