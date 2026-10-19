@@ -18,6 +18,7 @@
 
 mod decode;
 mod engine;
+mod fingerprint;
 mod kind;
 mod output;
 mod waveform;
@@ -31,6 +32,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::engine::Cmd;
 use crate::output::Shared;
+pub use crate::fingerprint::{Fingerprint, FingerprintError, MAX_SECONDS as FINGERPRINT_SECONDS, compute as compute_fingerprint};
 pub use crate::kind::OutputKind;
 pub use crate::output::OutputDevice;
 pub use crate::waveform::{BUCKETS as WAVEFORM_BUCKETS, Waveform, WaveformError, compute as compute_waveform};

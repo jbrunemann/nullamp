@@ -2908,13 +2908,15 @@ name = "nullamp-audio"
 version = "0.2.5"
 dependencies = [
  "audioadapter-buffers",
+ "base64",
  "cpal",
  "crossbeam-channel",
  "log",
  "objc2-core-audio",
  "objc2-core-foundation",
  "rtrb",
- "rubato",
+ "rubato 5.0.1",
+ "rusty-chromaprint",
  "symphonia",
  "thiserror 2.0.21",
 ]
@@ -4094,6 +4096,18 @@ checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
 
 [[package]]
 name = "rubato"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5258099699851cfd0082aeb645feb9c084d9a5e1f1b8d5372086b989fc5e56a1"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "realfft",
+]
+
+[[package]]
+name = "rubato"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc1e951b9f5432ec1422f4dcfa5733fc501265902612edf5ef8bd8ecdd960930"
@@ -4188,6 +4202,16 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "rusty-chromaprint"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59e4234523e38d9c12201955f8216e1a60313e64c5077f4e1cf49b0db77bd7e8"
+dependencies = [
+ "rubato 0.16.2",
+ "rustfft",
+]
 
 [[package]]
 name = "same-file"

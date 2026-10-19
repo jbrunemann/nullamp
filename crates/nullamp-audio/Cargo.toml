@@ -10,6 +10,8 @@ symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "alac", "ai
 rubato = "5.0"
 audioadapter-buffers = "5.1"
 rtrb = "0.3"
+rusty-chromaprint = "0.3"
+base64 = "0.22"
 crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true

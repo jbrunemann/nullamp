@@ -13,7 +13,7 @@ use super::widgets::{self, Icon};
 use super::{App, SideTab, dialogs, inspector, theme};
 use crate::player::Status;
 use crate::store::PlaylistDoc;
-use crate::workers::Thumb;
+use crate::workers::{Job, Thumb};
 
 /// Geometry and drag state carried between frames.
 #[derive(Default)]
@@ -696,6 +696,12 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         app.side_open = true;
         app.side_tab = SideTab::Inspector;
         inspector::load_from_selection(app);
+        ui.close();
+    }
+    if ui.button("Log fingerprint").on_hover_text("Chromaprint of the first two minutes, written to the log").clicked() {
+        if let Some(e) = app.player.viewed().get(id) {
+            app.workers.submit(Job::LogFingerprint { path: e.path.clone() });
+        }
         ui.close();
     }
     if ui.button("Show in folder").clicked() {

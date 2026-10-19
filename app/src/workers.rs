@@ -86,6 +86,8 @@ pub enum Job {
     /// Look for chapters / cue sheets again (user-initiated rescan).
     Rediscover { request: u64, path: PathBuf },
     WriteText { path: PathBuf, text: String },
+    /// Chromaprint of the file's first two minutes, written to the log only (nothing consumes it yet).
+    LogFingerprint { path: PathBuf },
 }
 
 struct WaveformRequest {
@@ -334,6 +336,16 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::Inspect { request, path } => {
             let meta = nullamp_meta::read(&path).map_err(|e| e.to_string());
             vec![JobResult::Inspected { request, path, meta }]
+        }
+        Job::LogFingerprint { path } => {
+            match nullamp_audio::compute_fingerprint(&path) {
+                Ok(fp) => {
+                    log::info!("fingerprint of {} ({:.1}s of {}s)", path.display(), fp.covered, fp.duration);
+                    log::info!("curl -d 'client=KEY&meta=recordings+releasegroups&duration={}&fingerprint={}' https://api.acoustid.org/v2/lookup", fp.duration, fp.text);
+                }
+                Err(e) => log::warn!("cannot fingerprint {}: {e}", path.display()),
+            }
+            Vec::new()
         }
         Job::DecodeImage { request, bytes } => vec![JobResult::Image { request, thumb: decode_thumb(&bytes, 512) }],
         Job::WriteTags { request, files, edit, options } => {
