@@ -189,7 +189,9 @@ fn fade_out_right(p: &egui::Painter, lcd: Rect, edge: Rect) {
 /// of a nineties stereo. Unlit digits show while a track is loaded and no tempo is known
 /// (yet). Returns the width taken from line 1, 0 when nothing is drawn.
 fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
-    const PAD: f32 = 5.0;
+    const PAD: f32 = 4.0;
+    // Space between the digits, paid for out of the padding so the frame keeps its width.
+    const DIGIT_GAP: f32 = 1.2;
     // The frame is as tall as the row it sits in.
     let digits = row.height() - 6.0;
     if app.player.current_entry().is_none() {
@@ -201,8 +203,8 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
     let ghost: String = if text.contains('.') { "888.8".into() } else { "888".into() };
     let label = p.layout_no_wrap("BPM".into(), theme::mono(7.0), theme::LCD_MID);
     let tilde = p.layout_no_wrap("~".into(), theme::mono(9.0), theme::LCD_MID);
-    let digits_w = widgets::seven_segment_width(&ghost, digits);
-    let width = PAD + label.size().x + 5.0 + tilde.size().x + digits_w + PAD;
+    let digits_w = widgets::seven_segment_width_spaced(&ghost, digits, DIGIT_GAP);
+    let width = PAD + label.size().x + 4.6 + tilde.size().x + digits_w + PAD;
     if row.width() - width < 120.0 {
         return 0.0;
     }
@@ -212,11 +214,11 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
     let digits_x = frame.right() - PAD - digits_w;
     let origin = pos2(digits_x, frame.top() + 3.0);
     let ghost_cells: String = ghost.chars().map(|c| if c == '.' { '.' } else { '8' }).collect();
-    widgets::seven_segment(p, origin, digits, &ghost_cells, theme::LCD_OFF, Color32::TRANSPARENT);
+    widgets::seven_segment_spaced(p, origin, digits, &ghost_cells, theme::LCD_OFF, Color32::TRANSPARENT, DIGIT_GAP);
     if let Some((_, detected)) = bpm {
         // Right-aligned in the cells, so a two-digit tempo leaves its first cell unlit.
-        let used = widgets::seven_segment_width(&text, digits);
-        widgets::seven_segment(p, pos2(digits_x + digits_w - used, origin.y), digits, &text, theme::LCD_FG, Color32::TRANSPARENT);
+        let used = widgets::seven_segment_width_spaced(&text, digits, DIGIT_GAP);
+        widgets::seven_segment_spaced(p, pos2(digits_x + digits_w - used, origin.y), digits, &text, theme::LCD_FG, Color32::TRANSPARENT, DIGIT_GAP);
         if detected {
             p.galley(pos2(digits_x - tilde.size().x, frame.center().y - tilde.size().y / 2.0), tilde, theme::LCD_MID);
         }

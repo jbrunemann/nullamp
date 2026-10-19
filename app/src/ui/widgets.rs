@@ -31,7 +31,12 @@ const SEGMENTS: [u8; 10] = [
 
 /// Width of `text` when drawn with [`seven_segment`] at `height`.
 pub fn seven_segment_width(text: &str, height: f32) -> f32 {
-    text.chars().map(|c| char_advance(c, height)).sum()
+    seven_segment_width_spaced(text, height, 0.0)
+}
+
+/// Width of `text` drawn with [`seven_segment_spaced`]: `gap` between neighbouring glyphs, none after the last.
+pub fn seven_segment_width_spaced(text: &str, height: f32, gap: f32) -> f32 {
+    text.chars().map(|c| char_advance(c, height)).sum::<f32>() + gap * text.chars().count().saturating_sub(1) as f32
 }
 
 fn char_advance(c: char, h: f32) -> f32 {
@@ -45,6 +50,11 @@ fn char_advance(c: char, h: f32) -> f32 {
 /// Draw digits, '-', ':' and ' ' as slanted seven-segment glyphs. Unlit segments
 /// are drawn in `off` for the LCD look. '_' is a digit-wide cell with nothing lit. Returns the width used.
 pub fn seven_segment(painter: &Painter, origin: Pos2, height: f32, text: &str, on: Color32, off: Color32) -> f32 {
+    seven_segment_spaced(painter, origin, height, text, on, off, 0.0)
+}
+
+/// As [`seven_segment`], with `gap` extra pixels between neighbouring glyphs.
+pub fn seven_segment_spaced(painter: &Painter, origin: Pos2, height: f32, text: &str, on: Color32, off: Color32, gap: f32) -> f32 {
     let mut x = origin.x;
     for c in text.chars() {
         let adv = char_advance(c, height);
@@ -64,9 +74,9 @@ pub fn seven_segment(painter: &Painter, origin: Pos2, height: f32, text: &str, o
             }
             _ => {}
         }
-        x += adv;
+        x += adv + gap;
     }
-    x - origin.x
+    x - origin.x - gap
 }
 
 /// Horizontal offset for italic slant at a fraction `fy` of the glyph height.
