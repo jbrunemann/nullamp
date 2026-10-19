@@ -1,4 +1,5 @@
-//! Disk cache of waveform overviews, so a mix is only decoded for its waveform once.
+//! Disk cache of what the background analysis finds in a file (waveform overview, tempo), so
+//! a file is only decoded for it once.
 //!
 //! Entries are keyed by the file's content fingerprint (see `store::fingerprint`), which
 //! survives retagging and renaming. A hit refreshes the entry's modified time, so the
@@ -8,7 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use nullamp_audio::Waveform;
+use nullamp_audio::{Tempo, Waveform};
 
 /// Entries not used for this long are removed at startup. A few KB each; this only keeps
 /// the folder from collecting every file ever played.
@@ -17,28 +18,61 @@ pub const MAX_AGE: Duration = Duration::from_secs(90 * 24 * 3600);
 const TOUCH_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 fn entry(dir: &Path, fingerprint: &str) -> std::path::PathBuf {
-    dir.join(format!("{:016x}.wf", crate::store::fnv1a(fingerprint.as_bytes())))
+    entry_as(dir, fingerprint, "wf")
 }
 
-pub fn load(dir: &Path, fingerprint: &str) -> Option<Waveform> {
-    let path = entry(dir, fingerprint);
-    let wave = Waveform::from_bytes(&fs::read(&path).ok()?)?;
-    let stale = fs::metadata(&path).ok()?.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > TOUCH_AFTER);
-    if stale && let Ok(f) = fs::File::options().write(true).open(&path) {
+fn entry_as(dir: &Path, fingerprint: &str, extension: &str) -> std::path::PathBuf {
+    dir.join(format!("{:016x}.{extension}", crate::store::fnv1a(fingerprint.as_bytes())))
+}
+
+/// The entry's bytes, refreshing its modified time when it is getting old.
+fn read_entry(path: &Path) -> Option<Vec<u8>> {
+    let bytes = fs::read(path).ok()?;
+    let stale = fs::metadata(path).ok()?.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > TOUCH_AFTER);
+    if stale && let Ok(f) = fs::File::options().write(true).open(path) {
         let _ = f.set_modified(SystemTime::now());
     }
-    Some(wave)
+    Some(bytes)
 }
 
-pub fn store(dir: &Path, fingerprint: &str, wave: &Waveform) {
+fn write_entry(path: &Path, bytes: &[u8]) {
+    let Some(dir) = path.parent() else { return };
     if fs::create_dir_all(dir).is_err() {
         return;
     }
-    let path = entry(dir, fingerprint);
     let tmp = path.with_extension("tmp");
-    if fs::write(&tmp, wave.to_bytes()).is_ok() && fs::rename(&tmp, &path).is_err() {
+    if fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_err() {
         let _ = fs::remove_file(&tmp);
     }
+}
+
+pub fn load(dir: &Path, fingerprint: &str) -> Option<Waveform> {
+    Waveform::from_bytes(&read_entry(&entry(dir, fingerprint))?)
+}
+
+pub fn store(dir: &Path, fingerprint: &str, wave: &Waveform) {
+    write_entry(&entry(dir, fingerprint), &wave.to_bytes());
+}
+
+const TEMPO_MAGIC: &[u8; 4] = b"NBP1";
+
+/// `Some(None)` is a cached "no clear beat", so such a file is not analysed again; `None` is a miss.
+pub fn load_tempo(dir: &Path, fingerprint: &str) -> Option<Option<Tempo>> {
+    let bytes = read_entry(&entry_as(dir, fingerprint, "bpm"))?;
+    let [m0, m1, m2, m3, b0, b1, b2, b3, c0, c1, c2, c3] = bytes[..] else { return None };
+    if &[m0, m1, m2, m3] != TEMPO_MAGIC {
+        return None;
+    }
+    let (bpm, confidence) = (f32::from_le_bytes([b0, b1, b2, b3]), f32::from_le_bytes([c0, c1, c2, c3]));
+    Some((bpm > 0.0).then_some(Tempo { bpm, confidence }))
+}
+
+pub fn store_tempo(dir: &Path, fingerprint: &str, tempo: Option<Tempo>) {
+    let (bpm, confidence) = tempo.map_or((0.0, 0.0), |t| (t.bpm, t.confidence));
+    let mut bytes = TEMPO_MAGIC.to_vec();
+    bytes.extend_from_slice(&bpm.to_le_bytes());
+    bytes.extend_from_slice(&confidence.to_le_bytes());
+    write_entry(&entry_as(dir, fingerprint, "bpm"), &bytes);
 }
 
 /// Remove entries unused for `max_age`. Returns how many went.
@@ -72,6 +106,19 @@ mod tests {
         store(dir.path(), "abc", &wave());
         assert_eq!(load(dir.path(), "abc"), Some(wave()));
         assert_eq!(load(dir.path(), "abd"), None);
+    }
+
+    #[test]
+    fn tempo_round_trips_including_no_tempo() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_tempo(dir.path(), "abc"), None);
+        let tempo = Tempo { bpm: 127.5, confidence: 0.8 };
+        store_tempo(dir.path(), "abc", Some(tempo));
+        store_tempo(dir.path(), "none", None);
+        assert_eq!(load_tempo(dir.path(), "abc"), Some(Some(tempo)));
+        assert_eq!(load_tempo(dir.path(), "none"), Some(None));
+        fs::write(entry_as(dir.path(), "abc", "bpm"), b"NBP1xx").unwrap();
+        assert_eq!(load_tempo(dir.path(), "abc"), None, "damage is a miss");
     }
 
     #[test]

@@ -3,8 +3,9 @@
 //! Three lanes keep slow work away from fast work:
 //! - *interactive* (now-playing info, inspector reads, tag writes) is always served
 //!   before *bulk* (playlist scans, folder imports) by the same local workers;
-//! - *waveform* overviews run on their own thread too: decoding a long mix takes
-//!   seconds and must not hold up the local workers.
+//! - *analysis* (the waveform overview, then the tempo) runs on its own thread too: decoding
+//!   a long mix takes seconds and must not hold up the local workers. It starts after the
+//!   track has been handed to the audio engine and never delays playback.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, select_biased};
-use nullamp_audio::{Waveform, WaveformError};
+use nullamp_audio::{Tempo, TempoError, Waveform, WaveformError};
 use nullamp_core::setlist::{MixInfo, Provenance};
 use nullamp_core::{Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
@@ -90,7 +91,7 @@ pub enum Job {
     LogFingerprint { path: PathBuf },
 }
 
-struct WaveformRequest {
+struct AnalysisRequest {
     generation: u64,
     token: u64,
     path: PathBuf,
@@ -115,6 +116,9 @@ pub enum JobResult {
     TextWritten { path: PathBuf, result: Result<(), String> },
     /// Overview of the track loaded under `token`. Abandoned requests send nothing.
     Waveform { token: u64, result: Result<Waveform, String> },
+    /// Tempo of the track loaded under `token`, `Ok(None)` for no clear beat. Not sent when
+    /// the file's tags already state a BPM, and abandoned requests send nothing.
+    Tempo { token: u64, result: Result<Option<Tempo>, String> },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -122,8 +126,8 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Workers {
     interactive: Sender<Job>,
     bulk: Sender<Job>,
-    waveform: Sender<WaveformRequest>,
-    waveform_generation: Arc<AtomicU64>,
+    analysis: Sender<AnalysisRequest>,
+    analysis_generation: Arc<AtomicU64>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -170,34 +174,36 @@ impl Workers {
                 .expect("spawn worker");
         }
 
-        let waveform_generation = Arc::new(AtomicU64::new(0));
-        let (waveform, waveform_rx) = crossbeam_channel::unbounded::<WaveformRequest>();
+        let analysis_generation = Arc::new(AtomicU64::new(0));
+        let (analysis, analysis_rx) = crossbeam_channel::unbounded::<AnalysisRequest>();
         {
-            let (tx, w, generation, dir) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache());
+            let (tx, w, generation, dir) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&analysis_generation), paths.waveform_cache());
             std::thread::Builder::new()
-                .name("nullamp-waveform".into())
+                .name("nullamp-analysis".into())
                 .spawn(move || {
                     let removed = waveform_cache::prune(&dir, waveform_cache::MAX_AGE);
                     if removed > 0 {
                         log::debug!("removed {removed} unused waveform cache entries");
                     }
-                    while let Ok(mut request) = waveform_rx.recv() {
+                    while let Ok(mut request) = analysis_rx.recv() {
                         // Skipping through a playlist queues requests faster than they run; only the newest matters.
-                        while let Ok(newer) = waveform_rx.try_recv() {
+                        while let Ok(newer) = analysis_rx.try_recv() {
                             request = newer;
                         }
-                        if let Some(result) = run_waveform(&dir, &generation, request) {
-                            if tx.send(result).is_err() {
-                                return;
-                            }
+                        let mut closed = false;
+                        run_analysis(&dir, &generation, request, &mut |result| {
+                            closed |= tx.send(result).is_err();
                             w();
+                        });
+                        if closed {
+                            return;
                         }
                     }
                 })
-                .expect("spawn waveform worker");
+                .expect("spawn analysis worker");
         }
 
-        Workers { interactive, bulk, waveform, waveform_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
+        Workers { interactive, bulk, analysis, analysis_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
     }
 
     pub fn request_id(&self) -> u64 {
@@ -212,11 +218,11 @@ impl Workers {
         let _ = lane.send(job);
     }
 
-    /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
-    /// decode already running for an earlier request stops at its next packet.
-    pub fn request_waveform(&self, token: u64, path: PathBuf) {
-        let generation = self.waveform_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.waveform.send(WaveformRequest { generation, token, path });
+    /// Compute (or load from the cache) the waveform and then the tempo of `path`, loaded
+    /// under `token`. A decode already running for an earlier request stops at its next packet.
+    pub fn request_analysis(&self, token: u64, path: PathBuf) {
+        let generation = self.analysis_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.analysis.send(AnalysisRequest { generation, token, path });
     }
 
     /// Queue tag reads for playlist rows, in chunks so other work interleaves.
@@ -249,23 +255,45 @@ impl Workers {
     }
 }
 
-/// `None` when a newer request replaced this one while it ran.
-fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
-    let WaveformRequest { generation, token, path } = request;
-    let fingerprint = store::fingerprint(&path).ok();
-    if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
-        return Some(JobResult::Waveform { token, result: Ok(wave) });
-    }
+/// The waveform first, since it is what the timeline shows, then the tempo. Both are sent
+/// through `emit` as they are ready; nothing is sent once a newer request has replaced this one.
+fn run_analysis(dir: &Path, current: &AtomicU64, request: AnalysisRequest, emit: &mut dyn FnMut(JobResult)) {
+    let AnalysisRequest { generation, token, path } = request;
     let cancelled = || current.load(Ordering::Relaxed) != generation;
-    match nullamp_audio::compute_waveform(&path, &cancelled) {
-        Ok(wave) => {
-            if let Some(fp) = fingerprint {
-                waveform_cache::store(dir, &fp, &wave);
+    let fingerprint = store::fingerprint(&path).ok();
+
+    if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
+        emit(JobResult::Waveform { token, result: Ok(wave) });
+    } else {
+        match nullamp_audio::compute_waveform(&path, &cancelled) {
+            Ok(wave) => {
+                if let Some(fp) = fingerprint.as_deref() {
+                    waveform_cache::store(dir, fp, &wave);
+                }
+                emit(JobResult::Waveform { token, result: Ok(wave) });
             }
-            Some(JobResult::Waveform { token, result: Ok(wave) })
+            Err(WaveformError::Cancelled) => return,
+            Err(e) => emit(JobResult::Waveform { token, result: Err(e.to_string()) }),
         }
-        Err(WaveformError::Cancelled) => None,
-        Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()) }),
+    }
+    // A BPM in the tags is the user's or another program's word and is shown as it is.
+    if cancelled() || nullamp_meta::read_bpm(&path).is_some() {
+        return;
+    }
+
+    if let Some(tempo) = fingerprint.as_deref().and_then(|fp| waveform_cache::load_tempo(dir, fp)) {
+        emit(JobResult::Tempo { token, result: Ok(tempo) });
+        return;
+    }
+    match nullamp_audio::compute_tempo(&path, &cancelled) {
+        Ok(tempo) => {
+            if let Some(fp) = fingerprint.as_deref() {
+                waveform_cache::store_tempo(dir, fp, tempo);
+            }
+            emit(JobResult::Tempo { token, result: Ok(tempo) });
+        }
+        Err(TempoError::Cancelled) => {}
+        Err(e) => emit(JobResult::Tempo { token, result: Err(e.to_string()) }),
     }
 }
 

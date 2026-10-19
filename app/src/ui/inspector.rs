@@ -388,6 +388,11 @@ fn header(app: &App, ui: &mut Ui) {
 
 fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
     let writable = app.inspector.loaded.values().all(|m| m.writable);
+    // The tempo found by listening, offered when it is the playing file that is open here.
+    let detected = match (app.inspector.targets.as_slice(), app.player.current.as_ref(), app.now.tempo) {
+        ([target], Some(c), Some(t)) if *target == c.path => Some(super::format_bpm(t.bpm)),
+        _ => None,
+    };
     egui::Grid::new("fields").num_columns(2).spacing([8.0, 4.0]).min_col_width(80.0).show(ui, |ui| {
         let mut pair_done = false;
         for field in Field::ALL {
@@ -436,6 +441,18 @@ fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
                     && let Err(e) = field.validate(&f.value)
                 {
                     ui.label(RichText::new(e).small().color(theme::err()));
+                }
+                if field == Field::Bpm
+                    && writable
+                    && f.value.trim().is_empty()
+                    && let Some(d) = &detected
+                    && ui.small_button(format!("Detected {d} BPM: use it")).clicked()
+                {
+                    f.value = d.clone();
+                    f.touched = match &f.original {
+                        Original::Same(v) => *v != f.value,
+                        Original::Mixed => true,
+                    };
                 }
             });
             ui.end_row();

@@ -89,7 +89,9 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
             n => format!("{n} CH"),
         };
         let kbps = i.bitrate.map(|b| format!("{b} KBPS · ")).unwrap_or_default();
-        format!("{} · {kbps}{:.1} KHZ · {ch}", i.codec, i.sample_rate as f64 / 1000.0)
+        // A "~" marks a tempo found by listening rather than read from the tags.
+        let bpm = app.current_bpm().map(|(bpm, detected)| format!(" · {}{} BPM", if detected { "~" } else { "" }, super::format_bpm(bpm))).unwrap_or_default();
+        format!("{} · {kbps}{:.1} KHZ · {ch}{bpm}", i.codec, i.sample_rate as f64 / 1000.0)
     });
     let fmt_rect = p.text(
         pos2(inner.left(), inner.bottom()),

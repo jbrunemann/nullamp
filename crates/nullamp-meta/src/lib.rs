@@ -81,18 +81,20 @@ pub enum Field {
     Album,
     Date,
     Genre,
+    Bpm,
     TrackNumber,
     TrackTotal,
     Comment,
 }
 
 impl Field {
-    pub const ALL: [Field; 8] = [
+    pub const ALL: [Field; 9] = [
         Field::Title,
         Field::Artist,
         Field::Album,
         Field::Date,
         Field::Genre,
+        Field::Bpm,
         Field::TrackNumber,
         Field::TrackTotal,
         Field::Comment,
@@ -105,22 +107,63 @@ impl Field {
             Field::Album => "Album",
             Field::Date => "Date / year",
             Field::Genre => "Genre",
+            Field::Bpm => "BPM",
             Field::TrackNumber => "Track",
             Field::TrackTotal => "of tracks",
             Field::Comment => "Comment",
         }
     }
 
-    pub(crate) fn item_key(self) -> ItemKey {
+    /// The tag item(s) holding this field, in the order they are read. Only BPM has two: ID3v2's
+    /// `TBPM` and MP4's `tmpo` take whole numbers, the other formats a decimal.
+    pub(crate) fn item_keys(self) -> &'static [ItemKey] {
         match self {
-            Field::Title => ItemKey::TrackTitle,
-            Field::Artist => ItemKey::TrackArtist,
-            Field::Album => ItemKey::AlbumTitle,
-            Field::Date => ItemKey::RecordingDate,
-            Field::Genre => ItemKey::Genre,
-            Field::TrackNumber => ItemKey::TrackNumber,
-            Field::TrackTotal => ItemKey::TrackTotal,
-            Field::Comment => ItemKey::Comment,
+            Field::Bpm => &[ItemKey::Bpm, ItemKey::IntegerBpm],
+            Field::Title => &[ItemKey::TrackTitle],
+            Field::Artist => &[ItemKey::TrackArtist],
+            Field::Album => &[ItemKey::AlbumTitle],
+            Field::Date => &[ItemKey::RecordingDate],
+            Field::Genre => &[ItemKey::Genre],
+            Field::TrackNumber => &[ItemKey::TrackNumber],
+            Field::TrackTotal => &[ItemKey::TrackTotal],
+            Field::Comment => &[ItemKey::Comment],
+        }
+    }
+
+    pub(crate) fn get(self, tag: &lofty::tag::Tag) -> Option<&str> {
+        self.item_keys().iter().find_map(|&k| tag.get_string(k))
+    }
+
+    /// Store `value` (trimmed, non-empty). `false` when the tag format has no place for the field.
+    /// A fractional BPM goes to the decimal item where there is one and is rounded for the
+    /// whole-number ones; a whole BPM prefers the whole-number item, which more players read.
+    pub(crate) fn set(self, tag: &mut lofty::tag::Tag, value: &str) -> bool {
+        self.clear(tag);
+        let keys = self.item_keys();
+        if self != Field::Bpm {
+            return tag.insert_text(keys[0], value.to_owned());
+        }
+        let bpm: f64 = value.parse().unwrap_or(0.0);
+        if bpm.fract() == 0.0 {
+            tag.insert_text(ItemKey::IntegerBpm, value.to_owned()) || tag.insert_text(ItemKey::Bpm, value.to_owned())
+        } else {
+            tag.insert_text(ItemKey::Bpm, value.to_owned()) || tag.insert_text(ItemKey::IntegerBpm, format!("{}", bpm.round()))
+        }
+    }
+
+    pub(crate) fn clear(self, tag: &mut lofty::tag::Tag) {
+        for &k in self.item_keys() {
+            tag.remove_key(k);
+        }
+    }
+
+    /// Whether `got`, as read back after writing `wanted`, is what was asked for.
+    pub(crate) fn reads_back_as(self, wanted: &str, got: &str) -> bool {
+        match self {
+            Field::TrackNumber | Field::TrackTotal => wanted.parse::<u32>().ok() == got.parse::<u32>().ok(),
+            // Whole-number BPM items round what they were given.
+            Field::Bpm => matches!((wanted.parse::<f64>(), got.parse::<f64>()), (Ok(w), Ok(g)) if (w - g).abs() <= 0.5),
+            _ => wanted == got,
         }
     }
 
@@ -146,6 +189,9 @@ impl Field {
                 Ok(n) if n > 0 && n < 10_000 => Ok(()),
                 _ => Err("must be a whole number between 1 and 9999".into()),
             };
+        }
+        if self == Field::Bpm && !v.parse::<f64>().is_ok_and(|b| (1.0..1000.0).contains(&b)) {
+            return Err("must be a number between 1 and 999".into());
         }
         if self == Field::Date && !valid_date(v) {
             return Err("use YYYY, YYYY-MM or YYYY-MM-DD".into());
@@ -296,7 +342,7 @@ pub fn read(path: &Path) -> Result<FileMetadata, MetaError> {
     let mut other_items = Vec::new();
     let mut artwork = Vec::new();
     let mut embedded_cue = None;
-    let known: Vec<ItemKey> = Field::ALL.iter().map(|f| f.item_key()).collect();
+    let known: Vec<ItemKey> = Field::ALL.iter().flat_map(|f| f.item_keys().iter().copied()).collect();
 
     // Fields come from the primary tag first, then any other tag (e.g. ID3v1).
     let mut tags: Vec<&lofty::tag::Tag> = tagged.tags().iter().collect();
@@ -304,7 +350,7 @@ pub fn read(path: &Path) -> Result<FileMetadata, MetaError> {
     tags.sort_by_key(|t| t.tag_type() != primary);
     for tag in &tags {
         for field in Field::ALL {
-            if let Some(v) = tag.get_string(field.item_key())
+            if let Some(v) = field.get(tag)
                 && !v.trim().is_empty()
             {
                 fields.entry(field).or_insert_with(|| v.to_owned());
@@ -394,6 +440,14 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         album: get(ItemKey::AlbumTitle),
         duration: (duration > 0.0).then_some(duration),
     })
+}
+
+/// The BPM stored in the file's tags, if any and sensible.
+pub fn read_bpm(path: &Path) -> Option<f32> {
+    let tagged = open_tagged(path, false).ok()?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    let bpm: f32 = Field::Bpm.get(tag)?.trim().parse().ok()?;
+    (1.0..1000.0).contains(&bpm).then_some(bpm)
 }
 
 /// Only the embedded artwork, for the now-playing display.
@@ -572,7 +626,42 @@ mod tests {
     }
 
     #[test]
+    fn bpm_round_trips_in_every_format() {
+        use crate::{Edit, WriteOptions, stamp, write};
+        let set = |v: Option<&str>| Edit { fields: [(Field::Bpm, v.map(str::to_owned))].into(), ..Default::default() };
+        // (file, whether the format keeps decimals)
+        for (name, decimals) in [("tagged_v23.mp3", false), ("tagged_v24.mp3", false), ("tone.flac", true), ("tone.ogg", true), ("tone.m4a", true)] {
+            let (_dir, path) = test_support::scratch_copy(name);
+            assert_eq!(read_bpm(&path), None, "{name}");
+            write(&path, stamp(&path).unwrap(), &set(Some("128")), &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(read_bpm(&path), Some(128.0), "{name}");
+            assert_eq!(read(&path).unwrap().fields.get(&Field::Bpm).map(String::as_str), Some("128"), "{name}");
+            write(&path, stamp(&path).unwrap(), &set(Some("127.5")), &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let got = read_bpm(&path).unwrap();
+            assert_eq!(got, if decimals { 127.5 } else { 128.0 }, "{name}");
+            write(&path, stamp(&path).unwrap(), &set(None), &WriteOptions::default()).unwrap();
+            assert_eq!(read_bpm(&path), None, "{name} cleared");
+        }
+    }
+
+    #[test]
+    fn bpm_in_the_file_is_not_listed_as_an_other_item() {
+        use crate::{Edit, WriteOptions, stamp, write};
+        let (_dir, path) = test_support::scratch_copy("tagged_v23.mp3");
+        let edit = Edit { fields: [(Field::Bpm, Some("100".to_owned()))].into(), ..Default::default() };
+        write(&path, stamp(&path).unwrap(), &edit, &WriteOptions::default()).unwrap();
+        let m = read(&path).unwrap();
+        assert!(!m.other_items.iter().any(|(k, _)| k.contains("BPM")), "{:?}", m.other_items);
+    }
+
+    #[test]
     fn field_validation() {
+        assert!(Field::Bpm.validate("128").is_ok());
+        assert!(Field::Bpm.validate("127.5").is_ok());
+        assert!(Field::Bpm.validate("0").is_err());
+        assert!(Field::Bpm.validate("1000").is_err());
+        assert!(Field::Bpm.validate("fast").is_err());
+        assert!(Field::Bpm.validate("").is_ok());
         assert!(Field::TrackNumber.validate("12").is_ok());
         assert!(Field::TrackNumber.validate("x").is_err());
         assert!(Field::TrackNumber.validate("0").is_err());

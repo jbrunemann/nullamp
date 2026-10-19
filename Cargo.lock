@@ -2914,6 +2914,7 @@ dependencies = [
  "log",
  "objc2-core-audio",
  "objc2-core-foundation",
+ "realfft",
  "rtrb",
  "rubato 5.0.1",
  "rusty-chromaprint",

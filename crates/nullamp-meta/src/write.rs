@@ -152,14 +152,13 @@ fn apply_tags(path: &Path, edit: &Edit, id3_version: Option<u8>) -> Result<Vec<F
     let mut unsupported = Vec::new();
     let tag = tagged.tag_mut(primary).expect("inserted above");
     for (field, value) in &edit.fields {
-        let key = field.item_key();
         match value.as_deref().map(str::trim) {
             Some(v) if !v.is_empty() => {
-                if !tag.insert_text(key, v.to_owned()) {
+                if !field.set(tag, v) {
                     unsupported.push(*field);
                 }
             }
-            _ => tag.remove_key(key),
+            _ => field.clear(tag),
         }
     }
     if let Some(art) = &edit.artwork {
@@ -189,9 +188,9 @@ fn apply_tags(path: &Path, edit: &Edit, id3_version: Option<u8>) -> Result<Vec<F
             for (field, value) in &edit.fields {
                 match value.as_deref().map(str::trim) {
                     Some(v) if !v.is_empty() => {
-                        tag.insert_text(field.item_key(), v.to_owned());
+                        field.set(tag, v);
                     }
-                    _ => tag.remove_key(field.item_key()),
+                    _ => field.clear(tag),
                 }
             }
             tag.save_to_path(path, options)?;
@@ -241,9 +240,9 @@ fn verify(path: &Path, edit: &Edit, before: (f64, Option<u32>), unsupported: &[F
             continue;
         }
         let wanted = value.as_deref().map(str::trim).filter(|v| !v.is_empty());
-        let got = tag.and_then(|t| t.get_string(field.item_key())).map(str::trim).filter(|v| !v.is_empty());
+        let got = tag.and_then(|t| field.get(t)).map(str::trim).filter(|v| !v.is_empty());
         let same = match (wanted, got) {
-            (Some(w), Some(g)) if field.is_numeric() => w.parse::<u32>().ok() == g.parse::<u32>().ok(),
+            (Some(w), Some(g)) => field.reads_back_as(w, g),
             (w, g) => w == g,
         };
         if !same {

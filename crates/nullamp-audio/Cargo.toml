@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 symphonia = { version = "0.6.1", features = ["mp3", "aac", "isomp4", "alac", "aiff", "caf"] }
 rubato = "5.0"
+realfft = "3.5"
 audioadapter-buffers = "5.1"
 rtrb = "0.3"
 rusty-chromaprint = "0.3"

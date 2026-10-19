@@ -258,8 +258,47 @@ fn waveform_arrives_and_old_cache_entries_are_pruned() {
     let wave = h.state().now.waveform.clone().expect("waveform for the playing track");
     assert!(wave.peak.iter().any(|&p| p > 20));
     assert!(!stale.exists(), "unused entry pruned at startup");
-    let cached: Vec<_> = std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).collect();
+    let cached: Vec<_> = std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "wf")).collect();
     assert_eq!(cached.len(), 1, "the new waveform is cached");
+    h.state_mut().player.stop();
+}
+
+/// Play `path` (added to the first list) and let the background work arrive.
+fn play_file(h: &mut Harness<'_, App>, path: PathBuf) {
+    let app = h.state_mut();
+    let id = app.player.lists[0].playlist.add_paths([path])[0];
+    app.player.play_entry(0, id, 0.0);
+    settle(h, 1500);
+}
+
+/// A file without a BPM tag gets its tempo found in the background (and cached, so the next
+/// play is instant); one with a BPM tag shows that and is not analysed at all.
+#[test]
+fn tempo_is_detected_unless_the_tags_have_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.waveform_cache();
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+
+    play_file(&mut h, fixtures().join("beat_120.mp3"));
+    let tempo = h.state().now.tempo.expect("tempo for the playing track");
+    assert!((tempo.bpm - 120.0).abs() < 0.5, "{tempo:?}");
+    assert_eq!(h.state().current_bpm(), Some((tempo.bpm, true)));
+    assert!(std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).any(|e| e.path().extension().is_some_and(|x| x == "bpm")), "tempo is cached");
+
+    // Another track clears it: a tone has no beat.
+    play_file(&mut h, fixtures().join("tone.flac"));
+    assert_eq!(h.state().now.tempo, None);
+    assert_eq!(h.state().current_bpm(), None);
+
+    // The tag wins and spares the analysis.
+    let tagged = dir.path().join("tagged_beat.mp3");
+    std::fs::copy(fixtures().join("beat_120.mp3"), &tagged).unwrap();
+    let edit = nullamp_meta::Edit { fields: [(nullamp_meta::Field::Bpm, Some("87".to_owned()))].into(), ..Default::default() };
+    nullamp_meta::write(&tagged, nullamp_meta::stamp(&tagged).unwrap(), &edit, &Default::default()).unwrap();
+    play_file(&mut h, tagged);
+    assert_eq!(h.state().now.tempo, None, "not analysed");
+    assert_eq!(h.state().current_bpm(), Some((87.0, false)));
     h.state_mut().player.stop();
 }
 
@@ -375,4 +414,25 @@ fn render_about() {
     h.state_mut().dialogs.about_open = true;
     settle(&mut h, 500);
     save(&mut h, "06-about.png");
+}
+
+/// The deck's format line with a detected tempo, and the inspector offering it for the tag.
+#[test]
+#[ignore]
+fn render_tempo() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    play_file(&mut h, fixtures().join("beat_120.mp3"));
+    {
+        let app = h.state_mut();
+        app.side_tab = crate::ui::SideTab::Inspector;
+        let id = app.player.lists[0].playlist.entries().last().unwrap().id;
+        app.selection.ids = [id].into();
+        app.selection.cursor = Some(id);
+        crate::ui::inspect_selection(app);
+    }
+    settle(&mut h, 1200);
+    save(&mut h, "10-tempo.png");
+    h.state_mut().player.stop();
 }

@@ -69,6 +69,9 @@ pub struct NowState {
     pub art_file: Option<PathBuf>,
     /// Loudness overview behind the timeline; arrives after the track starts.
     pub waveform: Option<nullamp_audio::Waveform>,
+    /// Tempo found by analysing the audio; arrives after the track starts, and not at all
+    /// for files whose tags state a BPM.
+    pub tempo: Option<nullamp_audio::Tempo>,
 }
 
 /// The audio output as the engine last reported it.
@@ -555,6 +558,14 @@ impl App {
                     }
                 }
             }
+            JobResult::Tempo { token, result } => {
+                if self.player.current.as_ref().is_some_and(|c| c.token == token) {
+                    match result {
+                        Ok(tempo) => self.now.tempo = tempo,
+                        Err(e) => log::debug!("tempo: {e}"),
+                    }
+                }
+            }
             JobResult::SetlistSaved(r) => {
                 if let Err(e) = r {
                     self.error(format!("Cannot save setlist: {e}"));
@@ -578,13 +589,23 @@ impl App {
         self.now = NowState::default();
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
-        self.workers.request_waveform(c.token, c.path.clone());
+        self.workers.request_analysis(c.token, c.path.clone());
         self.scroll_to = Some(c.entry);
         if self.inspector.follow_playing {
             inspector::load_targets(self, vec![c.path.clone()]);
         }
         let title = self.player.current_entry().map(|e| e.info.display_line(&e.path)).unwrap_or_default();
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{title} — Nullamp")));
+    }
+
+    /// BPM of the playing track and whether it was detected (else it is from the file's tags).
+    pub fn current_bpm(&self) -> Option<(f32, bool)> {
+        let tagged = self.now.meta.as_ref().and_then(|m| m.fields.get(&nullamp_meta::Field::Bpm)).and_then(|v| v.trim().parse::<f32>().ok());
+        match (tagged, self.now.tempo) {
+            (Some(bpm), _) => Some((bpm, false)),
+            (None, Some(t)) => Some((t.bpm, true)),
+            (None, None) => None,
+        }
     }
 
     fn on_now_playing(&mut self, info: crate::workers::NowPlayingInfo) {
@@ -990,4 +1011,9 @@ pub fn inspect_selection(app: &mut App) {
 /// Shared by views: playlist doc lookup by key.
 pub fn list_index(app: &App, key: &str) -> Option<usize> {
     app.player.lists.iter().position(|d: &PlaylistDoc| d.key == key)
+}
+
+/// "128", or "127.5" for a fractional tempo.
+pub fn format_bpm(bpm: f32) -> String {
+    if (bpm - bpm.round()).abs() < 0.05 { format!("{}", bpm.round()) } else { format!("{bpm:.1}") }
 }
