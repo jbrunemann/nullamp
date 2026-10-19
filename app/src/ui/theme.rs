@@ -275,6 +275,11 @@ pub fn apply(ctx: &egui::Context, appearance: Appearance) {
         // Decorative animation off: state changes show immediately.
         style.animation_time = 0.06;
     });
+    // The floating handle is drawn in the text colour, which glares on the dark deck.
+    ctx.style_mut_of(egui::Theme::Dark, |style: &mut Style| {
+        style.spacing.scroll.active_handle_opacity = 0.3;
+        style.spacing.scroll.interact_handle_opacity = 0.5;
+    });
 }
 
 pub fn set_appearance(ctx: &egui::Context, appearance: Appearance) {
