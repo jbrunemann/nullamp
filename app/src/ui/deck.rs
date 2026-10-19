@@ -89,9 +89,7 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
             n => format!("{n} CH"),
         };
         let kbps = i.bitrate.map(|b| format!("{b} KBPS · ")).unwrap_or_default();
-        // A "~" marks a tempo found by listening rather than read from the tags.
-        let bpm = app.current_bpm().map(|(bpm, detected)| format!(" · {}{} BPM", if detected { "~" } else { "" }, super::format_bpm(bpm))).unwrap_or_default();
-        format!("{} · {kbps}{:.1} KHZ · {ch}{bpm}", i.codec, i.sample_rate as f64 / 1000.0)
+        format!("{} · {kbps}{:.1} KHZ · {ch}", i.codec, i.sample_rate as f64 / 1000.0)
     });
     let fmt_rect = p.text(
         pos2(inner.left(), inner.bottom()),
@@ -113,9 +111,14 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
     let time = ui.input(|i| i.time);
     let (line1, line1_color, line2, line3) = lcd_lines(app);
-    let l1 = Rect::from_min_size(text_rect.left_top(), vec2(text_rect.width(), 22.0));
+    let bpm_width = bpm_display(app, ui, &p, text_rect);
+    let l1 = Rect::from_min_size(text_rect.left_top(), vec2(text_rect.width() - bpm_width, 22.0));
     let paused = app.settings.marquee_paused;
     let mut toggle = widgets::marquee(ui, l1, &line1, theme::mono(16.0), line1_color, time, paused);
+    if bpm_width > 0.0 {
+        // The title runs under the tempo box: fade it out instead of cutting it off.
+        fade_out_right(&p, rect, Rect::from_min_max(pos2(l1.right() - TITLE_FADE, l1.top()), l1.right_bottom()));
+    }
     let l2 = Rect::from_min_size(pos2(text_rect.left(), l1.bottom() + 5.0), vec2(text_rect.width(), 16.0));
     toggle |= widgets::marquee(ui, l2, &line2, theme::mono(12.0), theme::LCD_MID, time, paused);
     if toggle {
@@ -154,6 +157,75 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
             ui.interact(r, egui::Id::unique("lcd-file"), Sense::hover()).on_hover_text(path.display().to_string());
         }
     }
+}
+
+/// Width over which text running under the tempo box fades out.
+const TITLE_FADE: f32 = 26.0;
+
+/// Cover `edge` (inside the display `lcd`) with a gradient from clear on its left to the display's
+/// background on its right, keeping the scanlines the background has.
+fn fade_out_right(p: &egui::Painter, lcd: Rect, edge: Rect) {
+    let clear = Color32::TRANSPARENT;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(edge.left_top(), clear);
+    mesh.colored_vertex(edge.right_top(), theme::LCD_BG);
+    mesh.colored_vertex(edge.right_bottom(), theme::LCD_BG);
+    mesh.colored_vertex(edge.left_bottom(), clear);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(mesh);
+    let mut y = lcd.top() + 2.0;
+    while y < edge.top() {
+        y += 3.0;
+    }
+    while y < edge.bottom() {
+        p.line_segment([pos2(edge.left(), y), pos2(edge.right(), y)], Stroke::new(1.0, Color32::from_black_alpha(40)));
+        y += 3.0;
+    }
+}
+
+/// The tempo in a green frame at the top right, above the audio output, like the BPM counter
+/// of a nineties stereo. Unlit digits show while a track is loaded and no tempo is known
+/// (yet). Returns the width taken from line 1, 0 when nothing is drawn.
+fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, text_rect: Rect) -> f32 {
+    const DIGITS: f32 = 14.0;
+    const PAD: f32 = 5.0;
+    if app.player.current_entry().is_none() {
+        return 0.0;
+    }
+    let bpm = app.current_bpm();
+    let text = bpm.map(|(bpm, _)| super::format_bpm(bpm)).unwrap_or_default();
+    // Room for three digits, and a decimal when there is one.
+    let ghost: String = if text.contains('.') { "888.8".into() } else { "888".into() };
+    let label = p.layout_no_wrap("BPM".into(), theme::mono(8.0), theme::LCD_MID);
+    let tilde = p.layout_no_wrap("~".into(), theme::mono(10.0), theme::LCD_MID);
+    let digits_w = widgets::seven_segment_width(&ghost, DIGITS);
+    let width = PAD + label.size().x + 5.0 + tilde.size().x + digits_w + PAD;
+    if text_rect.width() - width < 120.0 {
+        return 0.0;
+    }
+    let frame = Rect::from_min_size(pos2(text_rect.right() - width, text_rect.top()), vec2(width, DIGITS + 7.0));
+    p.rect_stroke(frame, 3.0, Stroke::new(1.0, theme::LCD_FG.gamma_multiply(0.55)), StrokeKind::Inside);
+    p.galley(pos2(frame.left() + PAD, frame.bottom() - 3.5 - label.size().y), label.clone(), theme::LCD_MID);
+    let digits_x = frame.right() - PAD - digits_w;
+    let origin = pos2(digits_x, frame.top() + 3.5);
+    let ghost_cells: String = ghost.chars().map(|c| if c == '.' { '.' } else { '8' }).collect();
+    widgets::seven_segment(p, origin, DIGITS, &ghost_cells, theme::LCD_OFF, Color32::TRANSPARENT);
+    if let Some((_, detected)) = bpm {
+        // Right-aligned in the cells, so a two-digit tempo leaves its first cell unlit.
+        let used = widgets::seven_segment_width(&text, DIGITS);
+        widgets::seven_segment(p, pos2(digits_x + digits_w - used, origin.y), DIGITS, &text, theme::LCD_FG, Color32::TRANSPARENT);
+        if detected {
+            p.galley(pos2(digits_x - tilde.size().x, frame.center().y - tilde.size().y / 2.0), tilde, theme::LCD_MID);
+        }
+    }
+    let tip = match bpm {
+        Some((_, true)) => "Tempo found by listening to the audio",
+        Some((_, false)) => "Tempo from the file's tags",
+        None => "Tempo: none found yet",
+    };
+    ui.interact(frame, ui.scope_id().with("lcd-bpm"), Sense::hover()).on_hover_text(tip);
+    width + 8.0
 }
 
 /// The audio output in small print at the right end of line 3; click to choose another.

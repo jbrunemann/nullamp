@@ -474,5 +474,14 @@ fn render_tempo() {
     }
     settle(&mut h, 1200);
     save(&mut h, "10-tempo.png");
+
+    // A title long enough to run under the tempo box.
+    let long = dir.path().join("long.mp3");
+    std::fs::copy(fixtures().join("beat_120.mp3"), &long).unwrap();
+    let edit = nullamp_meta::Edit { fields: [(nullamp_meta::Field::Title, Some("A very long title that keeps going well past the end of the line, so that it runs right under the tempo box and we can see it fade out".to_owned()))].into(), ..Default::default() };
+    nullamp_meta::write(&long, nullamp_meta::stamp(&long).unwrap(), &edit, &Default::default()).unwrap();
+    play_file(&mut h, long);
+    settle(&mut h, 500);
+    save(&mut h, "10-tempo-long-title.png");
     h.state_mut().player.stop();
 }
