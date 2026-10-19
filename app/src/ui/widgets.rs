@@ -33,7 +33,7 @@ fn char_advance(c: char, h: f32) -> f32 {
 }
 
 /// Draw digits, '-', ':' and ' ' as slanted seven-segment glyphs. Unlit segments
-/// are drawn in `off` for the LCD look. Returns the width used.
+/// are drawn in `off` for the LCD look. '_' is a digit-wide cell with nothing lit. Returns the width used.
 pub fn seven_segment(painter: &Painter, origin: Pos2, height: f32, text: &str, on: Color32, off: Color32) -> f32 {
     let mut x = origin.x;
     for c in text.chars() {

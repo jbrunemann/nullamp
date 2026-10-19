@@ -60,17 +60,21 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
 
     // Big time readout (click toggles elapsed / remaining).
     let digits_h = 34.0;
-    let time_text = match (app.show_remaining, dur) {
-        (true, Some(d)) => format!("-{}", lcd_clock(d - pos)),
-        _ => format!(" {}", lcd_clock(pos)),
+    let (time_text, shown_secs) = match (app.show_remaining, dur) {
+        (true, Some(d)) => (format!("-{}", lcd_clock(d - pos)), d - pos),
+        _ => (format!(" {}", lcd_clock(pos)), pos),
     };
-    let time_origin = pos2(inner.left() + 16.0, inner.top() + 2.0);
-    let w = widgets::seven_segment_width("-0:00:00", digits_h);
+    let time_origin = pos2(inner.left(), inner.top() + 2.0);
+    let w = widgets::seven_segment_width("-188:88", digits_h);
     // Unlit "8"s behind the digits for the LCD look.
-    let ghost: String = time_text.chars().map(|c| if c.is_ascii_digit() { '8' } else { c }).collect();
+    // The first minute cell is a "1"-only digit, so its ghost shows just those two segments.
+    let ghost = format!("{}188:88", &time_text[..1]);
     widgets::seven_segment(&p, time_origin, digits_h, &ghost, theme::LCD_OFF, Color32::TRANSPARENT);
     let lit = if status == Status::Stopped { theme::LCD_MID } else { theme::LCD_FG };
-    widgets::seven_segment(&p, time_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
+    // Past the display's range the digits blink slowly, like an old stereo's error state.
+    if shown_secs < LCD_MAX_SECS as f64 || slow_blink(ui) {
+        widgets::seven_segment(&p, time_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
+    }
     let time_rect = Rect::from_min_size(time_origin, vec2(w, digits_h));
     let resp = ui.interact(time_rect, egui::Id::unique("lcd-time"), Sense::click());
     if resp.on_hover_text("Click: elapsed / remaining").clicked() {
@@ -251,10 +255,21 @@ fn blink(ui: &Ui) -> bool {
     (ui.input(|i| i.time) * 1.25).fract() < 0.6
 }
 
+/// One cycle every two seconds, even on and off.
+fn slow_blink(ui: &Ui) -> bool {
+    (ui.input(|i| i.time) * 0.5).fract() < 0.5
+}
+
+/// 199:59, the last value the 3½ digit clock can show.
+const LCD_MAX_SECS: u64 = 199 * 60 + 59;
+
+/// Total minutes and seconds in a fixed "1mm:ss" field, like a 3½ digit LCD: the first cell can
+/// only show a 1, so 199:59 is the limit (hours roll into the minutes). Unused leading minute
+/// digits are `_`, which draws as an unlit cell.
 fn lcd_clock(secs: f64) -> String {
-    let s = format_clock(secs.max(0.0));
-    // Right-align in an "h:mm:ss" field so digits do not jump.
-    format!("{s:>7}")
+    let total = (secs.max(0.0) as u64).min(LCD_MAX_SECS);
+    let (m, s) = (total / 60, total % 60);
+    if m >= 100 { format!("1{:02}:{s:02}", m - 100) } else { format!("_{m:_>2}:{s:02}") }
 }
 
 /// Line 1: what is playing (the constituent track for mixes, in amber).
@@ -546,4 +561,20 @@ fn transport(app: &mut App, ui: &mut Ui) {
             }
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lcd_clock;
+
+    #[test]
+    fn lcd_clock_is_a_three_and_a_half_digit_field() {
+        assert_eq!(lcd_clock(0.0), "__0:00");
+        assert_eq!(lcd_clock(261.0), "__4:21");
+        assert_eq!(lcd_clock(45.0 * 60.0), "_45:00");
+        assert_eq!(lcd_clock(6000.0), "100:00");
+        assert_eq!(lcd_clock(7200.0), "120:00");
+        assert_eq!(lcd_clock(f64::MAX), "199:59");
+        assert_eq!(lcd_clock(-3.0), "__0:00");
+    }
 }
