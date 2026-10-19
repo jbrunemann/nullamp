@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/icon.png" width="96" height="96" alt="Nullamp icon">
+</p>
+
 # Nullamp
 
 A fast, retro-inspired desktop music player with first-class DJ mix (setlist) support and a metadata editor. Written in Rust. The original product brief is `writing-block.md`; the full development record (status, decisions, measurements, lessons, to-do list) is `docs/HANDOFF.md`. Read both before starting larger work.

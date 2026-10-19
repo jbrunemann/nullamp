@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/icon.png" width="96" height="96" alt="Nullamp icon">
+</p>
+
 # Nullamp user manual
 
 Version 0.2. This manual covers the macOS app. For building from source and the project layout, see the [README](../README.md).
