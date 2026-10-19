@@ -51,6 +51,8 @@ pub struct Settings {
     pub retro_artwork: bool,
     /// The inspector shows the playing track instead of the playlist selection.
     pub inspector_follows_playing: bool,
+    /// Keys shown as Camelot codes (8A) rather than musical names (Am). Only set in settings.json.
+    pub camelot: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +80,7 @@ impl Default for Settings {
             output_device: None,
             retro_artwork: true,
             inspector_follows_playing: false,
+            camelot: true,
         }
     }
 }
@@ -302,6 +305,17 @@ mod tests {
         let base = dir.path().to_path_buf();
         let paths = AppPaths { config: base.join("c"), data: base.join("d"), cache: base.join("k") };
         (dir, Store::new(paths))
+    }
+
+    #[test]
+    fn camelot_keys_are_the_default_and_settings_json_can_switch_them_off() {
+        assert!(Settings::default().camelot);
+        let (_dir, mut store) = store();
+        std::fs::create_dir_all(&store.paths.config).unwrap();
+        std::fs::write(store.paths.config.join("settings.json"), r#"{"camelot": false}"#).unwrap();
+        assert!(!store.load_settings().camelot);
+        std::fs::write(store.paths.config.join("settings.json"), "{}").unwrap();
+        assert!(store.load_settings().camelot, "absent means on");
     }
 
     #[test]

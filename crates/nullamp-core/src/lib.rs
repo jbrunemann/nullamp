@@ -7,6 +7,7 @@
 pub mod command;
 pub mod cue;
 pub mod ids;
+pub mod key;
 pub mod m3u;
 pub mod playlist;
 pub mod queue;
@@ -17,6 +18,7 @@ pub mod track;
 pub mod tracklist_text;
 
 pub use ids::EntryId;
+pub use key::{Key, KeyNotation};
 pub use playlist::{EntryStatus, Playlist, PlaylistEntry};
 pub use queue::{Navigator, RepeatMode};
 pub use setlist::{Setlist, SetlistEntry};

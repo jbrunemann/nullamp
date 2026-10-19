@@ -42,10 +42,11 @@ pub enum Col {
     Album,
     Format,
     Bpm,
+    Key,
     Time,
 }
 
-const COLUMN_IDS: [&str; 8] = ["num", "art", "title", "artist", "album", "format", "bpm", "time"];
+const COLUMN_IDS: [&str; 9] = ["num", "art", "title", "artist", "album", "format", "bpm", "key", "time"];
 
 /// Space between columns, taken from the right of each one.
 const GAP: f32 = 8.0;
@@ -53,7 +54,7 @@ const GAP: f32 = 8.0;
 const ROW_HEIGHT_ART: f32 = 24.0;
 
 impl Col {
-    const ALL: [Col; 8] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bpm, Col::Time];
+    const ALL: [Col; 9] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bpm, Col::Key, Col::Time];
 
     fn id(self) -> &'static str {
         COLUMN_IDS[Self::ALL.iter().position(|c| *c == self).unwrap_or(0)]
@@ -72,6 +73,7 @@ impl Col {
             Col::Album => "ALBUM",
             Col::Format => "FORMAT",
             Col::Bpm => "BPM",
+            Col::Key => "KEY",
             Col::Time => "TIME",
         }
     }
@@ -85,6 +87,7 @@ impl Col {
             Col::Album => "Album",
             Col::Format => "Format",
             Col::Bpm => "BPM",
+            Col::Key => "Key",
             Col::Time => "Time",
         }
     }
@@ -109,7 +112,7 @@ fn row_height(order: &[Col]) -> f32 {
     if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
 }
 
-/// Cell rects for the visible columns, left to right. Number, artwork, format, BPM and time are
+/// Cell rects for the visible columns, left to right. Number, artwork, format, BPM, key and time are
 /// fixed; title, artist and album share the rest by weight.
 fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
     let fixed = |c: Col| match c {
@@ -117,6 +120,7 @@ fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
         Col::Art => Some(ROW_HEIGHT_ART + GAP),
         Col::Format => Some(44.0 + GAP),
         Col::Bpm => Some(46.0 + GAP),
+        Col::Key => Some(36.0 + GAP),
         Col::Time => Some(62.0 + GAP),
         _ => None,
     };
@@ -313,6 +317,11 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             if ui.button("By BPM").clicked() {
                 let bpm = |e: &PlaylistEntry| e.info.bpm.unwrap_or(f32::MAX);
                 app.player.edit_list(list, |p| p.sort_by(|a, b| bpm(a).total_cmp(&bpm(b)).then(key(a).cmp(&key(b)))));
+                ui.close();
+            }
+            if ui.button("By key").clicked() {
+                let wheel = |e: &PlaylistEntry| e.info.key.map_or(u8::MAX, |k| k.wheel_order());
+                app.player.edit_list(list, |p| p.sort_by(|a, b| wheel(a).cmp(&wheel(b)).then(key(a).cmp(&key(b)))));
                 ui.close();
             }
             if ui.button("By duration").clicked() {
@@ -663,6 +672,11 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
                 // A "~" marks a tempo found by listening rather than read from the tags.
                 let text = e.info.bpm.map(|b| format!("{}{}", if e.info.bpm_detected { "~" } else { "" }, super::format_bpm(b))).unwrap_or_default();
                 cell(ui, r, &text, theme::mono(11.5), dim, col.align());
+            }
+            Col::Key => {
+                if let Some(k) = e.info.key {
+                    cell(ui, r, &k.display(app.key_notation()), theme::mono(11.5), theme::camelot_color(k.camelot_number()), col.align());
+                }
             }
             Col::Time => {
                 let time = e.info.duration.map(nullamp_core::time::format_clock).unwrap_or_default();

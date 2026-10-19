@@ -78,7 +78,7 @@ pub fn read_chapters(path: &Path) -> Result<Vec<Chapter>, id3::Error> {
 /// ID3v2 frames that are not editable [`crate::Field`]s, as (label, text) pairs.
 pub(crate) fn other_id3_frames(path: &Path) -> Result<Vec<(String, String)>, id3::Error> {
     const KNOWN: &[&str] = &[
-        "TIT2", "TPE1", "TALB", "TDRC", "TYER", "TDAT", "TCON", "TBPM", "TRCK", "COMM", "APIC", "CHAP", "CTOC",
+        "TIT2", "TPE1", "TALB", "TDRC", "TYER", "TDAT", "TCON", "TBPM", "TKEY", "TRCK", "COMM", "APIC", "CHAP", "CTOC",
     ];
     let Some(tag) = read_tag(path)? else { return Ok(Vec::new()) };
     Ok(tag

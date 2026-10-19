@@ -689,6 +689,10 @@ impl App {
         }
     }
 
+    pub fn key_notation(&self) -> nullamp_core::KeyNotation {
+        if self.settings.camelot { nullamp_core::KeyNotation::Camelot } else { nullamp_core::KeyNotation::Musical }
+    }
+
     fn on_now_playing(&mut self, info: crate::workers::NowPlayingInfo) {
         // Results for a track that is no longer current are dropped.
         let current_path = self.player.current.as_ref().map(|c| c.path.clone());

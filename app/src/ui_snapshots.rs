@@ -309,6 +309,58 @@ fn tempo_is_detected_unless_the_tags_have_one() {
     h.state_mut().player.stop();
 }
 
+/// Copy of a fixture with its key tag set to `key` (as written by whichever program).
+fn keyed_copy(dir: &Path, name: &str, key: &str) -> PathBuf {
+    let path = dir.join(format!("{key}-{name}").replace(['#', ' '], "_"));
+    std::fs::copy(fixtures().join(name), &path).unwrap();
+    let edit = nullamp_meta::Edit { fields: [(nullamp_meta::Field::Key, Some(key.to_owned()))].into(), ..Default::default() };
+    nullamp_meta::write(&path, nullamp_meta::stamp(&path).unwrap(), &edit, &Default::default()).unwrap();
+    path
+}
+
+/// The key tag reaches the playlist row, which shows it in the chosen notation. The deck shows none.
+#[test]
+fn key_shows_in_the_playlist_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    let row_key = |h: &Harness<'_, App>, path: &Path| h.state().player.lists[0].playlist.entries().iter().find(|e| e.path == path).unwrap().info.key;
+
+    let am = keyed_copy(dir.path(), "tone.flac", "Am");
+    h.state_mut().player.lists[0].playlist.add_paths([am.clone()]);
+    h.state().workers.scan(vec![am.clone()]);
+    settle(&mut h, 500);
+    assert_eq!(row_key(&h, &am), nullamp_core::Key::parse("8A"), "the scan reads it into the row");
+    assert_eq!(row_key(&h, &fixtures().join("tone.ogg")), None, "an untagged file has none");
+    assert_eq!(h.state().key_notation(), nullamp_core::KeyNotation::Camelot);
+    h.state_mut().settings.camelot = false;
+    assert_eq!(h.state().key_notation(), nullamp_core::KeyNotation::Musical);
+}
+
+#[test]
+#[ignore]
+fn render_key_column() {
+    render_key_column_as("dark", "");
+    render_key_column_as("light", "-light");
+}
+
+/// All twelve Camelot numbers, the A and B keys alternating, to judge the wheel colours.
+fn render_key_column_as(appearance: &str, suffix: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), appearance);
+    let theme = if appearance == "light" { egui::Theme::Light } else { egui::Theme::Dark };
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 800.0)).with_pixels_per_point(2.0).with_theme(theme).wgpu().build_eframe(|cc| App::new(cc, store));
+    let paths: Vec<PathBuf> = (1..=12).map(|n| keyed_copy(dir.path(), "tone.flac", &format!("{n}{}", if n % 2 == 0 { 'B' } else { 'A' }))).collect();
+    {
+        let app = h.state_mut();
+        app.player.lists[0].playlist.clear();
+        app.player.lists[0].playlist.add_paths(paths.clone());
+        app.workers.scan(paths);
+    }
+    settle(&mut h, 800);
+    save(&mut h, &format!("07-key-camelot{suffix}.png"));
+}
+
 /// Single tracks hide the setlist parts; mixes show them, and ⌘L brings them back for
 /// a single track that should get a setlist.
 #[test]

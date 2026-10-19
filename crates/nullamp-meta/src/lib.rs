@@ -22,7 +22,7 @@ use lofty::file::{FileType, TaggedFile};
 use lofty::picture::{PictureInformation, PictureType};
 use lofty::prelude::*;
 use lofty::tag::{ItemValue, TagType};
-use nullamp_core::TrackInfo;
+use nullamp_core::{Key, TrackInfo};
 
 pub use chapters::{Chapter, chapters_to_setlist, read_chapters};
 pub use write::{Edit, NewArtwork, WriteOptions, WriteReport, restore_backup, write};
@@ -82,19 +82,21 @@ pub enum Field {
     Date,
     Genre,
     Bpm,
+    Key,
     TrackNumber,
     TrackTotal,
     Comment,
 }
 
 impl Field {
-    pub const ALL: [Field; 9] = [
+    pub const ALL: [Field; 10] = [
         Field::Title,
         Field::Artist,
         Field::Album,
         Field::Date,
         Field::Genre,
         Field::Bpm,
+        Field::Key,
         Field::TrackNumber,
         Field::TrackTotal,
         Field::Comment,
@@ -108,6 +110,7 @@ impl Field {
             Field::Date => "Date / year",
             Field::Genre => "Genre",
             Field::Bpm => "BPM",
+            Field::Key => "Key",
             Field::TrackNumber => "Track",
             Field::TrackTotal => "of tracks",
             Field::Comment => "Comment",
@@ -124,6 +127,7 @@ impl Field {
             Field::Album => &[ItemKey::AlbumTitle],
             Field::Date => &[ItemKey::RecordingDate],
             Field::Genre => &[ItemKey::Genre],
+            Field::Key => &[ItemKey::InitialKey],
             Field::TrackNumber => &[ItemKey::TrackNumber],
             Field::TrackTotal => &[ItemKey::TrackTotal],
             Field::Comment => &[ItemKey::Comment],
@@ -183,6 +187,9 @@ impl Field {
         }
         if v.contains('\0') {
             return Err("contains a NUL character".into());
+        }
+        if self == Field::Key && Key::parse(v).is_none() {
+            return Err("use a key such as 8A, Am or F#m".into());
         }
         if self.is_numeric() {
             return match v.parse::<u32>() {
@@ -312,6 +319,7 @@ impl FileMetadata {
             bpm: self.fields.get(&Field::Bpm).and_then(|v| parse_bpm(v)),
             bpm_detected: false,
             bpm_off: self.fields.get(&Field::Bpm).is_some_and(|v| is_bpm_off(v)),
+            key: self.fields.get(&Field::Key).and_then(|v| Key::parse(v)),
         }
     }
 
@@ -445,6 +453,7 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
         bpm_detected: false,
         bpm_off: tag.and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off),
+        key: tag.and_then(|t| Field::Key.get(t)).and_then(Key::parse),
     })
 }
 
@@ -680,6 +689,36 @@ mod tests {
             assert_eq!(got, if decimals { 127.5 } else { 128.0 }, "{name}");
             write(&path, stamp(&path).unwrap(), &set(None), &WriteOptions::default()).unwrap();
             assert_eq!(read_bpm(&path), None, "{name} cleared");
+        }
+    }
+
+    #[test]
+    fn key_round_trips_in_every_format() {
+        use crate::{Edit, WriteOptions, stamp, write};
+        let set = |v: Option<&str>| Edit { fields: [(Field::Key, v.map(str::to_owned))].into(), ..Default::default() };
+        for name in ["tagged_v23.mp3", "tagged_v24.mp3", "tone.flac", "tone.ogg", "tone.m4a"] {
+            let (_dir, path) = test_support::scratch_copy(name);
+            assert_eq!(read_track_info(&path).unwrap().key, None, "{name}");
+            write(&path, stamp(&path).unwrap(), &set(Some("8A")), &WriteOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let m = read(&path).unwrap();
+            assert_eq!(m.fields.get(&Field::Key).map(String::as_str), Some("8A"), "{name}: the text is kept as written");
+            assert_eq!(m.track_info().key, Key::parse("Am"), "{name}");
+            assert_eq!(read_track_info(&path).unwrap().key, Key::parse("Am"), "{name}");
+            assert!(!m.other_items.iter().any(|(k, _)| k.contains("Key") || k.contains("KEY")), "{name}: {:?}", m.other_items);
+            write(&path, stamp(&path).unwrap(), &set(Some("F#m")), &WriteOptions::default()).unwrap();
+            assert_eq!(read_track_info(&path).unwrap().key.map(Key::camelot).as_deref(), Some("11A"), "{name}");
+            write(&path, stamp(&path).unwrap(), &set(None), &WriteOptions::default()).unwrap();
+            assert_eq!(read_track_info(&path).unwrap().key, None, "{name} cleared");
+        }
+    }
+
+    #[test]
+    fn key_validation_names_the_accepted_notations() {
+        for ok in ["8A", "12B", "Am", "F#m", "Bb", "1m", "C major", ""] {
+            assert!(Field::Key.validate(ok).is_ok(), "{ok}");
+        }
+        for bad in ["13A", "H", "o", "Am7"] {
+            assert!(Field::Key.validate(bad).is_err(), "{bad}");
         }
     }
 

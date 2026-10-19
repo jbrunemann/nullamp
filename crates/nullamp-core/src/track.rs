@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::key::Key;
 
 /// The display-level description of an audio file, as shown in lists.
 ///
@@ -25,6 +27,22 @@ pub struct TrackInfo {
     /// The tags say `-1`: no BPM is shown for the track and none is detected.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bpm_off: bool,
+    /// The key from the file's tags, whichever notation they used.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "key_text")]
+    pub key: Option<Key>,
+}
+
+/// Saved as the Camelot code; a value that no longer parses is dropped instead of failing the playlist.
+mod key_text {
+    use super::*;
+
+    pub fn serialize<S: serde::Serializer>(key: &Option<Key>, s: S) -> Result<S::Ok, S::Error> {
+        key.map(Key::camelot).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Key>, D::Error> {
+        Ok(Option::<String>::deserialize(d)?.and_then(|s| Key::parse(&s)))
+    }
 }
 
 impl TrackInfo {
@@ -68,5 +86,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(tagged.display_line(Path::new("/x.mp3")), "Artist - Song");
+    }
+
+    #[test]
+    fn key_is_saved_as_a_camelot_code_and_survives_garbage() {
+        let info = TrackInfo { key: Key::parse("Am"), ..Default::default() };
+        let json = serde_json::to_string(&info).unwrap();
+        assert_eq!(json, r#"{"key":"8A"}"#);
+        assert_eq!(serde_json::from_str::<TrackInfo>(&json).unwrap(), info);
+        assert_eq!(serde_json::to_string(&TrackInfo::default()).unwrap(), "{}");
+        assert_eq!(serde_json::from_str::<TrackInfo>(r#"{"key":"nonsense"}"#).unwrap().key, None);
+        assert_eq!(serde_json::from_str::<TrackInfo>(r#"{"key":null}"#).unwrap().key, None);
     }
 }

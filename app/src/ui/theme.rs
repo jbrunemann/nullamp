@@ -140,6 +140,14 @@ chrome_colors!(
     now, mix_tag, key,
 );
 
+/// The colour of a key on the Camelot wheel: twelve hues in even steps, so neighbours on the
+/// wheel (the keys that mix well) look alike. The letter does not change it.
+pub fn camelot_color(number: u8) -> Color32 {
+    let hue = (170.0 - f32::from(number.clamp(1, 12) - 1) * 30.0).rem_euclid(360.0) / 360.0;
+    let (saturation, value) = if is_light() { (0.80, 0.62) } else { (0.55, 0.95) };
+    egui::ecolor::Hsva::new(hue, saturation, value, 1.0).into()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Appearance {
     System,
