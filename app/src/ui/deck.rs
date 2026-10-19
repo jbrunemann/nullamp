@@ -333,7 +333,16 @@ fn device_row(ui: &mut Ui, label: &str, kind: nullamp_audio::OutputKind, bright:
     p.rect_filled(rect, 3.0, fill);
     let icon = Rect::from_center_size(pos2(rect.left() + ROW_PAD + ROW_ICON / 2.0, rect.center().y), Vec2::splat(ROW_ICON));
     widgets::paint_output_icon(p, icon, kind, text_color);
-    p.text(pos2(icon.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, label, theme::prop(13.0), text_color);
+    // The menu width is capped, so long names (Linux reports things like "Ellesmere HDMI Audio
+    // [Radeon RX 470/480 / 570/580/590] Digital Stereo (HDMI 3)") end in an ellipsis instead of
+    // running past the border; the full name is in the tooltip.
+    let text_x = icon.right() + 8.0;
+    let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), theme::prop(13.0), text_color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.right() - ROW_PAD - text_x);
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    let truncated = g.elided;
+    p.galley(pos2(text_x, rect.center().y - g.size().y / 2.0), g, text_color);
+    let resp = if truncated { resp.on_hover_text(label) } else { resp };
     resp.clicked()
 }
 

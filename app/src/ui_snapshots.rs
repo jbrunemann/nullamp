@@ -447,6 +447,14 @@ fn render_output_menu() {
         h.step();
     }
     settle(&mut h, 200);
+    // A name as long as Linux reports for HDMI outputs, which must end in an ellipsis inside the menu.
+    h.state_mut().output_devices.push(nullamp_audio::OutputDevice {
+        id: "long".into(),
+        name: "Ellesmere HDMI Audio [Radeon RX 470/480 / 570/580/590] Digital Stereo (HDMI 3)".into(),
+        is_default: false,
+        kind: nullamp_audio::OutputKind::Unknown,
+    });
+    settle(&mut h, 100);
     save(&mut h, "05-output-menu.png");
 
     use nullamp_audio::OutputKind::*;
