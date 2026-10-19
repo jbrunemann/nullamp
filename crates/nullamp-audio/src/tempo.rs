@@ -6,9 +6,10 @@
 //! 60 to 200 BPM, weighted towards the common 120, picks the tempo. Runs on whatever thread
 //! calls it and checks `cancel` between packets.
 //!
-//! Only about a minute and a half from the middle of a track is analysed: that is where the
-//! beat is steadiest, and it keeps the cost to a fraction of a second whatever the length.
-//! Files that are mixes (long) have no single tempo and are refused.
+//! Only about a minute and a half is analysed, from the middle of the track where the beat is
+//! steadiest, so the cost stays a fraction of a second whatever the length. For a long mix that
+//! is the tempo of its middle, which is only the mix's tempo if it keeps one; pass the span of
+//! one of its tracks to get that track's instead.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -29,8 +30,8 @@ const MIN_SECONDS: f64 = 10.0;
 /// Tracks up to this long are analysed from their start; longer ones from [`START_FRACTION`] of the way in.
 const SHORT_TRACK_SECONDS: f64 = 100.0;
 const START_FRACTION: f64 = 0.3;
-/// Longer files are mixes, which have no single tempo.
-pub const MAX_TRACK_SECONDS: f64 = 20.0 * 60.0;
+/// Share of a span that is analysed (from its middle), leaving out the transitions at either end.
+const SPAN_CENTRE: f64 = 0.7;
 
 const MIN_BPM: f64 = 60.0;
 const MAX_BPM: f64 = 200.0;
@@ -59,8 +60,6 @@ pub enum TempoError {
     Load(#[from] LoadError),
     #[error("decoding failed: {0}")]
     Decode(String),
-    #[error("too long for a single tempo")]
-    TooLong,
     #[error("cancelled")]
     Cancelled,
 }
@@ -73,25 +72,32 @@ pub struct Tempo {
     pub confidence: f32,
 }
 
-/// Estimate the tempo of `path`. `Ok(None)` means the audio has no clear beat.
-pub fn compute(path: &Path, cancel: &dyn Fn() -> bool) -> Result<Option<Tempo>, TempoError> {
+/// Estimate the tempo of `path`, or of the part of it between `span` (start, end in seconds)
+/// when given. `Ok(None)` means the audio has no clear beat, or that the span is too short.
+pub fn compute(path: &Path, span: Option<(f64, f64)>, cancel: &dyn Fn() -> bool) -> Result<Option<Tempo>, TempoError> {
     let mut dec = Decoding::open_native(path)?;
     let rate = dec.info.sample_rate.max(1);
     let channels = usize::from(dec.info.channels).max(1);
-    if let Some(d) = dec.info.duration {
-        if d > MAX_TRACK_SECONDS {
-            return Err(TempoError::TooLong);
+    let (start, seconds) = match (span, dec.info.duration) {
+        (Some((from, to)), _) => {
+            let seconds = ((to - from) * SPAN_CENTRE).min(WINDOW_SECONDS);
+            (Some(from + ((to - from) - seconds) / 2.0), seconds)
         }
-        if d > SHORT_TRACK_SECONDS
-            && let Err(e) = dec.seek(d * START_FRACTION)
-        {
-            log::debug!("tempo: cannot seek {}: {e}", path.display());
-        }
+        (None, Some(d)) if d > SHORT_TRACK_SECONDS => (Some(d * START_FRACTION), WINDOW_SECONDS),
+        (None, _) => (None, WINDOW_SECONDS),
+    };
+    if seconds < MIN_SECONDS {
+        return Ok(None);
+    }
+    if let Some(start) = start
+        && let Err(e) = dec.seek(start)
+    {
+        log::debug!("tempo: cannot seek {}: {e}", path.display());
     }
 
     let factor = ((f64::from(rate) / TARGET_RATE).round() as usize).max(1);
     let analysis_rate = f64::from(rate) / factor as f64;
-    let wanted = (WINDOW_SECONDS * analysis_rate) as usize;
+    let wanted = (seconds * analysis_rate) as usize;
     let mut mono: Vec<f32> = Vec::with_capacity(wanted);
     let (mut acc, mut n) = (0f32, 0usize);
     while mono.len() < wanted {
@@ -312,14 +318,23 @@ mod tests {
     #[test]
     fn decodes_and_decimates_a_file() {
         // 22.05 kHz mono mp3 of kicks at 120 BPM.
-        let t = compute(&fixture("beat_120.mp3"), &|| false).unwrap().expect("tempo");
+        let t = compute(&fixture("beat_120.mp3"), None, &|| false).unwrap().expect("tempo");
         assert!((t.bpm - 120.0).abs() < 0.5, "{}", t.bpm);
     }
 
     #[test]
+    fn a_span_is_analysed_on_its_own() {
+        // 15 s at 120 BPM, then 15 s at 90 BPM.
+        let tempo = |span| compute(&fixture("beats_120_90.mp3"), Some(span), &|| false).unwrap().map(|t| t.bpm);
+        assert!((tempo((0.0, 15.0)).unwrap() - 120.0).abs() < 0.5);
+        assert!((tempo((15.0, 30.0)).unwrap() - 90.0).abs() < 0.5);
+        assert_eq!(tempo((2.0, 10.0)), None, "too short to tell");
+    }
+
+    #[test]
     fn tones_have_no_tempo_and_errors_are_reported() {
-        assert_eq!(compute(&fixture("tone.flac"), &|| false), Ok(None));
-        assert_eq!(compute(&fixture("beat_120.mp3"), &|| true), Err(TempoError::Cancelled));
-        assert_eq!(compute(Path::new("/nonexistent/x.mp3"), &|| false), Err(TempoError::Load(LoadError::NotFound)));
+        assert_eq!(compute(&fixture("tone.flac"), None, &|| false), Ok(None));
+        assert_eq!(compute(&fixture("beat_120.mp3"), None, &|| true), Err(TempoError::Cancelled));
+        assert_eq!(compute(Path::new("/nonexistent/x.mp3"), None, &|| false), Err(TempoError::Load(LoadError::NotFound)));
     }
 }

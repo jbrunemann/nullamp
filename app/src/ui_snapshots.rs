@@ -416,6 +416,46 @@ fn render_about() {
     save(&mut h, "06-about.png");
 }
 
+/// While a mix plays, the deck shows the tempo of the active track, found when it becomes
+/// active, not one for the whole file.
+#[test]
+fn mix_tempo_follows_the_active_track() {
+    use nullamp_core::setlist::{Provenance, SetlistEntry};
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("mix.mp3");
+    std::fs::copy(fixtures().join("beats_120_90.mp3"), &file).unwrap();
+    let paths = AppPaths { config: dir.path().join("config"), data: dir.path().join("data"), cache: dir.path().join("cache") };
+    let store = Store::new(paths.clone());
+    let mut pl = nullamp_core::Playlist::new("Default");
+    pl.add_paths([file.clone()]);
+    store.save_playlist(&PlaylistDoc { key: "default".into(), playlist: pl }).unwrap();
+    store.save_settings(&crate::store::Settings { volume: 0.0, ..Default::default() }).unwrap();
+    let entries = vec![
+        SetlistEntry::new("A", "Slow House", Some(0.0), Provenance::Manual),
+        SetlistEntry::new("B", "Slower House", Some(15.0), Provenance::Manual),
+    ];
+    let saved = crate::store::SavedSetlist { fingerprint: crate::store::fingerprint(&file).unwrap(), last_path: file.clone(), setlist: nullamp_core::Setlist { entries, ..Default::default() } };
+    crate::store::save_setlist(&paths, &saved.fingerprint, Some(&saved)).unwrap();
+
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[0].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    assert!(h.state().mix.is_mix);
+    let bpm = h.state().current_bpm().expect("tempo of the first track");
+    assert!((bpm.0 - 120.0).abs() < 0.5 && bpm.1, "{bpm:?}");
+
+    h.state_mut().player.seek_to(20.0);
+    settle(&mut h, 1000);
+    let bpm = h.state().current_bpm().expect("tempo of the second track");
+    assert!((bpm.0 - 90.0).abs() < 0.5, "{bpm:?}");
+    h.state_mut().player.stop();
+}
+
 /// The deck's format line with a detected tempo, and the inspector offering it for the tag.
 #[test]
 #[ignore]

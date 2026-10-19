@@ -72,6 +72,10 @@ pub struct NowState {
     /// Tempo found by analysing the audio; arrives after the track starts, and not at all
     /// for files whose tags state a BPM.
     pub tempo: Option<nullamp_audio::Tempo>,
+    /// While a mix plays: the span (start, end in seconds) of its active track that a tempo was
+    /// last asked for, and the tempo found for it once that arrives.
+    pub segment_requested: Option<(f64, f64)>,
+    pub segment_tempo: Option<nullamp_audio::Tempo>,
 }
 
 /// The audio output as the engine last reported it.
@@ -472,6 +476,7 @@ impl App {
             }
         }
         setlist_view::update_active(self);
+        self.update_segment_tempo();
         self.publish_now_playing();
         self.flush_saves(false);
     }
@@ -558,11 +563,14 @@ impl App {
                     }
                 }
             }
-            JobResult::Tempo { token, result } => {
+            JobResult::Tempo { token, span, result } => {
                 if self.player.current.as_ref().is_some_and(|c| c.token == token) {
-                    match result {
-                        Ok(tempo) => self.now.tempo = tempo,
-                        Err(e) => log::debug!("tempo: {e}"),
+                    match (result, span) {
+                        (Ok(tempo), None) => self.now.tempo = tempo,
+                        // The active track may have changed again while this was being worked out.
+                        (Ok(tempo), Some(span)) if self.now.segment_requested == Some(span) => self.now.segment_tempo = tempo,
+                        (Ok(_), Some(_)) => {}
+                        (Err(e), _) => log::debug!("tempo: {e}"),
                     }
                 }
             }
@@ -589,7 +597,8 @@ impl App {
         self.now = NowState::default();
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
-        self.workers.request_analysis(c.token, c.path.clone());
+        self.workers.request_waveform(c.token, c.path.clone());
+        self.workers.request_tempo(c.token, c.path.clone(), None);
         self.scroll_to = Some(c.entry);
         if self.inspector.follow_playing {
             inspector::load_targets(self, vec![c.path.clone()]);
@@ -598,8 +607,31 @@ impl App {
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{title} — Nullamp")));
     }
 
-    /// BPM of the playing track and whether it was detected (else it is from the file's tags).
+    /// While a mix plays, ask for the tempo of its active track whenever that changes: the
+    /// tempo of a whole mix says little when it moves from track to track.
+    fn update_segment_tempo(&mut self) {
+        let span = setlist_view::shown(self).zip(self.mix.active).and_then(|(s, i)| s.span(i, self.player.duration()));
+        if span == self.now.segment_requested {
+            return;
+        }
+        let leaving = self.now.segment_requested.is_some() && span.is_none();
+        self.now.segment_requested = span;
+        self.now.segment_tempo = None;
+        let Some(c) = &self.player.current else { return };
+        match span {
+            Some(span) => self.workers.request_tempo(c.token, c.path.clone(), Some(span)),
+            // Asking for the track cancelled any whole-file analysis still running.
+            None if leaving && self.now.tempo.is_none() => self.workers.request_tempo(c.token, c.path.clone(), None),
+            None => {}
+        }
+    }
+
+    /// BPM of the playing track (of the active track while a mix plays) and whether it was
+    /// detected (else it is from the file's tags).
     pub fn current_bpm(&self) -> Option<(f32, bool)> {
+        if self.now.segment_requested.is_some() {
+            return self.now.segment_tempo.map(|t| (t.bpm, true));
+        }
         let tagged = self.now.meta.as_ref().and_then(|m| m.fields.get(&nullamp_meta::Field::Bpm)).and_then(|v| v.trim().parse::<f32>().ok());
         match (tagged, self.now.tempo) {
             (Some(bpm), _) => Some((bpm, false)),
