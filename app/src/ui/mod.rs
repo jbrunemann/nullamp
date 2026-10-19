@@ -27,6 +27,8 @@ use crate::player::{Note, Player, Status};
 use crate::store::{PlaylistDoc, Settings, Store};
 use crate::workers::{Job, JobResult, Workers};
 
+/// How often the resume position is written while a track plays.
+const RESUME_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_HEIGHT: f32 = 24.0;
 const DEFAULT_HEIGHT: f32 = 720.0;
 /// Keep in step with the minimum window size in `main.rs`.
@@ -125,6 +127,8 @@ pub struct App {
     playlists_dirty_at: Option<Instant>,
     dirty_lists: HashSet<String>,
     settings_dirty_at: Option<Instant>,
+    /// When the settings were last written, to space out saves of the resume position.
+    settings_saved_at: Instant,
     /// Pending folder/file additions: request -> (list key, insert index).
     pub pending_adds: std::collections::HashMap<u64, (String, Option<usize>)>,
     last_sys_metadata: Option<NowPlaying>,
@@ -202,6 +206,7 @@ impl App {
             playlists_dirty_at: None,
             dirty_lists: HashSet::new(),
             settings_dirty_at: None,
+            settings_saved_at: Instant::now(),
             pending_adds: Default::default(),
             last_sys_metadata: None,
             #[cfg(target_os = "macos")]
@@ -285,6 +290,11 @@ impl App {
     }
 
     fn flush_saves(&mut self, force: bool) {
+        // The resume position moves while playing, but a crash only costs a little of it,
+        // so write it rarely instead of every second.
+        if self.player.status == Status::Playing && self.settings_saved_at.elapsed() > RESUME_SAVE_INTERVAL {
+            self.mark_settings_dirty();
+        }
         let due = |t: Option<Instant>| t.is_some_and(|t| force || t.elapsed() > Duration::from_millis(800));
         if due(self.playlists_dirty_at) {
             self.playlists_dirty_at = None;
@@ -299,6 +309,7 @@ impl App {
         }
         if due(self.settings_dirty_at) {
             self.settings_dirty_at = None;
+            self.settings_saved_at = Instant::now();
             self.sync_settings_from_state();
             if let Err(e) = self.store.save_settings(&self.settings) {
                 self.error(format!("Cannot save settings: {e}"));
@@ -330,7 +341,6 @@ impl App {
                 position: self.player.position(),
             })
         });
-        self.settings_dirty_at.get_or_insert_with(Instant::now);
     }
 
     fn restore_session(&mut self) {
@@ -607,6 +617,7 @@ impl App {
 
     fn on_track_changed(&mut self) {
         let Some(c) = self.player.current.clone() else { return };
+        self.mark_settings_dirty();
         self.now = NowState::default();
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
