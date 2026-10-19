@@ -17,6 +17,12 @@ use crate::kind::{OutputKind, kind_of};
 
 /// Seconds of decoded audio held in the ring buffer.
 const RING_SECONDS: f64 = 2.0;
+/// Device period asked for on Linux. With `BufferSize::Default`, cpal keeps two of the periods
+/// the ALSA device picks, and through the PulseAudio or PipeWire plugins that can add up to
+/// seconds: a seek or track change was only heard about 2 s later (issue #6). Two 40 ms periods
+/// keep that delay under a tenth of a second and still leave room against underruns.
+#[cfg(target_os = "linux")]
+const LINUX_PERIOD_SECONDS: f64 = 0.04;
 /// Length of the fade applied to pause, resume and volume changes.
 const RAMP_SECONDS: f32 = 0.015;
 
@@ -211,7 +217,9 @@ impl Output {
         let kind = id.as_ref().map_or(OutputKind::Unknown, |id| kind_of(id, &device));
         let supported = device.default_output_config().map_err(|e| format!("output config: {e}"))?;
         let format = supported.sample_format();
-        let config: cpal::StreamConfig = supported.into();
+        let buffer_size = preferred_buffer_size(&supported);
+        let mut config: cpal::StreamConfig = supported.into();
+        config.buffer_size = buffer_size;
         let rate = config.sample_rate;
         let channels = config.channels as usize;
         if channels == 0 || rate == 0 {
@@ -232,18 +240,16 @@ impl Output {
             primed: false,
         }));
 
-        let stream = match format {
-            SampleFormat::F32 => build::<f32>(&device, config, &playhead, &shared, &events),
-            SampleFormat::F64 => build::<f64>(&device, config, &playhead, &shared, &events),
-            SampleFormat::I16 => build::<i16>(&device, config, &playhead, &shared, &events),
-            SampleFormat::I32 => build::<i32>(&device, config, &playhead, &shared, &events),
-            SampleFormat::U16 => build::<u16>(&device, config, &playhead, &shared, &events),
-            SampleFormat::I24 => build::<cpal::I24>(&device, config, &playhead, &shared, &events),
-            SampleFormat::U8 => build::<u8>(&device, config, &playhead, &shared, &events),
-            SampleFormat::I8 => build::<i8>(&device, config, &playhead, &shared, &events),
-            other => return Err(format!("unsupported device sample format {other}")),
+        let stream = match build_any(format, &device, config.clone(), &playhead, &shared, &events) {
+            // A device that rejects the requested period still plays with its own default.
+            Err(e) if config.buffer_size != cpal::BufferSize::Default => {
+                log::warn!("audio output: {:?} frame periods rejected ({e}); using the device default", config.buffer_size);
+                config.buffer_size = cpal::BufferSize::Default;
+                build_any(format, &device, config.clone(), &playhead, &shared, &events)
+            }
+            r => r,
         }?;
-        log::info!("audio output: {device_name}, {rate} Hz, {channels} ch, {format}");
+        log::info!("audio output: {device_name}, {rate} Hz, {channels} ch, {format}, buffer {:?}", config.buffer_size);
         Ok(Output { stream, producer, playhead, rate, channels, device_name, device_id, kind, fell_back, pushed_total: 0, stream_running: false })
     }
 
@@ -314,6 +320,42 @@ impl Output {
     pub fn with_playhead<R>(&self, f: impl FnOnce(&mut Playhead) -> R) -> R {
         let mut ph = self.playhead.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut ph)
+    }
+}
+
+/// The device period to request: the system's own default except on Linux, see [`LINUX_PERIOD_SECONDS`].
+#[cfg(target_os = "linux")]
+fn preferred_buffer_size(supported: &cpal::SupportedStreamConfig) -> cpal::BufferSize {
+    let want = (supported.sample_rate() as f64 * LINUX_PERIOD_SECONDS) as u32;
+    match *supported.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => cpal::BufferSize::Fixed(want.clamp(min, max.max(min))),
+        cpal::SupportedBufferSize::Unknown => cpal::BufferSize::Fixed(want),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn preferred_buffer_size(_supported: &cpal::SupportedStreamConfig) -> cpal::BufferSize {
+    cpal::BufferSize::Default
+}
+
+fn build_any(
+    format: SampleFormat,
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    playhead: &Arc<Mutex<Playhead>>,
+    shared: &Arc<Shared>,
+    events: &Sender<StreamEvent>,
+) -> Result<cpal::Stream, String> {
+    match format {
+        SampleFormat::F32 => build::<f32>(device, config, playhead, shared, events),
+        SampleFormat::F64 => build::<f64>(device, config, playhead, shared, events),
+        SampleFormat::I16 => build::<i16>(device, config, playhead, shared, events),
+        SampleFormat::I32 => build::<i32>(device, config, playhead, shared, events),
+        SampleFormat::U16 => build::<u16>(device, config, playhead, shared, events),
+        SampleFormat::I24 => build::<cpal::I24>(device, config, playhead, shared, events),
+        SampleFormat::U8 => build::<u8>(device, config, playhead, shared, events),
+        SampleFormat::I8 => build::<i8>(device, config, playhead, shared, events),
+        other => Err(format!("unsupported device sample format {other}")),
     }
 }
 
