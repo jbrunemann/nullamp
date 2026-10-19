@@ -4,6 +4,16 @@ use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Response, Sense, Shape, S
 
 use super::theme;
 
+/// The platform's spelling of a Command-key shortcut: `⌘O` / `⇧⌘O` on macOS, `Ctrl+O` / `Ctrl+Shift+O` elsewhere.
+pub fn cmd_key(key: char, shift: bool) -> String {
+    match (cfg!(target_os = "macos"), shift) {
+        (true, false) => format!("⌘{key}"),
+        (true, true) => format!("⇧⌘{key}"),
+        (false, false) => format!("Ctrl+{key}"),
+        (false, true) => format!("Ctrl+Shift+{key}"),
+    }
+}
+
 // ----- Seven-segment display -----
 
 const SEGMENTS: [u8; 10] = [

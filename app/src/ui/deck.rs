@@ -277,8 +277,7 @@ fn lcd_clock(secs: f64) -> String {
 /// Line 3: the file's position in the playlist and, inside a mix, the track's position in the setlist.
 fn lcd_lines(app: &App) -> (String, Color32, String, String) {
     let Some(entry) = app.player.current_entry() else {
-        let cmd = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
-        return ("NULLAMP".into(), theme::LCD_MID, format!("Drop music here, or press {cmd}O to add files"), String::new());
+        return ("NULLAMP".into(), theme::LCD_MID, format!("Drop music here, or press {} to add files", widgets::cmd_key('O', false)), String::new());
     };
     let list = &app.player.lists[app.player.playing_list()].playlist;
     let pos_in_list = list.index_of(entry.id).map(|i| format!("FILE {}/{}", i + 1, list.len())).unwrap_or_default();
@@ -542,7 +541,7 @@ fn transport(app: &mut App, ui: &mut Ui) {
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let ins = app.side_open && app.shown_tab() == SideTab::Inspector;
-            if widgets::tab(ui, ins, "Inspector").on_hover_text("Metadata inspector (⌘I / Ctrl+I)").clicked() {
+            if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
                 app.toggle_side(SideTab::Inspector);
             }
             // Single tracks hide it; ⌘L still opens it to add a setlist.
@@ -552,11 +551,11 @@ fn transport(app: &mut App, ui: &mut Ui) {
                     Some(s) => format!("Setlist · {}", s.entries.len()),
                     None => "Setlist".into(),
                 };
-                if widgets::tab(ui, set, &label).on_hover_text("DJ mix setlist (⌘L / Ctrl+L)").clicked() {
+                if widgets::tab(ui, set, &label).on_hover_text(format!("DJ mix setlist ({})", widgets::cmd_key('L', false))).clicked() {
                     app.toggle_side(SideTab::Setlist);
                 }
             }
-            if widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text("Playlist (⌘P / Ctrl+P)").clicked() {
+            if widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false))).clicked() {
                 app.toggle_playlist();
             }
         });

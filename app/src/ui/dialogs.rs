@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crossbeam_channel::{Receiver, Sender};
 use egui::{Key, RichText};
 
-use super::{App, list_index, playlist_view, setlist_view, theme};
+use super::{App, list_index, playlist_view, setlist_view, theme, widgets};
 use crate::workers::{AUDIO_EXTENSIONS, Job};
 
 pub enum DialogResult {
@@ -315,7 +315,6 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     if app.dialogs.shortcuts_open {
         let mut open = true;
         egui::Window::new("Keyboard shortcuts").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            let cmd = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
             let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
             let rows: Vec<(String, &str)> = vec![
                 ("Space / C".into(), "Play / pause"),
@@ -330,10 +329,10 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
                 ("Enter".into(), "Play selected"),
                 ("Delete / Backspace".into(), "Remove selected"),
                 (format!("{alt}↑ / {alt}↓"), "Move selected entries"),
-                (format!("{cmd}A"), "Select all"),
-                (format!("{cmd}O / {cmd}⇧O"), "Add files / folder"),
-                (format!("{cmd}I / {cmd}L / {cmd}P"), "Inspector / setlist / playlist panel"),
-                (format!("{cmd}J"), "Scroll to playing track"),
+                (widgets::cmd_key('A', false), "Select all"),
+                (format!("{} / {}", widgets::cmd_key('O', false), widgets::cmd_key('O', true)), "Add files / folder"),
+                (format!("{} / {} / {}", widgets::cmd_key('I', false), widgets::cmd_key('L', false), widgets::cmd_key('P', false)), "Inspector / setlist / playlist panel"),
+                (widgets::cmd_key('J', false), "Scroll to playing track"),
                 ("F1".into(), "This help"),
             ];
             egui::Grid::new("shortcuts").num_columns(2).spacing([18.0, 4.0]).show(ui, |ui| {
