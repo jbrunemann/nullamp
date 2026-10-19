@@ -15,6 +15,20 @@ use crate::workers::{Job, JobResult};
 /// Batch edits are limited to keep the editor responsive.
 const MAX_TARGETS: usize = 500;
 
+/// The comment box grows to fill the visible panel, so the next section only appears on scrolling.
+/// The cap keeps it sensible on very tall screens, and the floor keeps it usable in a short panel.
+const COMMENT_MAX_HEIGHT: f32 = 480.0;
+const COMMENT_MIN_HEIGHT: f32 = 44.0;
+/// Room kept below the comment for the Save / Cancel row, so the buttons stay in view.
+const ACTIONS_RESERVE: f32 = 44.0;
+
+/// Where the scrolling content starts and how tall the visible panel is.
+#[derive(Clone, Copy)]
+struct Viewport {
+    content_top: f32,
+    height: f32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Original {
     Same(String),
@@ -340,10 +354,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
     // A solid bar takes its own gutter; the floating one would cover right-aligned buttons and fields.
     ui.spacing_mut().scroll.floating = false;
+    let panel_height = ui.available_height();
     egui::ScrollArea::vertical().id_salt("inspector").auto_shrink([false, false]).show(ui, |ui| {
+        let viewport = Viewport { content_top: ui.cursor().top(), height: panel_height };
         header(app, ui);
         ui.add_space(6.0);
-        fields(app, ui);
+        fields(app, ui, viewport);
         ui.add_space(6.0);
         actions(app, ui);
         ui.add_space(8.0);
@@ -370,7 +386,7 @@ fn header(app: &App, ui: &mut Ui) {
     }
 }
 
-fn fields(app: &mut App, ui: &mut Ui) {
+fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
     let writable = app.inspector.loaded.values().all(|m| m.writable);
     egui::Grid::new("fields").num_columns(2).spacing([8.0, 4.0]).min_col_width(80.0).show(ui, |ui| {
         let mut pair_done = false;
@@ -394,11 +410,18 @@ fn fields(app: &mut App, ui: &mut Ui) {
                 pair_done = true;
                 continue;
             }
-            ui.label(RichText::new(field.label()).color(label_color));
+            let label = RichText::new(field.label()).color(label_color);
+            if field.is_multiline() {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| ui.label(label));
+            } else {
+                ui.label(label);
+            }
             ui.vertical(|ui| {
                 let hint = if f.original == Original::Mixed && !f.touched { "‹multiple values›" } else { "" };
                 let edit = if field.is_multiline() {
-                    egui::TextEdit::multiline(&mut f.value).desired_rows(2)
+                    let above = ui.cursor().top() - viewport.content_top;
+                    let height = (viewport.height - above - ACTIONS_RESERVE).clamp(COMMENT_MIN_HEIGHT, COMMENT_MAX_HEIGHT);
+                    egui::TextEdit::multiline(&mut f.value).min_size(vec2(0.0, height))
                 } else {
                     egui::TextEdit::singleline(&mut f.value)
                 };
