@@ -17,7 +17,7 @@ pub const MAX_AGE: Duration = Duration::from_secs(90 * 24 * 3600);
 const TOUCH_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 fn entry(dir: &Path, fingerprint: &str) -> std::path::PathBuf {
-    dir.join(format!("{:016x}.wf", nullamp_online::fnv1a(fingerprint.as_bytes())))
+    dir.join(format!("{:016x}.wf", crate::store::fnv1a(fingerprint.as_bytes())))
 }
 
 pub fn load(dir: &Path, fingerprint: &str) -> Option<Waveform> {
@@ -43,7 +43,18 @@ pub fn store(dir: &Path, fingerprint: &str, wave: &Waveform) {
 
 /// Remove entries unused for `max_age`. Returns how many went.
 pub fn prune(dir: &Path, max_age: Duration) -> usize {
-    nullamp_online::prune_cache(dir, max_age)
+    let Ok(read) = fs::read_dir(dir) else { return 0 };
+    let now = SystemTime::now();
+    read.filter_map(|e| e.ok())
+        .filter(|e| {
+            e.metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|age| age > max_age)
+        })
+        .filter(|e| fs::remove_file(e.path()).is_ok())
+        .count()
 }
 
 #[cfg(test)]

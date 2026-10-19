@@ -9,7 +9,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 ## Current focus (user preference)
 
 - **macOS only for now.** The user wants a working, likeable macOS app before any Linux or Windows work. Do not run Docker, cross-builds or other-OS packaging unless asked.
-- **No online tracklist search for now.** It was removed from the app on purpose; see "Online sources" in `docs/HANDOFF.md` before proposing it again.
+- **No online features.** Tracklist search and the MusicBrainz/Cover Art Archive lookup were both removed on purpose (too error prone and complex for how rarely they were used), and the `nullamp-online` crate is gone. The app makes no network requests. See "Online sources" in `docs/HANDOFF.md` before proposing anything online again.
 - Disk space is tight: `/` and `/Volumes/Development` share one APFS container. Keep `target/` lean and never create large Docker artifacts.
 
 ## Layout
@@ -19,7 +19,6 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | `crates/nullamp-core` | Pure logic, no I/O: playlists, play order (shuffle/repeat), setlists and validation, M3U, cue sheets, pasted-tracklist parser, commands and media-key dedupe |
 | `crates/nullamp-audio` | Audio engine: symphonia decoding on its own thread, rubato resampling, rtrb ring buffer, cpal output, gapless preload, device recovery |
 | `crates/nullamp-meta` | Tags via lofty, ID3 chapters via id3, artwork, technical info, safe tag writing with backups |
-| `crates/nullamp-online` | HTTP client with rate limiting, disk cache and host allowlist; MusicBrainz, Cover Art Archive, Mixcloud (Mixcloud is unused by the app) |
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
 | `app/` | The `nullamp` binary: egui UI (`src/ui/`), playback controller (`player.rs`), persistence (`store.rs`), background workers (`workers.rs`) |
 | `tests/fixtures/` | Small generated audio files (ffmpeg) used by tests |
@@ -30,7 +29,6 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 ```sh
 cargo test --workspace                       # all tests (about 120, all pass on macOS)
 cargo test -p nullamp ui_snapshots -- --ignored --test-threads=1   # renders the real UI offscreen to target/screenshots/*.png
-cargo test -p nullamp-online --test live -- --ignored   # hits MusicBrainz/CAA/Mixcloud for real
 cargo run --release -p nullamp-audio --example probe -- FILE [NEXT_FILE] [--audible]   # engine latency probe, silent by default
 cargo run --release -p nullamp-audio --example waveform FILE   # times the waveform pass for a file
 packaging/macos/bundle.sh                    # builds target/bundle/Nullamp.app

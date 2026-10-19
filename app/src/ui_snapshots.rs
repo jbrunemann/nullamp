@@ -30,7 +30,7 @@ fn seeded_store(dir: &Path, appearance: &str) -> Store {
     pl.add_paths(["tagged_v23.mp3", "tagged_v24.mp3", "tone.flac", "tone.ogg", "tone.m4a", "mix_chapters.mp3", "missing.mp3", "tone_mono_22k.wav"].iter().map(|n| f.join(n)));
     store.save_playlist(&PlaylistDoc { key: "default".into(), playlist: pl }).unwrap();
     store.save_playlist(&PlaylistDoc { key: "dj-mixes".into(), playlist: nullamp_core::Playlist::new("DJ Mixes") }).unwrap();
-    let settings = crate::store::Settings { volume: 0.0, online_lookups: false, appearance: appearance.into(), ..Default::default() };
+    let settings = crate::store::Settings { volume: 0.0, appearance: appearance.into(), ..Default::default() };
     store.save_settings(&settings).unwrap();
     store
 }
@@ -194,7 +194,7 @@ fn tag_edit_reloads_setlist_from_comment() {
     let mut pl = nullamp_core::Playlist::new("Default");
     pl.add_paths([file.clone()]);
     store.save_playlist(&PlaylistDoc { key: "default".into(), playlist: pl }).unwrap();
-    store.save_settings(&crate::store::Settings { volume: 0.0, online_lookups: false, ..Default::default() }).unwrap();
+    store.save_settings(&crate::store::Settings { volume: 0.0, ..Default::default() }).unwrap();
 
     let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
     {

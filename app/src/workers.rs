@@ -1,10 +1,8 @@
-//! Background work: everything that touches the filesystem or network.
+//! Background work: everything that touches the filesystem.
 //!
-//! Four lanes keep slow work away from fast work:
+//! Three lanes keep slow work away from fast work:
 //! - *interactive* (now-playing info, inspector reads, tag writes) is always served
 //!   before *bulk* (playlist scans, folder imports) by the same local workers;
-//! - *online* requests run on their own thread, so a slow network never delays
-//!   local work;
 //! - *waveform* overviews run on their own thread too: decoding a long mix takes
 //!   seconds and must not hold up the local workers.
 //!
@@ -21,7 +19,6 @@ use nullamp_audio::{Waveform, WaveformError};
 use nullamp_core::setlist::{MixInfo, Provenance};
 use nullamp_core::{Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
-use nullamp_online::{ArtworkSource, CoverArtArchive, CoverImage, Http, MusicBrainz, OnlineError, RecordingMatch, RecordingSource};
 
 use crate::paths::AppPaths;
 use crate::store::{self, SavedSetlist};
@@ -91,12 +88,6 @@ pub enum Job {
     WriteText { path: PathBuf, text: String },
 }
 
-pub enum OnlineJob {
-    RecordingSearch { request: u64, artist: String, title: String },
-    ReleaseArtwork { request: u64, release_id: String },
-    FetchImage { request: u64, url: String, hosts: &'static [&'static str] },
-}
-
 struct WaveformRequest {
     generation: u64,
     token: u64,
@@ -120,9 +111,6 @@ pub enum JobResult {
     Rediscovered { request: u64, setlist: Option<Setlist> },
     Restored { request: u64, target: PathBuf, result: Result<(), String> },
     TextWritten { path: PathBuf, result: Result<(), String> },
-    Recordings { request: u64, result: Result<Vec<RecordingMatch>, OnlineError> },
-    ReleaseImages { request: u64, result: Result<Vec<CoverImage>, OnlineError> },
-    OnlineImage { request: u64, url: String, result: Result<(Arc<[u8]>, Thumb), String> },
     /// Overview of the track loaded under `token`. Abandoned requests send nothing.
     Waveform { token: u64, result: Result<Waveform, String> },
 }
@@ -132,7 +120,6 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Workers {
     interactive: Sender<Job>,
     bulk: Sender<Job>,
-    online: Sender<OnlineJob>,
     waveform: Sender<WaveformRequest>,
     waveform_generation: Arc<AtomicU64>,
     pub results: Receiver<JobResult>,
@@ -145,7 +132,6 @@ impl Workers {
     pub fn start(paths: AppPaths, waker: Waker) -> Self {
         let (interactive, interactive_rx) = crossbeam_channel::unbounded::<Job>();
         let (bulk, bulk_rx) = crossbeam_channel::unbounded::<Job>();
-        let (online, online_rx) = crossbeam_channel::unbounded::<OnlineJob>();
         let (results_tx, results) = crossbeam_channel::unbounded();
         let scan_generation = Arc::new(AtomicU64::new(1));
         let cover_generation = Arc::new(AtomicU64::new(1));
@@ -209,23 +195,7 @@ impl Workers {
                 .expect("spawn waveform worker");
         }
 
-        let tx = results_tx;
-        let w = waker;
-        let cache = paths.online_cache();
-        std::thread::Builder::new()
-            .name("nullamp-online".into())
-            .spawn(move || {
-                let http = Http::new(Some(cache));
-                for job in online_rx {
-                    if tx.send(run_online(&http, job)).is_err() {
-                        return;
-                    }
-                    w();
-                }
-            })
-            .expect("spawn online worker");
-
-        Workers { interactive, bulk, online, waveform, waveform_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
+        Workers { interactive, bulk, waveform, waveform_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
     }
 
     pub fn request_id(&self) -> u64 {
@@ -238,10 +208,6 @@ impl Workers {
             _ => &self.interactive,
         };
         let _ = lane.send(job);
-    }
-
-    pub fn submit_online(&self, job: OnlineJob) {
-        let _ = self.online.send(job);
     }
 
     /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
@@ -615,29 +581,6 @@ fn tracklist_urls(m: &FileMetadata) -> Vec<String> {
         }
     }
     urls
-}
-
-fn run_online(http: &Http, job: OnlineJob) -> JobResult {
-    match job {
-        OnlineJob::RecordingSearch { request, artist, title } => {
-            JobResult::Recordings { request, result: MusicBrainz.search(http, &artist, &title) }
-        }
-        OnlineJob::ReleaseArtwork { request, release_id } => {
-            JobResult::ReleaseImages { request, result: CoverArtArchive.images_for_release(http, &release_id) }
-        }
-        OnlineJob::FetchImage { request, url, hosts } => {
-            let result = http
-                .get_image(&url, hosts)
-                .map_err(|e| e.to_string())
-                .and_then(|b| decode_thumb(&b, 512).map(|t| (Arc::from(b), t)).ok_or_else(|| "cannot decode image".to_owned()));
-            JobResult::OnlineImage { request, url, result }
-        }
-    }
-}
-
-/// Hosts allowed for images (Cover Art Archive is the only image source in use).
-pub fn image_hosts_for(_url: &str) -> &'static [&'static str] {
-    CoverArtArchive.allowed_hosts()
 }
 
 #[cfg(test)]

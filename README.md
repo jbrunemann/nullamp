@@ -41,7 +41,7 @@ It is not a streaming client and not a library manager. It plays your files.
 **Metadata**
 
 - Inspector for tags, technical info, chapters and artwork, with batch editing for up to 500 files. The inspector can follow the playing track.
-- Optional MusicBrainz lookup and Cover Art Archive artwork. Everything else works offline.
+- Fully offline: Nullamp makes no network requests.
 - Tag writes are safe: the file is copied, edited, verified by reading it back, and then atomically swapped in. Chapters and unknown frames survive, and originals can be backed up and restored.
 
 **Formats:** MP3, AAC and M4A, ALAC, FLAC, Ogg Vorbis, WAV and AIFF.
@@ -98,7 +98,6 @@ The full list is in the [user manual](docs/USER_MANUAL.md#9-keyboard-shortcuts).
 | `crates/nullamp-core` | Playlists, play order, setlists, M3U, cue sheets and the tracklist parser (pure logic) |
 | `crates/nullamp-audio` | Decoding, resampling, ring buffer, output and gapless preload |
 | `crates/nullamp-meta` | Tags, chapters, artwork and safe tag writing |
-| `crates/nullamp-online` | Rate-limited HTTP client for MusicBrainz and Cover Art Archive |
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing |
 | `app/` | The egui application |
 
@@ -106,7 +105,7 @@ The full list is in the [user manual](docs/USER_MANUAL.md#9-keyboard-shortcuts).
 
 - Seeking far into a VBR MP3 without a seek table is approximate. CBR files, which covers most DJ mixes, seek exactly.
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
-- Online tracklist search is not part of the app. Use the paste import instead.
+- There is no online search or metadata lookup. Use the paste import for tracklists.
 - "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window.
 
 ## License

@@ -11,7 +11,7 @@ use nullamp_core::{EntryId, cue, tracklist_text};
 
 use super::{App, dialogs, theme};
 use crate::store::SavedSetlist;
-use crate::workers::{Job, NowPlayingInfo, OnlineJob, SetlistOrigin};
+use crate::workers::{Job, NowPlayingInfo, SetlistOrigin};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -66,16 +66,12 @@ pub struct MixState {
     scroll_to_active: bool,
     confirm_clear: bool,
     confirm_chapters: bool,
-    /// Artwork for setlist entries, by URL (fetched online, cached on disk).
-    pub entry_art: std::collections::HashMap<String, egui::TextureHandle>,
-    art_requests: std::collections::HashMap<u64, String>,
 }
 
 // ----- Lifecycle hooks called from the app -----
 
 pub fn reset_for_track(app: &mut App, token: u64, path: PathBuf) {
-    let entry_art = std::mem::take(&mut app.mix.entry_art);
-    app.mix = MixState { token, path: Some(path), loading: true, entry_art, is_mix: app.mix.is_mix, ..Default::default() };
+    app.mix = MixState { token, path: Some(path), loading: true, is_mix: app.mix.is_mix, ..Default::default() };
 }
 
 /// Files at least this long are treated as mixes even before they have a setlist;
@@ -188,71 +184,7 @@ pub fn update_active(app: &mut App) {
     if active != app.mix.active {
         app.mix.active = active;
         app.mix.scroll_to_active = true;
-        request_entry_art(app);
     }
-}
-
-/// Fetch the artwork of the active entry, if it has one and it is not cached yet.
-fn request_entry_art(app: &mut App) {
-    let Some(url) = app.mix.active.and_then(|i| app.mix.setlist.as_ref()?.entries.get(i)?.artwork_url.clone()) else { return };
-    if app.mix.entry_art.contains_key(&url) || app.mix.art_requests.values().any(|u| *u == url) || !app.settings.online_lookups {
-        return;
-    }
-    let request = app.workers.request_id();
-    app.mix.art_requests.insert(request, url.clone());
-    app.workers.submit_online(OnlineJob::FetchImage { request, hosts: crate::workers::image_hosts_for(&url), url });
-}
-
-/// The texture for the active entry's artwork, when loaded.
-pub fn active_entry_art(app: &App) -> Option<&egui::TextureHandle> {
-    let url = app.mix.active.and_then(|i| app.mix.setlist.as_ref()?.entries.get(i)?.artwork_url.as_ref())?;
-    app.mix.entry_art.get(url)
-}
-
-pub fn on_entry_art(app: &mut App, request: u64, url: String, result: Result<(std::sync::Arc<[u8]>, crate::workers::Thumb), String>) {
-    if app.mix.art_requests.remove(&request).is_none() {
-        return;
-    }
-    match result {
-        Ok((_, t)) => {
-            let img = egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba);
-            let tex = app.ctx.load_texture(format!("entry-art-{request}"), img, egui::TextureOptions::LINEAR);
-            if app.mix.entry_art.len() > 64 {
-                app.mix.entry_art.clear();
-            }
-            app.mix.entry_art.insert(url, tex);
-        }
-        Err(e) => log::debug!("entry artwork {url}: {e}"),
-    }
-}
-
-pub fn apply_lookup_to_entry(app: &mut App, id: EntryId, r: &nullamp_online::RecordingMatch, rel: &nullamp_online::ReleaseRef) {
-    if let Some(e) = app.mix.setlist.as_mut().and_then(|s| s.entries.iter_mut().find(|e| e.id == id)) {
-        e.release = Some(match &rel.date {
-            Some(d) => format!("{} ({d})", rel.title),
-            None => rel.title.clone(),
-        });
-        e.source_url = Some(r.url.clone());
-        e.verification = Verification::Confirmed;
-        e.user_edited = true;
-        if e.artist.trim().is_empty() || e.is_unidentified() {
-            e.artist = r.artist.clone();
-            e.title = r.title.clone();
-        }
-    }
-    select(app, Some(id));
-    changed(app);
-    app.info("Release information added to the setlist entry");
-}
-
-pub fn set_entry_artwork(app: &mut App, id: EntryId, url: String) {
-    if let Some(e) = app.mix.setlist.as_mut().and_then(|s| s.entries.iter_mut().find(|e| e.id == id)) {
-        e.artwork_url = Some(url);
-        e.user_edited = true;
-    }
-    changed(app);
-    request_entry_art(app);
-    app.info("Artwork set for the setlist entry (shown while it plays)");
 }
 
 /// Jump to the previous/next setlist entry. "Previous" restarts the current entry
@@ -825,7 +757,6 @@ fn editor(app: &mut App, ui: &mut Ui) {
     let mut apply = false;
     let mut cancel = false;
     let mut delete = false;
-    let mut lookup = false;
     let mut moved: Option<i32> = None;
     ui.spacing_mut().scroll.floating = false;
     egui::ScrollArea::vertical().id_salt("entry-editor").auto_shrink([false, true]).show(ui, |ui| {
@@ -887,9 +818,6 @@ fn editor(app: &mut App, ui: &mut Ui) {
             });
         }
         ui.horizontal(|ui| {
-            if ui.small_button("Look up…").on_hover_text("Find release info and artwork on MusicBrainz").clicked() {
-                lookup = true;
-            }
             if ui.small_button("▲").clicked() {
                 moved = Some(-1);
             }
@@ -902,10 +830,6 @@ fn editor(app: &mut App, ui: &mut Ui) {
     if apply && apply_edit(app, id) || cancel {
         select(app, None);
         return;
-    }
-    if lookup {
-        let (artist, title) = (app.mix.edit.artist.clone(), app.mix.edit.title.clone());
-        super::inspector::lookup_for_entry(app, id, artist, title);
     }
     if delete {
         delete_entry(app, id);

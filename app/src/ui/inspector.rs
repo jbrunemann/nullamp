@@ -1,25 +1,19 @@
 //! The metadata inspector: view and edit tags, artwork and technical properties,
-//! for one file or a batch, plus online lookups (MusicBrainz, Cover Art Archive).
+//! for one file or a batch.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use egui::{RichText, TextureHandle, Ui, vec2};
-use nullamp_core::EntryId;
 use nullamp_core::time::format_clock;
 use nullamp_meta::{ArtworkKind, Edit, Field, FileMetadata, NewArtwork, WriteOptions};
-use nullamp_online::{CoverImage, RecordingMatch};
 
 use super::{App, dialogs, theme};
-use crate::workers::{Job, JobResult, OnlineJob, image_hosts_for};
+use crate::workers::{Job, JobResult};
 
 /// Batch edits are limited to keep the editor responsive.
 const MAX_TARGETS: usize = 500;
-
-/// Online lookups show only the best few candidates to keep the panel short.
-const MAX_MATCHES: usize = 5;
-const MAX_ARTWORK_RESULTS: usize = 5;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Original {
@@ -43,29 +37,6 @@ struct ArtItem {
     decode_request: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum LookupTarget {
-    #[default]
-    File,
-    SetlistEntry(EntryId),
-}
-
-#[derive(Default)]
-struct Lookup {
-    target: LookupTarget,
-    artist: String,
-    title: String,
-    request: Option<u64>,
-    results: Vec<RecordingMatch>,
-    error: Option<String>,
-    images_request: Option<u64>,
-    images: Vec<CoverImage>,
-    /// Thumbnail URL -> (texture, full bytes when fetched).
-    thumbs: HashMap<String, (TextureHandle, Arc<[u8]>)>,
-    thumb_requests: HashMap<u64, String>,
-    chosen_release: Option<(String, String)>,
-}
-
 #[derive(Default)]
 pub struct InspectorState {
     pub targets: Vec<PathBuf>,
@@ -80,9 +51,6 @@ pub struct InspectorState {
     status: Option<(String, bool)>,
     last_backup: Option<(PathBuf, PathBuf)>,
     restore_request: Option<u64>,
-    lookup: Lookup,
-    /// One-shot request for the lookup header to expand on its next draw.
-    lookup_open: bool,
 }
 
 impl InspectorState {
@@ -118,8 +86,7 @@ pub fn load_targets(app: &mut App, mut paths: Vec<PathBuf>) {
         return;
     }
     let follow = app.inspector.follow_playing;
-    let lookup_open = app.inspector.lookup_open;
-    app.inspector = InspectorState { follow_playing: follow, lookup_open, ..Default::default() };
+    app.inspector = InspectorState { follow_playing: follow, ..Default::default() };
     if paths.is_empty() {
         return;
     }
@@ -166,13 +133,6 @@ fn build_fields(app: &mut App) {
         }
     }
     st.art_touched = false;
-    let first = metas.first().map(|m| (m.fields.get(&Field::Artist).cloned().unwrap_or_default(), m.fields.get(&Field::Title).cloned().unwrap_or_default()));
-    if let Some((artist, title)) = first
-        && st.lookup.target == LookupTarget::File
-    {
-        st.lookup.artist = artist;
-        st.lookup.title = title;
-    }
     request_art_decodes(app);
 }
 
@@ -338,45 +298,6 @@ pub fn on_result(app: &mut App, r: JobResult) {
                 Err(e) => app.error(format!("Restore failed: {e}")),
             }
         }
-        JobResult::Recordings { request, result } if app.inspector.lookup.request == Some(request) => {
-            let l = &mut app.inspector.lookup;
-            l.request = None;
-            match result {
-                Ok(r) if r.is_empty() => l.error = Some("No matches on MusicBrainz.".into()),
-                Ok(r) => l.results = r,
-                Err(e) => l.error = Some(e.to_string()),
-            }
-        }
-        JobResult::ReleaseImages { request, result } if app.inspector.lookup.images_request == Some(request) => {
-            app.inspector.lookup.images_request = None;
-            match result {
-                Ok(images) if images.is_empty() => app.inspector.lookup.error = Some("This release has no artwork in the Cover Art Archive.".into()),
-                Ok(mut images) => {
-                    images.truncate(MAX_ARTWORK_RESULTS);
-                    for img in &images {
-                        let request = app.workers.request_id();
-                        app.inspector.lookup.thumb_requests.insert(request, img.thumbnail.clone());
-                        app.workers.submit_online(OnlineJob::FetchImage { request, url: img.thumbnail.clone(), hosts: image_hosts_for(&img.thumbnail) });
-                    }
-                    app.inspector.lookup.images = images;
-                }
-                Err(e) => app.inspector.lookup.error = Some(e.to_string()),
-            }
-        }
-        JobResult::OnlineImage { request, url, result } => {
-            if app.inspector.lookup.thumb_requests.remove(&request).is_some() {
-                match result {
-                    Ok((bytes, t)) => {
-                        let img = egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba);
-                        let tex = app.ctx.load_texture(format!("lookup-{request}"), img, egui::TextureOptions::LINEAR);
-                        app.inspector.lookup.thumbs.insert(url, (tex, bytes));
-                    }
-                    Err(e) => log::debug!("thumbnail {url}: {e}"),
-                }
-            } else {
-                super::setlist_view::on_entry_art(app, request, url, result);
-            }
-        }
         _ => {}
     }
 }
@@ -427,8 +348,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         actions(app, ui);
         ui.add_space(8.0);
         artwork(app, ui);
-        ui.add_space(8.0);
-        lookup(app, ui);
         ui.add_space(8.0);
         technical(app, ui);
     });
@@ -609,186 +528,6 @@ fn artwork(app: &mut App, ui: &mut Ui) {
     if let Some(i) = remove {
         app.inspector.art.remove(i);
         app.inspector.art_touched = true;
-    }
-}
-
-/// Open the lookup for a setlist entry (called from the setlist panel).
-pub fn lookup_for_entry(app: &mut App, id: EntryId, artist: String, title: String) {
-    app.side_tab = super::SideTab::Inspector;
-    app.side_open = true;
-    app.inspector.lookup_open = true;
-    let l = &mut app.inspector.lookup;
-    *l = Lookup { target: LookupTarget::SetlistEntry(id), artist, title, ..Default::default() };
-    start_lookup(app);
-}
-
-fn start_lookup(app: &mut App) {
-    if !app.settings.online_lookups {
-        app.inspector.lookup.error = Some("Online lookups are off (see status bar).".into());
-        return;
-    }
-    let request = app.workers.request_id();
-    let l = &mut app.inspector.lookup;
-    l.request = Some(request);
-    l.results.clear();
-    l.images.clear();
-    l.error = None;
-    l.chosen_release = None;
-    app.workers.submit_online(OnlineJob::RecordingSearch { request, artist: l.artist.clone(), title: l.title.clone() });
-}
-
-fn lookup(app: &mut App, ui: &mut Ui) {
-    // `lookup_open` is a one-shot request to expand; afterwards egui owns the open state so the header toggles like any other.
-    let force_open = std::mem::take(&mut app.inspector.lookup_open);
-    egui::CollapsingHeader::new(RichText::new("Find metadata online").strong())
-        .id_salt("lookup")
-        .open(force_open.then_some(true))
-        .show(ui, |ui| lookup_body(app, ui));
-}
-
-fn lookup_body(app: &mut App, ui: &mut Ui) {
-    if let LookupTarget::SetlistEntry(_) = app.inspector.lookup.target {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("For a setlist entry").small().color(theme::now()));
-            if ui.small_button("switch to file").clicked() {
-                app.inspector.lookup = Lookup::default();
-                build_fields(app);
-            }
-        });
-    }
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(&mut app.inspector.lookup.artist).hint_text("Artist").desired_width(120.0));
-        ui.add(egui::TextEdit::singleline(&mut app.inspector.lookup.title).hint_text("Title").desired_width(ui.available_width() - 70.0));
-        if ui.button("Search").clicked() {
-            start_lookup(app);
-        }
-    });
-    let l = &app.inspector.lookup;
-    if l.request.is_some() || l.images_request.is_some() {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label(RichText::new("Asking MusicBrainz…").small().color(theme::text_dim()));
-        });
-    }
-    if let Some(e) = &l.error {
-        ui.label(RichText::new(e).small().color(theme::warn()));
-    }
-    let file_duration = app.inspector.loaded.values().next().and_then(|m| m.technical.duration);
-    let results = l.results.clone();
-    let mut use_fields = None;
-    let mut want_art = None;
-    for r in results.iter().take(MAX_MATCHES) {
-        egui::Frame::new().fill(theme::raised()).corner_radius(3.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.add(egui::Label::new(RichText::new(format!("{} — {}", r.artist, r.title)).strong()).truncate());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.hyperlink_to("↗", &r.url).on_hover_text("Open on MusicBrainz");
-                    ui.label(RichText::new(format!("{}%", r.score)).small().color(theme::text_faint()));
-                });
-            });
-            let len = r.length.map(format_clock).unwrap_or_else(|| "?".into());
-            let matches = matches!((file_duration, r.length), (Some(a), Some(b)) if (a - b).abs() < 3.0);
-            let mut sub = format!("length {len}{}", if matches { " ✓ matches" } else { "" });
-            if let Some(d) = &r.disambiguation {
-                sub.push_str(&format!(" · {d}"));
-            }
-            ui.label(RichText::new(sub).small().color(if matches { theme::ok() } else { theme::text_dim() }));
-            for rel in r.releases.iter().take(3) {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} {}", rel.title, rel.date.as_deref().map(|d| format!("({d})")).unwrap_or_default())).small());
-                    if ui.small_button("Use").on_hover_text("Fill fields from this recording and release (not saved until you press Save)").clicked() {
-                        use_fields = Some((r.clone(), rel.clone()));
-                    }
-                    if ui.small_button("Artwork").clicked() {
-                        want_art = Some((rel.id.clone(), rel.title.clone()));
-                    }
-                });
-            }
-        });
-    }
-    if let Some((r, rel)) = use_fields {
-        apply_suggestion(app, &r, &rel);
-    }
-    if let Some((id, title)) = want_art {
-        let request = app.workers.request_id();
-        app.inspector.lookup.images_request = Some(request);
-        app.inspector.lookup.images.clear();
-        app.inspector.lookup.chosen_release = Some((id.clone(), title));
-        app.workers.submit_online(OnlineJob::ReleaseArtwork { request, release_id: id });
-    }
-    let images = app.inspector.lookup.images.clone();
-    if !images.is_empty() {
-        ui.label(RichText::new(format!("Artwork for “{}”", app.inspector.lookup.chosen_release.as_ref().map(|r| r.1.as_str()).unwrap_or(""))).small());
-        let mut chosen = None;
-        ui.horizontal_wrapped(|ui| {
-            for img in &images {
-                ui.vertical(|ui| {
-                    let (rect, resp) = ui.allocate_exact_size(vec2(84.0, 84.0), egui::Sense::click());
-                    ui.painter().rect_filled(rect, 3.0, theme::LCD_BG);
-                    if let Some((tex, _)) = app.inspector.lookup.thumbs.get(&img.thumbnail) {
-                        let s = tex.size_vec2();
-                        let scale = (rect.width() / s.x).min(rect.height() / s.y);
-                        ui.painter().image(tex.id(), egui::Rect::from_center_size(rect.center(), s * scale), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-                    } else {
-                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "…", theme::prop(14.0), theme::text_faint());
-                    }
-                    let label = if img.types.is_empty() { "image".to_owned() } else { img.types.join(", ") };
-                    let resp = resp.on_hover_text(format!("{label}\nClick to use"));
-                    if resp.clicked() {
-                        chosen = Some(img.clone());
-                    }
-                });
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Images: Cover Art Archive.").small().color(theme::text_faint()));
-            if let Some(img) = images.first() {
-                ui.hyperlink_to(RichText::new("release page").small(), &img.source_page);
-            }
-        });
-        if let Some(img) = chosen {
-            use_image(app, &img);
-        }
-    }
-    ui.label(RichText::new("Metadata: MusicBrainz (CC0). Suggestions are not written until you save.").small().color(theme::text_faint()));
-}
-
-fn apply_suggestion(app: &mut App, r: &RecordingMatch, rel: &nullamp_online::ReleaseRef) {
-    match app.inspector.lookup.target {
-        LookupTarget::File => {
-            let mut set = |field: Field, value: &str| {
-                if let Some(f) = app.inspector.fields.get_mut(&field)
-                    && !value.trim().is_empty()
-                {
-                    f.value = value.to_owned();
-                    f.touched = f.original != Original::Same(f.value.clone());
-                }
-            };
-            set(Field::Title, &r.title);
-            set(Field::Artist, &r.artist);
-            set(Field::Album, &rel.title);
-            if let Some(d) = &rel.date {
-                set(Field::Date, d);
-            }
-            app.info("Fields filled from MusicBrainz; review and press Save");
-        }
-        LookupTarget::SetlistEntry(id) => {
-            super::setlist_view::apply_lookup_to_entry(app, id, r, rel);
-        }
-    }
-}
-
-fn use_image(app: &mut App, img: &CoverImage) {
-    match app.inspector.lookup.target {
-        LookupTarget::File => {
-            // Use the full-size image when fetched; the thumbnail otherwise.
-            let Some((_, bytes)) = app.inspector.lookup.thumbs.get(&img.thumbnail) else { return };
-            let bytes = Arc::clone(bytes);
-            add_artwork(app, bytes, Some("image/jpeg".into()));
-            app.info("Artwork added; press Save to write it");
-        }
-        LookupTarget::SetlistEntry(id) => super::setlist_view::set_entry_artwork(app, id, img.full.clone()),
     }
 }
 

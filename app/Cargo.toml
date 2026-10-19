@@ -10,7 +10,6 @@ default-run = "nullamp"
 nullamp-core.workspace = true
 nullamp-audio.workspace = true
 nullamp-meta.workspace = true
-nullamp-online.workspace = true
 nullamp-sysmedia.workspace = true
 serde.workspace = true
 serde_json.workspace = true

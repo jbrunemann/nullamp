@@ -569,10 +569,7 @@ impl App {
             JobResult::Inspected { .. }
             | JobResult::Image { .. }
             | JobResult::Written { .. }
-            | JobResult::Restored { .. }
-            | JobResult::Recordings { .. }
-            | JobResult::ReleaseImages { .. }
-            | JobResult::OnlineImage { .. } => inspector::on_result(self, r),
+            | JobResult::Restored { .. } => inspector::on_result(self, r),
         }
     }
 
@@ -887,12 +884,6 @@ impl App {
                     let next = appearance.next();
                     self.settings.appearance = next.setting().into();
                     theme::set_appearance(ui.ctx(), next);
-                    self.mark_settings_dirty();
-                }
-                let online = if self.settings.online_lookups { "online lookups on" } else { "offline mode" };
-                let resp = ui.add(egui::Label::new(egui::RichText::new(online).size(11.0).color(theme::text_faint())).sense(egui::Sense::click()));
-                if resp.on_hover_text("Click to toggle online lookups").clicked() {
-                    self.settings.online_lookups = !self.settings.online_lookups;
                     self.mark_settings_dirty();
                 }
                 if self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {

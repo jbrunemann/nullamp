@@ -8,7 +8,7 @@ pub struct AppPaths {
     pub config: PathBuf,
     /// Tag-write backups.
     pub data: PathBuf,
-    /// Online responses and artwork; safe to delete.
+    /// Artwork thumbnails and waveform overviews; safe to delete.
     pub cache: PathBuf,
 }
 
@@ -42,10 +42,6 @@ impl AppPaths {
 
     pub fn tag_backups(&self) -> PathBuf {
         self.data.join("tag-backups")
-    }
-
-    pub fn online_cache(&self) -> PathBuf {
-        self.cache.join("online")
     }
 
     pub fn artwork_cache(&self) -> PathBuf {

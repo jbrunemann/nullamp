@@ -315,9 +315,7 @@ pub fn entry_line(e: &nullamp_core::SetlistEntry) -> String {
 fn artwork(app: &App, ui: &Ui, rect: Rect) {
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 5.0, theme::LCD_BG);
-    // While a mix plays, show the constituent track's artwork when it has one.
-    let tex = super::setlist_view::active_entry_art(app).or(app.now.art.as_ref());
-    if let Some(tex) = tex {
+    if let Some(tex) = app.now.art.as_ref() {
         let size = tex.size_vec2();
         let scale = (rect.width() / size.x).min(rect.height() / size.y);
         let r = Rect::from_center_size(rect.center(), size * scale);

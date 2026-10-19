@@ -28,7 +28,6 @@ pub struct Settings {
     /// Playlist file stems in display order.
     pub playlist_order: Vec<String>,
     pub active_playlist: Option<String>,
-    pub online_lookups: bool,
     pub backup_before_tag_writes: bool,
     pub backup_budget_mb: u64,
     pub side_panel_open: bool,
@@ -61,7 +60,6 @@ impl Default for Settings {
             resume: None,
             playlist_order: Vec::new(),
             active_playlist: None,
-            online_lookups: true,
             backup_before_tag_writes: true,
             backup_budget_mb: 2048,
             side_panel_open: true,
@@ -243,6 +241,11 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+/// 64-bit FNV-1a: a stable hash for cache keys (std's hasher is not guaranteed stable).
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3))
+}
+
 /// Content fingerprint of an audio file, stable when the file is moved, renamed or
 /// retagged: hashes of 64 KiB just after a leading ID3v2 tag and 64 KiB just before
 /// a trailing ID3v1 tag. (Formats that keep tags at the start, such as FLAC and
@@ -276,7 +279,7 @@ pub fn fingerprint(path: &Path) -> std::io::Result<String> {
         let mut buf = vec![0u8; (end - start) as usize];
         f.seek(SeekFrom::Start(start))?;
         f.read_exact(&mut buf)?;
-        Ok(nullamp_online::fnv1a(&buf))
+        Ok(fnv1a(&buf))
     };
     let head = window(head_start, (head_start + CHUNK).min(tail_end))?;
     let tail = window(tail_end.saturating_sub(CHUNK).max(head_start), tail_end)?;

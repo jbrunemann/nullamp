@@ -12,10 +12,10 @@ Working on macOS: playback, playlists, media keys, setlists, metadata editing, p
 | 2. Core player | Done on macOS. Manual check of media keys, file dialogs and drag-and-drop is still owed. |
 | 3. DJ mix support | Done: chapters, embedded and adjacent cue sheets, plain track lists in the comment or description tag (reference only when untimed), pasted tracklists, timeline segments, editing, persistence. |
 | 4. Metadata management | Done: inspector, batch edit, artwork, safe writes, backups and restore. |
-| 5. Online enrichment | Partly. MusicBrainz and Cover Art Archive lookups for single tracks work. Online tracklist search was built and then removed by request (section 7). |
+| 5. Online enrichment | Removed by request. Tracklist search and then the MusicBrainz/Cover Art Archive lookup were built and later taken out, along with the `nullamp-online` crate (section 7). |
 | 6. Hardening and release | Not started: no README, no CI, Linux and Windows untested (the Windows exe cross-builds and links, but has never been run), no signing or notarisation. |
 
-Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmedia 2, app 32 (1 screenshot render, ignored). All pass on macOS. Nothing is committed to git yet (branch `master`, no commits).
+Tests: core 54, audio 9, meta 15, sysmedia 2, app 32 (1 screenshot render, ignored). All pass on macOS. Nothing is committed to git yet (branch `master`, no commits).
 
 ## 2. Definition-of-done checklist (brief section 17)
 
@@ -27,8 +27,8 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 6. See the current constituent track: yes (LCD, timeline, setlist panel, OS Now Playing).
 7. Jump to a setlist entry: yes (double-click, Shift+arrows).
 8. Correct and persist tracklists: yes.
-9. Online tracklists and artwork: artwork yes; online tracklists deliberately removed for now.
-10. Works offline: yes; online lookups are optional and toggled in the status bar.
+9. Online tracklists and artwork: deliberately removed (see section 7).
+10. Works offline: yes; the app makes no network requests.
 11. macOS and Linux: macOS yes; Linux compiled in Docker but was never linked or tested (disk filled up).
 12. No delays or freezes: measured, see section 4.
 
@@ -38,7 +38,7 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 
 - `nullamp-core`: pure, fully unit-tested logic. No I/O, so most behaviour is testable without hardware.
 - `nullamp-audio`: the engine, behind a small command/event API with tokens.
-- `nullamp-meta`, `nullamp-online`, `nullamp-sysmedia`: one concern each.
+- `nullamp-meta`, `nullamp-sysmedia`: one concern each.
 - `app`: the egui UI, the playback controller, persistence and workers.
 
 ### Decisions and why
@@ -71,7 +71,7 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
   9. Atomically rename the temp file over the original.
 
   Tests prove the audio bytes, unknown frames (PRIV, TXXX) and CHAP/CTOC chapters survive.
-- **Workers**: an interactive lane (now-playing info, inspector, writes) always served before a bulk lane (playlist scans, folder expansion), plus a separate online thread so network never delays local work.
+- **Workers**: an interactive lane (now-playing info, inspector, writes) always served before a bulk lane (playlist scans, folder expansion).
 - **Themes**: dark (default), light, or follow the OS, cycled by the "theme:" label in the status bar and saved as `appearance` in settings. `ui/theme.rs` holds a `Palette` per theme; UI code calls `theme::text()`, `theme::panel()` etc., which read the palette synced from egui each frame. The LCD (`LCD_*` consts) stays dark in both themes; chrome that borrows LCD hues uses `now()`, `mix_tag()`, `key()` for legibility on light surfaces. The palette flag is process-global, so run snapshot tests with `--test-threads=1`. `render_main_window_light` writes the `*-light.png` shots.
 - **App icon**: `packaging/icon.py` (standard-library Python, signed-distance drawing so any size is anti-aliased) renders a graphite plate with an LCD showing a lit mint spectrum with amber peaks above a mix timeline with an orange playhead. It feeds the macOS `.icns` (`bundle.sh` uses the committed `packaging/icon-1024.png`), the Linux icon sizes and the Windows `.res`. The window icon and the About dialog use the committed `app/assets/icon-256.png`. After changing `icon.py`, regenerate both PNGs: `python3 packaging/icon.py packaging/icon-1024.png` and `python3 packaging/icon.py app/assets/icon-256.png 256`.
 - **Fonts**: egui 0.37's bundled fonts lack arrows, ⌘ ⌥ ⇧, ⚠ ✓ ✎ ✕ ▲▼▶▸ ◎ and similar. A 3.9 KB subset of DejaVu Sans (`app/assets/fonts/NullampSymbols.ttf`, licence beside it) is installed as a fallback for both families. To add glyphs, install fonttools in a venv and re-subset DejaVuSans.ttf 2.37 with `pyftsubset DejaVuSans.ttf --text="<all symbols>" --no-hinting --layout-features='' --output-file=NullampSymbols.ttf`.
@@ -82,7 +82,7 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 - **Top deck**: the LCD (seven-segment time, which you click to switch between elapsed and remaining; a visualiser under the time, segmented spectrum, oscilloscope, then off on successive clicks (the choice is saved in `settings.json`), fed by a lock-free tap in the audio callback that records when each period reaches the speaker so the picture matches what is audible, not what was just buffered; the file name, dim, on the bottom line; a scrolling title, amber for the track inside a mix; a context line; the stream format; mode indicators), artwork (switches to setlist-entry artwork while that entry plays), the timeline (setlist segments: exact boundaries solid, approximate dashed, active in amber; hover tooltip; click or drag to seek on release), and the transport (a Playlist tab beside Setlist and Inspector, ⌘P, hides the playlist; with the side panel also hidden the window shrinks to just the deck and status bar and restores its height afterwards; line 3 of the LCD reads "FILE n/m" for the playlist position and "TRACK n/m" for the setlist entry; painted icons, shuffle, repeat cycle, mute, segmented volume meter that also responds to scrolling).
 - **Centre**: playlist tabs, a toolbar (add, remove, move, Sort and List menus), and the virtualized table (the selection survives reordering; drag to reorder with an insertion line; external drops land at the pointer; right-click menu).
 - **Right panel**, resizable: Setlist (mix card, source summary, validation problems, entry list, entry editor with "→ playhead", import and export, paste dialog) and Inspector (fields, batch edit, artwork, MusicBrainz lookup, technical info, chapters, other frames). The Setlist tab, the mix lines on the LCD and the timeline segments only show for a mix (`MixState::is_mix`): a file with a setlist of at least two entries (or one the user made), or longer than 20 minutes. Single tracks show the Inspector without changing the saved tab; ⌘L still opens the Setlist on one to add a setlist.
-- **Status bar**: counts, messages, online on/off toggle, F1 help.
+- **Status bar**: counts, messages, theme, F1 help.
 - **Shortcuts**: Space/C play-pause, Z X C V B (Winamp row), ←/→ seek 5 s, ⇧←/⇧→ previous/next setlist entry, +/−/M volume, S/R shuffle/repeat, ↑/↓/Home/End/Enter/Delete in the list, ⌥↑/⌥↓ move entries, ⌘A, ⌘O, ⇧⌘O, ⌘I, ⌘L, ⌘J, F1.
 
 ## 4. Measured performance (M-series Mac, two 32-minute 256 kbps MP3 mixes)
@@ -106,7 +106,6 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 - **egui_kittest 0.37** (dev-dependency with eframe, wgpu and snapshot features): `Harness::builder().with_size(…).with_pixels_per_point(2.0).wgpu().build_eframe(|cc| App::new(cc, store))`, then `step()` and `render()`. Missing glyphs panic in tests, which is how the font gap was found.
 - **souvlaki 0.8.3**: uses the old `cocoa`/`objc` crates and is only lightly maintained, but it covers all three platforms. Linux uses the `use_zbus` feature. If it breaks, replace it behind `nullamp-sysmedia` (for example with `objc2-media-player`).
 - **rfd 0.17**: on Linux the XDG portal is the default backend. Dialogs run with `AsyncFileDialog` on a helper thread via `pollster`, so the UI loop keeps handling media keys while a dialog is open.
-- **ureq 3**: configured with `https_only`, `max_redirects(0)` (redirects are followed manually so each hop's host can be checked) and `http_status_as_error(false)`. Cover Art Archive JSON and images both redirect to `archive.org`.
 
 ## 6. Pitfalls we hit (do not repeat)
 
@@ -119,22 +118,22 @@ Tests: core 54, audio 9, meta 15, online 14 (2 live, ignored by default), sysmed
 
 ## 7. Online sources (findings, October 2026)
 
-Online tracklist search was removed from the app at the user's request because it rarely produced tracklists. Findings to revisit later:
+Online tracklist search was removed from the app at the user's request because it rarely produced tracklists, and the per-track lookup followed. Findings to revisit later:
 
 - **1001Tracklists** and **mixid.fm**: no public API; both block automated access (mixid.fm returned HTTP 403). Do not scrape. The supported route is paste import: copy from the page in a browser, then Setlist → Import → Paste tracklist, with the page URL kept as the source.
-- **Mixcloud**: the public API finds mixes (title, DJ, date, URL, artwork), but `sections` is always empty now and descriptions rarely hold tracklists. The provider code and tests remain in `crates/nullamp-online/src/mixcloud.rs`, unused by the app.
+- **Mixcloud**: the public API finds mixes (title, DJ, date, URL, artwork), but `sections` is always empty now and descriptions rarely hold tracklists. The provider code was deleted with the `nullamp-online` crate.
 - **MixesDB**: shut down, then relaunched as Mixes.wiki; no API documentation or terms found.
 - **AI search engines** find *where* tracklists are, but merge sources that disagree and fill gaps. Example: for "Miss Monique – Sunset DJ Mix in Mykonos, Greece 2024" they returned two different lists (watchthedj.com with 15 tracks; the YouTube description with 16). Not usable as an automatic source.
 - **Best next option**: the YouTube Data API (free key, permitted). Search for the mix and parse timestamped tracklists from the description and top comments with `nullamp_core::tracklist_text`. Many of the user's mixes are YouTube downloads. Pair it with a "Search the web" button that opens the browser with "<mix> tracklist" for paste import.
 - **Audio recognition** (the user likes it, on hold): AudD's enterprise endpoint for long files, billed per 12 s of audio; ACRCloud file scanning (hearthis.at uses it, with 20 s segments). It needs a user API key and explicit consent before uploading audio (brief section 13).
-- **Still in the app**: MusicBrainz recording search plus Cover Art Archive artwork in the Inspector, for single tracks and for setlist entries ("Look up…" in the entry editor). MusicBrainz allows at most 1 request per second and requires a User-Agent with contact info. Set `NULLAMP_CONTACT` when building releases; it currently sends "contact not configured".
+- **Removed: MusicBrainz and Cover Art Archive lookup** (October 2026, at the user's request: too error prone and complex for how often it was used). It lived in the Inspector ("Find metadata online") and as "Look up…" in the setlist entry editor, in the `nullamp-online` crate, which is deleted along with the status bar toggle and the `online_lookups` setting. The exact-phrase Lucene query (`recording:"title" AND artist:"artist"`) missed every title with a remix suffix such as "(Club Edit)" or "(Original Mix)". A live comparison found that iTunes Search and Deezer (both free, no key) matched those titles; iTunes was best on suffixes and had high-res artwork but its terms target promoting Apple content, and Deezer needs the plain `artist title` query (its field syntax returned nothing). All three return wrong tracks for obscure titles, so any revival needs an artist-similarity and duration check. Discogs would cover underground releases but needs a user token. `Provenance::Online` and `SetlistEntry::artwork_url` remain in `nullamp-core` only so older saved setlists still load.
 
 ## 8. Open work (suggested order)
 
 1. **Hands-on macOS review with the user**: visualiser (does it feel in sync with real music, does the spectrum look lively, CPU use at full refresh; cap repaints at 60 Hz if needed), media keys in the background, file dialogs, drag-and-drop from Finder, window resizing, a large playlist (thousands of entries), switching audio devices (headphones, Bluetooth), sleep and wake. Collect UI feedback.
 2. Paste import against real pages the user copies (mixid.fm, YouTube descriptions, 1001Tracklists) and adjust `tracklist_text` to their formats.
 3. README with build instructions and limitations; clippy pass; commit to git (ask first).
-4. Polish ideas not yet built: column sorting by clicking headers, playlist search/filter, a settings dialog (backups, online toggle, resume-on-start; these exist in `settings.json` but have no UI except the online toggle), opening files from Finder ("Open with" is declared in Info.plist but file-open events are not handled yet).
+4. Polish ideas not yet built: column sorting by clicking headers, playlist search/filter, a settings dialog (backups, resume-on-start; these exist in `settings.json` but have no UI), opening files from Finder ("Open with" is declared in Info.plist but file-open events are not handled yet).
 5. Release work on macOS: universal binary (`bundle.sh --universal`), Developer ID signing and notarisation.
 6. Later, when the user says so: Linux (Dockerfile and .desktop are in `packaging/linux`; AppImage not written), Windows (done as a build: `packaging/windows/package.sh` cross-builds with `cargo xwin` and zips; `app/build.rs` embeds the icon through a hand-written .res from `mkres.py`; release builds use the GUI subsystem; CI has a native `windows-x86_64` job; still to do on a real PC: run it, check audio devices, SMTC media keys, file dialogs and the tag-write-while-playing error; no code signing), the YouTube provider, audio recognition.
 

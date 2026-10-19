@@ -19,9 +19,8 @@ Version 0.2. This manual covers the macOS app. For building from source and the 
 5. [Playlists](#5-playlists)
 6. [DJ mixes and setlists](#6-dj-mixes-and-setlists)
 7. [Editing tags and artwork](#7-editing-tags-and-artwork)
-8. [Online lookups](#8-online-lookups)
-9. [Keyboard shortcuts](#9-keyboard-shortcuts)
-10. [Where Nullamp keeps your data](#10-where-nullamp-keeps-your-data)
+8. [Keyboard shortcuts](#8-keyboard-shortcuts)
+9. [Where Nullamp keeps your data](#9-where-nullamp-keeps-your-data)
 11. [Troubleshooting](#11-troubleshooting)
 12. [Known limitations](#12-known-limitations)
 
@@ -99,7 +98,7 @@ The **Setlist** button carries the number of entries (`Setlist · 6`). It only a
 
 The left area holds your playlists. The right area is the side panel, which shows either the **Setlist** or the **Inspector**. Drag the divider between them to resize. The `×` closes the side panel.
 
-The status bar at the bottom shows track counts and total time, messages, whether online lookups are on, the theme, and a `?` button for the shortcut list.
+The status bar at the bottom shows track counts and total time, messages, the theme, and a `?` button for the shortcut list.
 
 ## 4. Playing music
 
@@ -189,8 +188,6 @@ To fix a time by ear: play to the moment the new track starts, right-click that 
 
 To add a missing track, play to where it starts and click **+ At playhead**.
 
-**Look up…** in the entry editor searches MusicBrainz for release information and artwork (see [Online lookups](#8-online-lookups)).
-
 Your corrections are saved with the setlist. They survive renaming, moving or retagging the audio file, because Nullamp identifies the audio by a fingerprint of its content, not by its name. **Import ▸ Scan file again** re-reads the file's chapters and cue sheets while keeping your corrections.
 
 ### Importing a setlist
@@ -254,20 +251,9 @@ Nullamp never edits your file in place. Each save:
 
 If anything fails, your original is untouched. Chapters, artwork you did not change, and unknown frames survive. The audio itself is never rewritten. After a save you can click **Restore it** to put the previous version back from the backup.
 
-Backups are on by default. They are stored in the data folder (see [section 10](#10-where-nullamp-keeps-your-data)), with a size budget of 2 GB by default. The oldest backups go first.
+Backups are on by default. They are stored in the data folder (see [section 9](#9-where-nullamp-keeps-your-data)), with a size budget of 2 GB by default. The oldest backups go first.
 
-## 8. Online lookups
-
-Everything in Nullamp works offline. Two optional lookups use the internet:
-
-- **MusicBrainz** finds recordings and releases by artist and title.
-- **Cover Art Archive** supplies artwork for a release.
-
-Use them from the Inspector under **Find metadata online**: type artist and title, press **Search**, then **Use** to fill the fields from a result (nothing is written until you press **Save**), or **Artwork** to fetch a cover. In the setlist, **Look up…** in the entry editor does the same for a single entry.
-
-The status bar shows `online lookups on` or `offline mode`. Click it to switch. Nothing is sent while it is off. Only artist and title text is ever sent. Your audio is never uploaded.
-
-## 9. Keyboard shortcuts
+## 8. Keyboard shortcuts
 
 Press F1 or click `?` in the status bar to see this list in the app.
 
@@ -298,13 +284,13 @@ Press F1 or click `?` in the status bar to see this list in the app.
 
 The letter keys do not fire while you type in a text field.
 
-## 10. Where Nullamp keeps your data
+## 9. Where Nullamp keeps your data
 
 | What | Where |
 |---|---|
 | Settings, playlists, saved setlists | `~/Library/Application Support/Nullamp/` |
 | Tag-write backups | `~/Library/Application Support/Nullamp/tag-backups/` |
-| Online responses and artwork | `~/Library/Caches/Nullamp/`. Safe to delete. |
+| Artwork thumbnails | `~/Library/Caches/Nullamp/artwork/`. Safe to delete. |
 | Waveforms | `~/Library/Caches/Nullamp/waveforms/`. A few KB per file, recomputed when missing. Entries not used for 90 days are removed when Nullamp starts. |
 
 Set the environment variable `NULLAMP_HOME` to a folder before launching to keep everything in one place, for example on a USB stick or for testing: `NULLAMP_HOME=/some/dir open -a Nullamp`.
@@ -320,7 +306,6 @@ Nullamp writes `settings.json` in the config folder. Quit the app before editing
 | `resume_playback` | Resume the last track at start. Default off. |
 | `backup_before_tag_writes` | Keep a backup on every tag write. Default on. |
 | `backup_budget_mb` | Size budget for backups. Default 2048. |
-| `online_lookups` | The status bar toggle. Default on. |
 | `appearance` | `dark`, `light` or `system`. |
 | `visualizer` | `spectrum`, `scope` or `off`. |
 
@@ -347,6 +332,6 @@ Nullamp writes `settings.json` in the config folder. Quit the app before editing
 - Seeking far into a variable bit rate MP3 that has no seek table is approximate. Constant bit rate files, which covers most DJ mixes, seek exactly.
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
 - Batch tag editing is limited to 500 files.
-- Online search for tracklists is not part of the app. Use paste import.
+- Nullamp has no online features. Tracklists come from chapters, cue sheets or paste import.
 - "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window instead.
 - macOS is the only supported platform for now.
