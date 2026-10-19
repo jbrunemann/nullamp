@@ -431,6 +431,25 @@ fn entry_editor_closes_on_cancel_and_save() {
     h.state_mut().player.stop();
 }
 
+/// The volume meter at several levels and scales, including the 1x and 1.5x common on Linux,
+/// where bars that are not pixel aligned come out with uneven widths and gaps.
+#[test]
+#[ignore]
+fn render_volume_meter() {
+    for (ppp, name) in [(1.0, "05c-volume-1x.png"), (1.5, "05d-volume-1.5x.png"), (2.0, "05e-volume-2x.png")] {
+        let mut h = Harness::builder().with_size(egui::vec2(150.0, 110.0)).with_pixels_per_point(ppp).with_theme(egui::Theme::Dark).build_ui(|ui| {
+            // A fractional start, as the meter gets in the transport row.
+            ui.add_space(0.3);
+            for (level, muted) in [(0.0, false), (0.35, false), (0.8, false), (1.0, false), (0.6, true)] {
+                let mut v = level;
+                crate::ui::widgets::level_slider(ui, &mut v, 120.0, muted);
+            }
+        });
+        h.run();
+        h.render().expect("render").save(out_dir().join(name)).unwrap();
+    }
+}
+
 /// The output picker opened with a click on the LCD label, and every output icon.
 #[test]
 #[ignore]

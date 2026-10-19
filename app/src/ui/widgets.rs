@@ -317,11 +317,18 @@ pub fn level_slider(ui: &mut Ui, value: &mut f32, width: f32, muted: bool) -> Re
         let p = ui.painter();
         p.rect_filled(rect, 3.0, theme::LCD_BG);
         let n = 20;
-        let seg_w = (rect.width() - 4.0) / n as f32;
+        // Lay the bars out in whole physical pixels with one pitch for all of them: fractional
+        // edges blur at 1x scale (common on Linux), so widths alternate and some gaps vanish.
+        let ppp = ui.pixels_per_point();
+        let snap = |v: f32| (v * ppp).round();
+        let pitch = ((rect.width() - 4.0) * ppp / n as f32).floor();
+        let gap = (1.5 * ppp).round().max(1.0);
+        let left = snap(rect.center().x) - (pitch * n as f32 - gap) / 2.0;
+        let bottom = snap(rect.bottom() - 2.0);
         for i in 0..n {
-            let x = rect.left() + 2.0 + i as f32 * seg_w;
-            let h = 4.0 + (rect.height() - 8.0) * (i as f32 + 1.0) / n as f32;
-            let seg = Rect::from_min_max(pos2(x + 0.5, rect.bottom() - 2.0 - h), pos2(x + seg_w - 1.0, rect.bottom() - 2.0));
+            let x = (left + i as f32 * pitch).round();
+            let h = snap(4.0 + (rect.height() - 8.0) * (i as f32 + 1.0) / n as f32);
+            let seg = Rect::from_min_max(pos2(x, bottom - h), pos2(x + pitch - gap, bottom)) / ppp;
             let lit = (i as f32 + 0.5) / n as f32 <= *value;
             let color = match (lit, muted) {
                 (true, true) => theme::LCD_MID.gamma_multiply(0.5),
