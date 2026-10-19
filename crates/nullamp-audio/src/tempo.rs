@@ -35,12 +35,13 @@ pub const MAX_TRACK_SECONDS: f64 = 20.0 * 60.0;
 const MIN_BPM: f64 = 60.0;
 const MAX_BPM: f64 = 200.0;
 const BPM_STEP: f64 = 0.1;
-/// Tempo the octave decision leans towards, and how many octaves away the lean has faded to 61%.
+/// Tempo the octave decision leans towards: of half, double and so on, the nearest (in octaves) wins.
 const PRIOR_BPM: f64 = 120.0;
-const PRIOR_SPREAD: f64 = 1.0;
+/// Octaves from PRIOR_BPM at which the preference for it has faded to 61% when picking the dominant period.
+const LEAN_OCTAVES: f64 = 1.25;
 /// The comb sums the autocorrelation at this many multiples of the beat period, each weighted
 /// by 1/k: the long lags pin the tempo down precisely, the short ones keep a tempo whose
-/// period is a multiple of the true one (half, two thirds) from tying with it.
+/// period is a multiple of the true one (two thirds, say) from tying with it.
 const COMB_MULTIPLES: usize = 8;
 /// Normalised autocorrelation at the chosen period below which the beat is too weak to report.
 const MIN_CONFIDENCE: f64 = 0.15;
@@ -134,22 +135,37 @@ fn estimate(samples: &[f32], rate: f64) -> Option<Tempo> {
             _ => 0.0,
         }
     };
-    let steps = ((MAX_BPM - MIN_BPM) / BPM_STEP) as usize;
-    let (mut best, mut best_bpm) = (f64::MIN, MIN_BPM);
-    for bpm in (0..=steps).map(|i| MIN_BPM + i as f64 * BPM_STEP) {
+    let comb = |bpm: f64| -> f64 {
         let period = env_rate * 60.0 / bpm;
-        let comb: f64 = (1..=COMB_MULTIPLES).map(|k| at(period * k as f64) / k as f64).sum();
-        let octaves = (bpm / PRIOR_BPM).log2() / PRIOR_SPREAD;
-        let score = comb * (-0.5 * octaves * octaves).exp();
+        (1..=COMB_MULTIPLES).map(|k| at(period * k as f64) / k as f64).sum()
+    };
+    // The strongest periodicity. The lean towards PRIOR_BPM is too mild to decide between half and
+    // double (a track whose odd beats are weak has its best period at two beats), only to break ties
+    // between unrelated tempos.
+    let steps = ((MAX_BPM - MIN_BPM) / BPM_STEP) as usize;
+    let (mut best, mut dominant) = (f64::MIN, MIN_BPM);
+    for bpm in (0..=steps).map(|i| MIN_BPM + i as f64 * BPM_STEP) {
+        let lean = (bpm / PRIOR_BPM).log2() / LEAN_OCTAVES;
+        let score = comb(bpm) * (-0.5 * lean * lean).exp();
         if score > best {
-            (best, best_bpm) = (score, bpm);
+            (best, dominant) = (score, bpm);
         }
     }
-    let confidence = at(env_rate * 60.0 / best_bpm);
+    let confidence = at(env_rate * 60.0 / dominant);
     if confidence < MIN_CONFIDENCE {
         return None;
     }
-    let bpm = if (best_bpm - best_bpm.round()).abs() < SNAP { best_bpm.round() } else { (best_bpm * 10.0).round() / 10.0 };
+    // Half and double the dominant tempo fit the audio equally well; take the one nearest PRIOR_BPM.
+    let distance = |bpm: f64| (bpm / PRIOR_BPM).log2().abs();
+    let mut octave = dominant;
+    for bpm in (1..=4).flat_map(|n| [dominant * f64::from(1 << n), dominant / f64::from(1 << n)]) {
+        if (MIN_BPM..=MAX_BPM).contains(&bpm) && distance(bpm) < distance(octave) {
+            octave = bpm;
+        }
+    }
+    // Halving or doubling the estimate multiplies its error, so fit again around the result.
+    let refined = (-20..=20).map(|i| octave * (1.0 + f64::from(i) * 0.0005)).max_by(|a, b| comb(*a).total_cmp(&comb(*b))).unwrap_or(octave);
+    let bpm = if (refined - refined.round()).abs() < SNAP { refined.round() } else { (refined * 10.0).round() / 10.0 };
     Some(Tempo { bpm: bpm as f32, confidence: confidence.min(1.0) as f32 })
 }
 
@@ -236,13 +252,19 @@ mod tests {
     }
 
     /// Four-on-the-floor: a kick on every beat and a short hat on the offbeat, over a quiet noise floor.
-    pub(super) fn click_track(bpm: f64, seconds: f64, rate: f64) -> Vec<f32> {
+    fn click_track(bpm: f64, seconds: f64, rate: f64) -> Vec<f32> {
+        accented_click_track(bpm, seconds, rate, 1.0)
+    }
+
+    /// As [`click_track`], with every second kick scaled by `odd_gain`.
+    fn accented_click_track(bpm: f64, seconds: f64, rate: f64, odd_gain: f64) -> Vec<f32> {
         let beat = 60.0 / bpm;
         let mut seed = 12345u32;
         (0..(seconds * rate) as usize)
             .map(|i| {
                 let t = i as f64 / rate;
-                let kick = 0.8 * (std::f64::consts::TAU * 55.0 * t).sin() * (-25.0 * (t % beat)).exp();
+                let gain = if (t / beat) as u64 % 2 == 1 { odd_gain } else { 1.0 };
+                let kick = 0.8 * gain * (std::f64::consts::TAU * 55.0 * t).sin() * (-25.0 * (t % beat)).exp();
                 let hat_t = (t + beat / 2.0) % beat;
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 let noise = f64::from(seed >> 16) / 32768.0 - 1.0;
@@ -257,6 +279,15 @@ mod tests {
             let t = estimate(&click_track(bpm, 60.0, 11_025.0), 11_025.0).unwrap_or_else(|| panic!("no tempo for {bpm}"));
             assert!((f64::from(t.bpm) - bpm).abs() < 0.5, "{bpm} BPM came out as {}", t.bpm);
             assert!(t.confidence > 0.3, "{bpm}: confidence {}", t.confidence);
+        }
+    }
+
+    #[test]
+    fn weak_odd_beats_do_not_halve_the_tempo() {
+        // The strongest periodicity is two beats; the answer is still the beat.
+        for bpm in [118.0, 126.0, 135.0] {
+            let t = estimate(&accented_click_track(bpm, 60.0, 11_025.0, 0.3), 11_025.0).unwrap();
+            assert!((f64::from(t.bpm) - bpm).abs() < 0.5, "{bpm} BPM came out as {}", t.bpm);
         }
     }
 
