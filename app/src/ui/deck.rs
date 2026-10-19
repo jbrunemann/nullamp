@@ -212,8 +212,9 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
     let text = if off { "---".to_owned() } else { bpm.map(|(bpm, _)| super::format_bpm(bpm)).unwrap_or_default() };
     // Room for three digits, and a decimal when there is one.
     let ghost: String = if text.contains('.') { "888.8".into() } else { "888".into() };
-    let label = p.layout_no_wrap("BPM".into(), theme::mono(7.0), theme::LCD_MID);
-    let tilde = p.layout_no_wrap("~".into(), theme::mono(9.0), theme::LCD_MID);
+    // Whole pixel sizes of at least 9: smaller or fractional text is smudged on 1x displays.
+    let label = p.layout_no_wrap("BPM".into(), theme::mono(9.0), theme::LCD_MID);
+    let tilde = p.layout_no_wrap("~".into(), theme::mono(10.0), theme::LCD_MID);
     let digits_w = widgets::seven_segment_width_spaced(&ghost, digits, DIGIT_GAP);
     let width = PAD + label.size().x + 4.6 + tilde.size().x + digits_w + PAD;
     if row.width() - width < 120.0 {
@@ -507,9 +508,9 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     p.rect_stroke(bar, 3.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
 
     // Time labels inside the bar ends.
-    p.text(pos2(bar.left() + 6.0, bar.center().y), Align2::LEFT_CENTER, format_clock(drag_target.unwrap_or(pos)), theme::mono(10.5), theme::LCD_TEXT);
+    p.text(pos2(bar.left() + 6.0, bar.center().y), Align2::LEFT_CENTER, format_clock(drag_target.unwrap_or(pos)), theme::mono(11.0), theme::LCD_TEXT);
     if let Some(d) = dur {
-        p.text(pos2(bar.right() - 6.0, bar.center().y), Align2::RIGHT_CENTER, format_clock(d), theme::mono(10.5), theme::LCD_TEXT_DIM);
+        p.text(pos2(bar.right() - 6.0, bar.center().y), Align2::RIGHT_CENTER, format_clock(d), theme::mono(11.0), theme::LCD_TEXT_DIM);
     }
 
     if let (Some(d), Some(hover)) = (dur, resp.hover_pos()) {

@@ -612,3 +612,16 @@ fn render_deck_retro_artwork() {
     save(&mut h, "05c-deck-art-setting-off.png");
     h.state_mut().player.stop();
 }
+
+/// The deck at 1x scale, where small text has to be hinted onto whole pixels.
+#[test]
+#[ignore]
+fn render_deck_low_dpi() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(700.0, 200.0)).with_pixels_per_point(1.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    play_file(&mut h, fixtures().join("beat_120.mp3"));
+    settle(&mut h, 1200);
+    save(&mut h, "11-deck-1x.png");
+    h.state_mut().player.stop();
+}
