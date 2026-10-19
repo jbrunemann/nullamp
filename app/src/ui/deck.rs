@@ -110,7 +110,8 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     widgets::marquee(ui, l1, &line1, theme::mono(16.0), line1_color, time);
     let l2 = Rect::from_min_size(pos2(text_rect.left(), l1.bottom() + 5.0), vec2(text_rect.width(), 16.0));
     widgets::marquee(ui, l2, &line2, theme::mono(12.0), theme::LCD_MID, time);
-    p.text(pos2(text_rect.left(), l2.bottom() + 8.0), Align2::LEFT_TOP, line3, theme::mono(10.0), theme::LCD_MID);
+    let l3 = p.text(pos2(text_rect.left(), l2.bottom() + 8.0), Align2::LEFT_TOP, line3, theme::mono(10.0), theme::LCD_MID);
+    output_label(app, ui, &p, pos2(text_rect.right(), l3.top()), (text_rect.right() - l3.right().max(text_rect.left()) - 14.0).max(0.0));
 
     // Mode indicators, right-aligned on the bottom line.
     let mut x = text_rect.right();
@@ -141,6 +142,57 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
             ui.interact(r, egui::Id::unique("lcd-file"), Sense::hover()).on_hover_text(path.display().to_string());
         }
     }
+}
+
+/// The audio output in small print at the right end of line 3; click to choose another.
+fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::Pos2, max_width: f32) {
+    if max_width < 40.0 {
+        return;
+    }
+    let text = match &app.output {
+        Some(o) => format!("OUT {}", abbreviate_device(&o.name)),
+        None => "OUT NONE".into(),
+    };
+    let mut job = egui::text::LayoutJob::simple_singleline(text, theme::mono(10.0), theme::LCD_MID);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    let r = Rect::from_min_size(pos2(top_right.x - g.size().x, top_right.y), g.size());
+    // A stable id, so the popup's open state survives from frame to frame.
+    let resp = ui.interact(r.expand2(vec2(2.0, 3.0)), ui.scope_id().with("lcd-output"), Sense::click());
+    let color = if app.output.is_none() { theme::LCD_OFF } else if resp.hovered() { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.75) };
+    p.galley(r.min, g, color);
+    let tip = match &app.output {
+        Some(o) => format!(
+            "Audio output: {} · {:.1} kHz · {} ch{}\nClick to choose another",
+            o.name,
+            o.sample_rate as f64 / 1000.0,
+            o.channels,
+            if o.fell_back { "\nThe chosen device is not available; playing on the system default" } else { "" }
+        ),
+        None => "No audio output device\nClick to choose one".into(),
+    };
+    if resp.clicked() {
+        app.player.engine.request_output_devices();
+    }
+    resp.clone().on_hover_text(tip);
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.label(RichText::new("Audio output").small().weak());
+        let chosen = app.settings.output_device.clone();
+        let default = app.output_devices.iter().find(|d| d.is_default).map(|d| format!("System default ({})", d.name)).unwrap_or_else(|| "System default".into());
+        if ui.selectable_label(chosen.is_none(), default).clicked() {
+            app.choose_output(None);
+        }
+        for d in app.output_devices.clone() {
+            if ui.selectable_label(chosen.as_deref() == Some(d.id.as_str()), &d.name).clicked() {
+                app.choose_output(Some(d.id));
+            }
+        }
+    });
+}
+
+/// Upper case with plain quotes, like the rest of the display's small print.
+fn abbreviate_device(name: &str) -> String {
+    name.trim().replace(['\u{2019}', '\u{2018}'], "'").to_uppercase()
 }
 
 fn blink(ui: &Ui) -> bool {

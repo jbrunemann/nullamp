@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use egui::{Key, KeyboardShortcut, Modifiers, TextureHandle, vec2};
-use nullamp_audio::{AudioEngine, EngineEvent};
+use nullamp_audio::{AudioEngine, EngineEvent, OutputDevice};
 use nullamp_core::command::{Command, CommandSource};
 use nullamp_core::{EntryId, EntryStatus, PlaylistEntry};
 use nullamp_meta::FileMetadata;
@@ -68,6 +68,17 @@ pub struct NowState {
     pub art_file: Option<PathBuf>,
 }
 
+/// The audio output as the engine last reported it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputState {
+    pub name: String,
+    pub id: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    /// The chosen device is unavailable, so the system default plays instead.
+    pub fell_back: bool,
+}
+
 pub struct App {
     pub player: Player<AudioEngine>,
     engine_events: Receiver<EngineEvent>,
@@ -92,6 +103,10 @@ pub struct App {
     pub message: Option<Message>,
     pub dialogs: dialogs::Dialogs,
     pub show_remaining: bool,
+    /// `None` while no output device is open.
+    pub output: Option<OutputState>,
+    /// Outputs offered by the system, refreshed whenever the picker opens.
+    pub output_devices: Vec<OutputDevice>,
     pub viz: visualizer::VizState,
     playlists_dirty_at: Option<Instant>,
     dirty_lists: HashSet<String>,
@@ -113,7 +128,7 @@ impl App {
         let settings = store.load_settings();
         theme::apply(&ctx, theme::Appearance::from_setting(&settings.appearance));
         let lists = store.load_playlists(&settings.playlist_order);
-        let (engine, engine_events) = AudioEngine::start(waker.clone());
+        let (engine, engine_events) = AudioEngine::start_with_device(waker.clone(), settings.output_device.clone());
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7);
         let mut player = Player::new(engine, lists, seed);
         player.set_volume(settings.volume);
@@ -165,6 +180,8 @@ impl App {
             message: None,
             dialogs: dialogs::Dialogs::new(),
             show_remaining: false,
+            output: None,
+            output_devices: Vec::new(),
             viz: Default::default(),
             playlists_dirty_at: None,
             dirty_lists: HashSet::new(),
@@ -368,6 +385,7 @@ impl App {
 
     fn process_events(&mut self) {
         while let Ok(ev) = self.engine_events.try_recv() {
+            self.on_output_event(&ev);
             self.player.on_engine_event(ev);
         }
         while let Ok(ev) = self.system_events.try_recv() {
@@ -406,6 +424,30 @@ impl App {
         setlist_view::update_active(self);
         self.publish_now_playing();
         self.flush_saves(false);
+    }
+
+    fn on_output_event(&mut self, ev: &EngineEvent) {
+        match ev {
+            EngineEvent::OutputOpened { name, id, sample_rate, channels, fell_back } => {
+                if *fell_back && self.output.as_ref().is_none_or(|o| !o.fell_back) {
+                    self.warn(format!("The chosen audio output is not available; using {name}"));
+                }
+                self.output = Some(OutputState { name: name.clone(), id: id.clone(), sample_rate: *sample_rate, channels: *channels, fell_back: *fell_back });
+            }
+            EngineEvent::DeviceLost { .. } => self.output = None,
+            EngineEvent::OutputDevices(devices) => self.output_devices = devices.clone(),
+            _ => {}
+        }
+    }
+
+    /// Play through `device` (`None` = system default) and remember the choice.
+    pub fn choose_output(&mut self, device: Option<String>) {
+        if self.settings.output_device == device {
+            return;
+        }
+        self.settings.output_device = device.clone();
+        self.mark_settings_dirty();
+        self.player.engine.set_output_device(device);
     }
 
     fn on_job_result(&mut self, r: JobResult) {

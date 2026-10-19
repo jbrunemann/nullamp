@@ -148,6 +148,9 @@ pub(crate) struct Output {
     pub rate: u32,
     pub channels: usize,
     pub device_name: String,
+    pub device_id: String,
+    /// A specific device was requested but is not available, so the system default is used.
+    pub fell_back: bool,
     /// Frames pushed since the last flush (engine-side counterpart of `Playhead::total`).
     pub pushed_total: u64,
     stream_running: bool,
@@ -159,11 +162,47 @@ pub(crate) enum StreamEvent {
     Invalidated(String),
 }
 
+/// An audio output the user can choose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputDevice {
+    /// Stable identifier to persist and pass back to the engine.
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Every output device the system currently offers, in the host's order.
+pub(crate) fn list_output_devices() -> Vec<OutputDevice> {
+    let host = cpal::default_host();
+    let default_id = host.default_output_device().and_then(|d| d.id().ok());
+    let Ok(devices) = host.output_devices() else { return Vec::new() };
+    devices
+        .filter_map(|d| {
+            let id = d.id().ok()?;
+            Some(OutputDevice { name: d.to_string(), is_default: default_id.as_ref() == Some(&id), id: id.to_string() })
+        })
+        .collect()
+}
+
+/// The device with this id, if it is present and can play audio.
+fn find_device(host: &cpal::Host, id: &str) -> Option<cpal::Device> {
+    let id: cpal::DeviceId = id.parse().ok()?;
+    host.device_by_id(&id).filter(|d| d.supports_output())
+}
+
 impl Output {
-    pub fn open(shared: Arc<Shared>, events: Sender<StreamEvent>) -> Result<Output, String> {
+    /// Open `preferred` (an id from [`list_output_devices`]) or, without one or when it
+    /// is gone, the system default output.
+    pub fn open(shared: Arc<Shared>, events: Sender<StreamEvent>, preferred: Option<&str>) -> Result<Output, String> {
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or("no audio output device")?;
+        let chosen = preferred.and_then(|id| find_device(&host, id));
+        let fell_back = preferred.is_some() && chosen.is_none();
+        let device = match chosen {
+            Some(d) => d,
+            None => host.default_output_device().ok_or("no audio output device")?,
+        };
         let device_name = device.to_string();
+        let device_id = device.id().map(|i| i.to_string()).unwrap_or_default();
         let supported = device.default_output_config().map_err(|e| format!("output config: {e}"))?;
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
@@ -199,7 +238,7 @@ impl Output {
             other => return Err(format!("unsupported device sample format {other}")),
         }?;
         log::info!("audio output: {device_name}, {rate} Hz, {channels} ch, {format}");
-        Ok(Output { stream, producer, playhead, rate, channels, device_name, pushed_total: 0, stream_running: false })
+        Ok(Output { stream, producer, playhead, rate, channels, device_name, device_id, fell_back, pushed_total: 0, stream_running: false })
     }
 
     pub fn set_running(&mut self, running: bool) -> Result<(), String> {
@@ -432,6 +471,23 @@ mod tests {
         let s = Shared::default();
         s.gain_bits.store(gain.to_bits(), Ordering::Relaxed);
         s
+    }
+
+    #[test]
+    fn unknown_device_ids_are_not_found() {
+        let host = cpal::default_host();
+        assert!(find_device(&host, "not an id").is_none());
+        assert!(find_device(&host, "coreaudio:no-such-device").is_none());
+    }
+
+    #[test]
+    fn listed_devices_have_unique_ids_and_at_most_one_default() {
+        let devices = list_output_devices();
+        let mut ids: Vec<_> = devices.iter().map(|d| &d.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), devices.len());
+        assert!(devices.iter().filter(|d| d.is_default).count() <= 1);
     }
 
     #[test]

@@ -23,6 +23,8 @@ pub(crate) enum Cmd {
     Pause,
     Stop,
     Seek(f64),
+    SetDevice(Option<String>),
+    ListDevices,
     Shutdown,
 }
 
@@ -77,6 +79,8 @@ struct Engine {
     opened_tx: Sender<Opened>,
     opened_rx: Receiver<Opened>,
     output: Option<Output>,
+    /// The device the user chose; `None` follows the system default.
+    preferred: Option<String>,
     device_lost: bool,
     retry_at: Option<Instant>,
     pending_load: Option<PendingLoad>,
@@ -97,7 +101,7 @@ struct Engine {
     eof_since: Option<Instant>,
 }
 
-pub(crate) fn run(rx: Receiver<Cmd>, events: Sender<EngineEvent>, waker: Waker, shared: Arc<Shared>) {
+pub(crate) fn run(rx: Receiver<Cmd>, events: Sender<EngineEvent>, waker: Waker, shared: Arc<Shared>, preferred: Option<String>) {
     let (stream_tx, stream_rx) = crossbeam_channel::unbounded();
     let (opened_tx, opened_rx) = crossbeam_channel::unbounded();
     let mut e = Engine {
@@ -109,6 +113,7 @@ pub(crate) fn run(rx: Receiver<Cmd>, events: Sender<EngineEvent>, waker: Waker, 
         opened_tx,
         opened_rx,
         output: None,
+        preferred,
         device_lost: false,
         retry_at: None,
         pending_load: None,
@@ -183,6 +188,8 @@ impl Engine {
             Cmd::Pause => self.paused = true,
             Cmd::Stop => self.stop(),
             Cmd::Seek(secs) => self.seek(secs),
+            Cmd::SetDevice(device) => self.set_device(device),
+            Cmd::ListDevices => self.emit(EngineEvent::OutputDevices(crate::output::list_output_devices())),
             Cmd::Shutdown => return false,
         }
         true
@@ -192,10 +199,18 @@ impl Engine {
         if self.output.is_some() {
             return true;
         }
-        match Output::open(Arc::clone(&self.shared), self.stream_tx.clone()) {
+        match Output::open(Arc::clone(&self.shared), self.stream_tx.clone(), self.preferred.as_deref()) {
             Ok(out) => {
                 let name = out.device_name.clone();
+                let opened = EngineEvent::OutputOpened {
+                    name: name.clone(),
+                    id: out.device_id.clone(),
+                    sample_rate: out.rate,
+                    channels: out.channels as u16,
+                    fell_back: out.fell_back,
+                };
                 self.output = Some(out);
+                self.emit(opened);
                 self.retry_at = None;
                 self.watchdog = (self.shared.callbacks.load(Ordering::Relaxed), Instant::now());
                 if self.device_lost {
@@ -213,6 +228,14 @@ impl Engine {
                 false
             }
         }
+    }
+
+    fn set_device(&mut self, device: Option<String>) {
+        if self.preferred == device {
+            return;
+        }
+        self.preferred = device;
+        self.rebuild_output("output device chosen".into());
     }
 
     fn run_stream(&mut self, running: bool) {

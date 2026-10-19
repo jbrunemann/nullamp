@@ -29,6 +29,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::engine::Cmd;
 use crate::output::Shared;
+pub use crate::output::OutputDevice;
 
 /// Properties of the decoded audio stream.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +71,12 @@ pub enum EngineEvent {
     PlaybackError { token: u64, message: String },
     DeviceLost { message: String },
     DeviceReady { name: String },
+    /// The output stream was (re)opened, at start, after choosing a device or after
+    /// the system changed. `fell_back` means the chosen device is unavailable and the
+    /// system default is used instead.
+    OutputOpened { name: String, id: String, sample_rate: u32, channels: u16, fell_back: bool },
+    /// Answer to [`AudioEngine::request_output_devices`].
+    OutputDevices(Vec<OutputDevice>),
 }
 
 pub struct AudioEngine {
@@ -83,6 +90,12 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 impl AudioEngine {
     pub fn start(waker: Waker) -> (AudioEngine, Receiver<EngineEvent>) {
+        Self::start_with_device(waker, None)
+    }
+
+    /// Like [`start`](Self::start), opening the output `device` (an id from
+    /// [`OutputDevice`]) instead of the system default.
+    pub fn start_with_device(waker: Waker, device: Option<String>) -> (AudioEngine, Receiver<EngineEvent>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let shared = Arc::new(Shared::default());
@@ -90,7 +103,7 @@ impl AudioEngine {
         let thread_shared = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("nullamp-audio".into())
-            .spawn(move || engine::run(rx, event_tx, waker, thread_shared))
+            .spawn(move || engine::run(rx, event_tx, waker, thread_shared, device))
             .expect("spawn audio engine thread");
         (AudioEngine { tx, shared, thread: Some(thread) }, event_rx)
     }
@@ -121,6 +134,19 @@ impl AudioEngine {
         if secs.is_finite() {
             let _ = self.tx.send(Cmd::Seek(secs.max(0.0)));
         }
+    }
+
+    /// Play through `device` (an id from [`OutputDevice`]), or through the system default
+    /// when `None`. Playback continues at the same position on the new device. An
+    /// unavailable device falls back to the default; it is tried again on every reopen.
+    pub fn set_output_device(&self, device: Option<String>) {
+        let _ = self.tx.send(Cmd::SetDevice(device));
+    }
+
+    /// Ask for the current list of outputs; it arrives as [`EngineEvent::OutputDevices`].
+    /// Enumerating can take a moment, so it runs on the engine thread.
+    pub fn request_output_devices(&self) {
+        let _ = self.tx.send(Cmd::ListDevices);
     }
 
     /// Linear output gain, applied with a short ramp.

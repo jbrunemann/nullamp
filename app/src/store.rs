@@ -42,6 +42,8 @@ pub struct Settings {
     pub appearance: String,
     /// Playlist columns shown, left to right (ids from `playlist_view::Col`). Empty means all, in the default order.
     pub playlist_columns: Vec<String>,
+    /// Audio output chosen by the user (an engine device id). `None` follows the system default.
+    pub output_device: Option<String>,
 }
 
 impl Default for Settings {
@@ -65,6 +67,7 @@ impl Default for Settings {
             playlist_open: true,
             appearance: "dark".into(),
             playlist_columns: Vec::new(),
+            output_device: None,
         }
     }
 }
