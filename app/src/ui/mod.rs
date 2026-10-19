@@ -1017,9 +1017,9 @@ impl eframe::App for App {
         self.handle_dropped_files(&ctx);
 
         let deck = egui::Panel::top("deck")
-            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 8)))
+            .frame(egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)))
             .resizable(false)
-            .show(ui, |ui| deck::show(self, ui));
+            .show(ui, |ui| theme::with_dark(ui, |ui| deck::show(self, ui)));
         self.fit_window(&ctx, deck.response.rect.height());
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 3)))

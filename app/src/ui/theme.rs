@@ -111,6 +111,25 @@ pub fn sync(ctx: &egui::Context) {
     LIGHT_ACTIVE.store(ctx.theme() == egui::Theme::Light, Ordering::Relaxed);
 }
 
+/// Run `add` with the dark palette and dark widget visuals whatever the theme is. The deck is a
+/// piece of hi-fi hardware, and those were always black: it stays dark in the light theme too.
+pub fn with_dark<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let was_light = LIGHT_ACTIVE.swap(false, Ordering::Relaxed);
+    let outer = ui.style().clone();
+    if was_light {
+        ui.set_style(ui.ctx().style_of(egui::Theme::Dark));
+    }
+    let out = add(ui);
+    ui.set_style(outer);
+    LIGHT_ACTIVE.store(was_light, Ordering::Relaxed);
+    out
+}
+
+/// The deck's panel fill: the dark theme's recessed level in both themes.
+pub fn deck_bg() -> Color32 {
+    DARK.bg
+}
+
 macro_rules! chrome_colors {
     ($($name:ident),* $(,)?) => {
         $(pub fn $name() -> Color32 { palette().$name })*
