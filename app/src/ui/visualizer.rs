@@ -29,6 +29,7 @@ const BAR_W: f32 = 3.0;
 const BAR_GAP: f32 = 1.0;
 const SEG_H: f32 = 2.0;
 const SEG_GAP: f32 = 1.0;
+const MIN_BRIGHTNESS: f32 = 0.1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -98,8 +99,16 @@ impl Default for VizState {
 
 pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let mode = Mode::from_setting(&app.settings.visualizer);
-    let resp = ui.interact(rect, egui::Id::unique("lcd-visualizer"), Sense::click());
-    if resp.on_hover_text("Click: spectrum / oscilloscope / off").clicked() {
+    let resp = ui.interact(rect, egui::Id::unique("lcd-visualizer"), Sense::click_and_drag());
+    if resp.dragged() {
+        // A full width of dragging spans the whole brightness range.
+        let b = (app.settings.visualizer_brightness + resp.drag_delta().x / rect.width()).clamp(MIN_BRIGHTNESS, 1.0);
+        if b != app.settings.visualizer_brightness {
+            app.settings.visualizer_brightness = b;
+            app.mark_settings_dirty();
+        }
+    }
+    if resp.on_hover_text("Click: spectrum / oscilloscope / off\nDrag left or right: dimmer / brighter").on_hover_cursor(egui::CursorIcon::ResizeHorizontal).clicked() {
         app.settings.visualizer = mode.next().setting().into();
         app.mark_settings_dirty();
     }
@@ -122,10 +131,11 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
     let dt = (time - viz.last_time).clamp(0.0, 0.1) as f32;
     viz.last_time = time;
     let p = ui.painter_at(rect);
+    let brightness = app.settings.visualizer_brightness.clamp(MIN_BRIGHTNESS, 1.0);
     let animating = match mode {
-        Mode::Spectrum => spectrum(viz, &p, rect, rate.unwrap_or(44_100), time, dt),
+        Mode::Spectrum => spectrum(viz, &p, rect, rate.unwrap_or(44_100), time, dt, brightness),
         Mode::Scope => {
-            scope(viz, &p, rect);
+            scope(viz, &p, rect, brightness);
             false
         }
         Mode::Off => false,
@@ -136,7 +146,7 @@ pub fn show(app: &mut App, ui: &mut Ui, rect: Rect) {
 }
 
 /// Returns true while bars or peak caps are still settling.
-fn spectrum(viz: &mut VizState, p: &egui::Painter, rect: Rect, rate: u32, time: f64, dt: f32) -> bool {
+fn spectrum(viz: &mut VizState, p: &egui::Painter, rect: Rect, rate: u32, time: f64, dt: f32, brightness: f32) -> bool {
     let count = ((rect.width() + BAR_GAP) / (BAR_W + BAR_GAP)).floor().max(1.0) as usize;
     if viz.bars.len() != count {
         viz.bars = vec![0.0; count];
@@ -193,9 +203,9 @@ fn spectrum(viz: &mut VizState, p: &egui::Painter, rect: Rect, rate: u32, time: 
         for s in 0..segs {
             let y = rect.bottom() - (s + 1) as f32 * (SEG_H + SEG_GAP) + SEG_GAP;
             let color = if s < lit {
-                lerp(theme::LCD_MID, theme::LCD_FG, s as f32 / segs as f32)
+                dim(lerp(theme::LCD_MID, theme::LCD_FG, s as f32 / segs as f32), brightness)
             } else if peak > 0 && s + 1 == peak {
-                theme::LCD_AMBER
+                dim(theme::LCD_AMBER, brightness)
             } else {
                 theme::LCD_OFF
             };
@@ -206,7 +216,7 @@ fn spectrum(viz: &mut VizState, p: &egui::Painter, rect: Rect, rate: u32, time: 
     animating
 }
 
-fn scope(viz: &VizState, p: &egui::Painter, rect: Rect) {
+fn scope(viz: &VizState, p: &egui::Painter, rect: Rect, brightness: f32) {
     let s = &viz.samples[..SCOPE_LEN];
     // Trigger on the latest rising zero crossing that still leaves a full window, so a
     // steady tone stands still instead of rolling.
@@ -225,8 +235,14 @@ fn scope(viz: &VizState, p: &egui::Painter, rect: Rect) {
         })
         .collect();
     // A wide faint pass under the trace reads as phosphor glow.
-    p.add(Shape::line(points.clone(), Stroke::new(3.0, theme::LCD_FG.gamma_multiply(0.18))));
-    p.add(Shape::line(points, Stroke::new(1.2, theme::LCD_FG)));
+    let trace = dim(theme::LCD_FG, brightness);
+    p.add(Shape::line(points.clone(), Stroke::new(3.0, trace.gamma_multiply(0.18))));
+    p.add(Shape::line(points, Stroke::new(1.2, trace)));
+}
+
+/// A lit colour at reduced brightness: fades towards the unlit LCD segment.
+fn dim(c: Color32, brightness: f32) -> Color32 {
+    lerp(theme::LCD_OFF, c, brightness)
 }
 
 fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {

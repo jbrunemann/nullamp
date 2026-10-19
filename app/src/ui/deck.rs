@@ -108,9 +108,14 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     let time = ui.input(|i| i.time);
     let (line1, line1_color, line2, line3) = lcd_lines(app);
     let l1 = Rect::from_min_size(text_rect.left_top(), vec2(text_rect.width(), 22.0));
-    widgets::marquee(ui, l1, &line1, theme::mono(16.0), line1_color, time);
+    let paused = app.settings.marquee_paused;
+    let mut toggle = widgets::marquee(ui, l1, &line1, theme::mono(16.0), line1_color, time, paused);
     let l2 = Rect::from_min_size(pos2(text_rect.left(), l1.bottom() + 5.0), vec2(text_rect.width(), 16.0));
-    widgets::marquee(ui, l2, &line2, theme::mono(12.0), theme::LCD_MID, time);
+    toggle |= widgets::marquee(ui, l2, &line2, theme::mono(12.0), theme::LCD_MID, time, paused);
+    if toggle {
+        app.settings.marquee_paused = !paused;
+        app.mark_settings_dirty();
+    }
     let l3 = p.text(pos2(text_rect.left(), l2.bottom() + 8.0), Align2::LEFT_TOP, line3, theme::mono(10.0), theme::LCD_MID);
     output_label(app, ui, &p, pos2(text_rect.right(), l3.top()), (text_rect.right() - l3.right().max(text_rect.left()) - 14.0).max(0.0));
 

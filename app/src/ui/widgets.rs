@@ -234,14 +234,22 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str
 }
 
 /// Text that scrolls horizontally when it does not fit, like a hardware display.
-pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color32, time: f64) {
+/// While `paused` it rests at its beginning. Returns true when the user clicked text
+/// that does not fit, which is the request to pause or resume.
+pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color32, time: f64, paused: bool) -> bool {
     let painter = ui.painter_at(rect);
     let galley = painter.layout_no_wrap(text.to_owned(), font, color);
     let w = galley.size().x;
     let y = rect.center().y - galley.size().y / 2.0;
     if w <= rect.width() {
         painter.galley(pos2(rect.left(), y), galley, color);
-        return;
+        return false;
+    }
+    let resp = ui.interact(rect, egui::Id::unique("lcd-marquee"), Sense::click());
+    let resp = resp.on_hover_text(if paused { "Click: scroll the text" } else { "Click: stop scrolling" });
+    if paused {
+        painter.galley(pos2(rect.left(), y), galley, color);
+        return resp.clicked();
     }
     let gap = 48.0;
     let speed = 28.0; // px per second
@@ -254,6 +262,7 @@ pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color
     let x = rect.left() - offset;
     painter.galley(pos2(x, y), galley.clone(), color);
     painter.galley(pos2(x + cycle, y), galley, color);
+    resp.clicked()
 }
 
 /// Small pill-shaped toggle for panel tabs and filters.

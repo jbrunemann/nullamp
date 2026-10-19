@@ -36,6 +36,10 @@ pub struct Settings {
     pub last_dir: Option<PathBuf>,
     /// LCD visualiser: "spectrum", "scope" or "off".
     pub visualizer: String,
+    /// LCD visualiser brightness, 0.1 to 1.0; dragged left to dim.
+    pub visualizer_brightness: f32,
+    /// Long titles rest at their start instead of scrolling.
+    pub marquee_paused: bool,
     /// The playlist table. Hidden, the window shrinks to just the player.
     pub playlist_open: bool,
     /// "dark", "light" or "system" (follow the OS).
@@ -64,6 +68,8 @@ impl Default for Settings {
             side_panel_tab: "setlist".into(),
             last_dir: None,
             visualizer: "spectrum".into(),
+            visualizer_brightness: 1.0,
+            marquee_paused: false,
             playlist_open: true,
             appearance: "dark".into(),
             playlist_columns: Vec::new(),
