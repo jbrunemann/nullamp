@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-audio"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "audioadapter-buffers",
  "base64",
@@ -2924,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "percent-encoding",
  "regex",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-meta"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "id3",
  "lofty",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-sysmedia"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "log",
  "nullamp-core",
