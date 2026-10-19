@@ -248,18 +248,21 @@ fn waveform_arrives_and_old_cache_entries_are_pruned() {
     std::fs::File::options().write(true).open(&stale).unwrap().set_modified(long_ago).unwrap();
 
     let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
-    {
+    let played = {
         let app = h.state_mut();
-        let id = app.player.lists[0].playlist.entries()[2].id;
+        let entry = &app.player.lists[0].playlist.entries()[2];
+        let (id, path) = (entry.id, entry.path.clone());
         app.player.play_entry(0, id, 0.0);
-    }
+        path
+    };
     assert!(h.state().now.waveform.is_none());
     settle(&mut h, 1000);
     let wave = h.state().now.waveform.clone().expect("waveform for the playing track");
     assert!(wave.peak.iter().any(|&p| p > 20));
     assert!(!stale.exists(), "unused entry pruned at startup");
-    let cached: Vec<_> = std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "wf")).collect();
-    assert_eq!(cached.len(), 1, "the new waveform is cached");
+    // A slow machine may already have moved on to the next short fixture, so look for this track's entry.
+    let fingerprint = crate::store::fingerprint(&played).unwrap();
+    assert!(crate::waveform_cache::load(&cache, &fingerprint).is_some(), "the new waveform is cached");
     h.state_mut().player.stop();
 }
 
