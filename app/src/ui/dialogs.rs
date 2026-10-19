@@ -25,12 +25,13 @@ pub struct Dialogs {
     pub confirm_clear: Option<usize>,
     pub confirm_delete: Option<usize>,
     pub shortcuts_open: bool,
+    pub about_open: bool,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false }
     }
 }
 
@@ -345,5 +346,33 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
             ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
         });
         app.dialogs.shortcuts_open = open;
+    }
+
+    if app.dialogs.about_open {
+        let mut open = true;
+        egui::Window::new("About Nullamp").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
+            ui.label("A fast, retro-inspired music and DJ mix player.");
+            ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
+            ui.add_space(6.0);
+            let lines = crate::logbuf::tail();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("Log (last {} lines)", lines.len())).small().color(theme::text_dim()));
+                if ui.small_button("Copy").clicked() {
+                    ui.ctx().copy_text(lines.join("\n"));
+                }
+            });
+            egui::Frame::new().fill(theme::bg()).stroke(egui::Stroke::new(1.0, theme::border())).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                egui::ScrollArea::both().id_salt("about-log").min_scrolled_width(560.0).max_height(200.0).auto_shrink([false, true]).stick_to_bottom(true).show(ui, |ui| {
+                    if lines.is_empty() {
+                        ui.label(RichText::new("Nothing logged yet.").small().color(theme::text_faint()));
+                    }
+                    for l in &lines {
+                        ui.add(egui::Label::new(RichText::new(l).font(theme::mono(11.0)).color(theme::text())).extend());
+                    }
+                });
+            });
+        });
+        app.dialogs.about_open = open;
     }
 }

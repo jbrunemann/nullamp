@@ -3,6 +3,7 @@
 // Release builds on Windows are GUI-subsystem programs so no console window opens behind the player.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod logbuf;
 mod paths;
 mod player;
 mod store;
@@ -14,7 +15,7 @@ mod workers;
 mod ui_snapshots;
 
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,nullamp=info,nullamp_audio=info")).init();
+    logbuf::init("warn,nullamp=info,nullamp_audio=info");
     let paths = paths::AppPaths::detect();
     log::info!("config: {}", paths.config.display());
     let store = store::Store::new(paths.clone());
@@ -31,7 +32,11 @@ fn main() -> eframe::Result {
         persistence_path: Some(paths.config.join("window.ron")),
         ..Default::default()
     };
-    eframe::run_native("Nullamp", options, Box::new(|cc| Ok(Box::new(ui::App::new(cc, store)))))
+    eframe::run_native("Nullamp", options, Box::new(|cc| {
+        let mut app = ui::App::new(cc, store);
+        app.install_native_menu();
+        Ok(Box::new(app))
+    }))
 }
 
 /// The window icon, drawn procedurally so no binary asset is needed at runtime.

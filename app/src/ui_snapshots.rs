@@ -349,3 +349,19 @@ fn render_output_menu() {
     icons.run();
     icons.render().expect("render").save(out_dir().join("05b-output-icons.png")).unwrap();
 }
+
+/// The About window with a few log lines.
+#[test]
+#[ignore]
+fn render_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    crate::logbuf::init("info");
+    for i in 0..60 {
+        log::info!("nullamp: sample log line {i}");
+    }
+    h.state_mut().dialogs.about_open = true;
+    settle(&mut h, 500);
+    save(&mut h, "06-about.png");
+}

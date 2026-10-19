@@ -3,6 +3,7 @@
 pub mod deck;
 mod dialogs;
 mod inspector;
+mod menu;
 mod playlist_view;
 mod setlist_view;
 pub mod theme;
@@ -117,6 +118,8 @@ pub struct App {
     /// Pending folder/file additions: request -> (list key, insert index).
     pub pending_adds: std::collections::HashMap<u64, (String, Option<usize>)>,
     last_sys_metadata: Option<NowPlaying>,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<menu::NativeMenu>,
     ctx: egui::Context,
 }
 
@@ -191,6 +194,8 @@ impl App {
             settings_dirty_at: None,
             pending_adds: Default::default(),
             last_sys_metadata: None,
+            #[cfg(target_os = "macos")]
+            native_menu: None,
             ctx,
         };
         for w in std::mem::take(&mut app.store.load_warnings) {
@@ -203,6 +208,41 @@ impl App {
             s.set_playback(PlaybackState::Stopped);
         }
         app
+    }
+
+    /// Put the app's own menu bar in place of the default one. Main thread only, so it is
+    /// not part of `new` (tests build the app on other threads).
+    pub fn install_native_menu(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            self.native_menu = menu::NativeMenu::install(self.ctx.clone());
+        }
+    }
+
+    fn on_menu_action(&mut self, action: menu::MenuAction) {
+        match action {
+            menu::MenuAction::About => {
+                self.dialogs.about_open = true;
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            menu::MenuAction::OpenConfig => self.open_config_file(),
+        }
+    }
+
+    /// Open `settings.json` in the default text editor, writing the current settings first
+    /// if the file does not exist yet.
+    fn open_config_file(&mut self) {
+        let path = self.store.paths.config.join("settings.json");
+        if !path.exists() {
+            self.sync_settings_from_state();
+            if let Err(e) = self.store.save_settings(&self.settings) {
+                self.error(format!("Cannot create {}: {e}", path.display()));
+                return;
+            }
+        }
+        if let Err(e) = std::process::Command::new("open").arg("-t").arg(&path).spawn() {
+            self.error(format!("Cannot open {}: {e}", path.display()));
+        }
     }
 
     // ----- Messages -----
@@ -401,6 +441,10 @@ impl App {
                 }
                 SystemEvent::Quit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
+        }
+        #[cfg(target_os = "macos")]
+        while let Some(action) = self.native_menu.as_ref().and_then(|m| m.poll()) {
+            self.on_menu_action(action);
         }
         while let Ok(r) = self.workers.results.try_recv() {
             self.on_job_result(r);
