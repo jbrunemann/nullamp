@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use egui::text::{LayoutJob, TextWrapping};
-use egui::{Align2, Color32, FontId, Key, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
+use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
 use nullamp_core::{EntryId, EntryStatus, PlaylistEntry};
 
 use super::widgets::{self, Icon};
@@ -559,10 +559,8 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
 
     // External files hovering: show where they will land.
     let hovering_files = ui.input(|i| !i.raw.hovered_files.is_empty());
-    if hovering_files
-        && let Some(p) = ui.input(|i| i.pointer.hover_pos())
-        && let Some(t) = insertion_index(&rows, p.y, n)
-    {
+    if hovering_files {
+        let t = ui.input(|i| i.pointer.hover_pos()).and_then(|p| drop_slot(list_rect, &rows, p, n)).unwrap_or(n);
         let y = rows.iter().find(|(i, _)| *i == t).map(|(_, r)| r.top()).or_else(|| rows.last().map(|(_, r)| r.bottom()));
         if let Some(y) = y {
             ui.painter().line_segment([pos2(list_rect.left() + 4.0, y), pos2(list_rect.right() - 4.0, y)], Stroke::new(2.0, theme::ok()));
@@ -587,13 +585,21 @@ fn insertion_index(rows: &[(usize, Rect)], y: f32, n: usize) -> Option<usize> {
     rows.iter().find(|(_, r)| y >= r.top() && y < r.bottom()).map(|(i, r)| if y < r.center().y { *i } else { i + 1 })
 }
 
+/// The gap under the pointer, or `None` outside the list (files then go to the end).
+fn drop_slot(list_rect: Rect, rows: &[(usize, Rect)], p: Pos2, n: usize) -> Option<usize> {
+    if !list_rect.contains(p) {
+        return None;
+    }
+    insertion_index(rows, p.y, n)
+}
+
 /// Where dropped files go: the gap under the pointer, or the end.
 pub fn drop_index(app: &App, ctx: &egui::Context) -> Option<usize> {
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    if !app.playlist_open || !app.pl_view.list_rect.is_some_and(|r| r.contains(p)) {
+    if !app.playlist_open {
         return None;
     }
-    insertion_index(&app.pl_view.rows, p.y, app.player.viewed().len())
+    drop_slot(app.pl_view.list_rect?, &app.pl_view.rows, p, app.player.viewed().len())
 }
 
 fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &PlaylistEntry, hovered: bool) {
