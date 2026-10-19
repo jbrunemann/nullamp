@@ -26,12 +26,13 @@ pub struct Dialogs {
     pub confirm_delete: Option<usize>,
     pub shortcuts_open: bool,
     pub about_open: bool,
+    about_icon: Option<egui::TextureHandle>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false, about_icon: None }
     }
 }
 
@@ -351,9 +352,19 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     if app.dialogs.about_open {
         let mut open = true;
         egui::Window::new("About Nullamp").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
-            ui.label("A fast, retro-inspired music and DJ mix player.");
-            ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
+            let icon = app.dialogs.about_icon.get_or_insert_with(|| {
+                let data = crate::app_icon();
+                let image = egui::ColorImage::from_rgba_unmultiplied([data.width as usize, data.height as usize], &data.rgba);
+                ui.ctx().load_texture("about-icon", image, egui::TextureOptions::LINEAR)
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::Image::new(&*icon).fit_to_exact_size(egui::vec2(72.0, 72.0)));
+                ui.vertical(|ui| {
+                    ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
+                    ui.label("A fast, retro-inspired music and DJ mix player.");
+                    ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
+                });
+            });
             ui.add_space(6.0);
             let lines = crate::logbuf::tail();
             ui.horizontal(|ui| {

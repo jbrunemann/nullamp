@@ -39,29 +39,11 @@ fn main() -> eframe::Result {
     }))
 }
 
-/// The window icon, drawn procedurally so no binary asset is needed at runtime.
-fn app_icon() -> egui::IconData {
-    let size = 64u32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    let c = size as f32 / 2.0;
-    for y in 0..size {
-        for x in 0..size {
-            let (dx, dy) = (x as f32 + 0.5 - c, y as f32 + 0.5 - c);
-            let r = (dx * dx + dy * dy).sqrt();
-            let i = ((y * size + x) * 4) as usize;
-            let px: [u8; 4] = if r > 30.0 {
-                [0, 0, 0, 0]
-            } else if r > 27.0 {
-                [0x2E, 0x33, 0x3A, 255]
-            } else if r < 7.0 {
-                [0xFF, 0x8A, 0x2B, 255]
-            } else if (r as i32) % 4 == 0 {
-                [0x14, 0x24, 0x20, 255]
-            } else {
-                [0x0B, 0x10, 0x0F, 255]
-            };
-            rgba[i..i + 4].copy_from_slice(&px);
-        }
-    }
-    egui::IconData { rgba, width: size, height: size }
+/// The window icon: the same artwork as the bundle icon, rendered by `packaging/icon.py` at 256 px.
+pub(crate) fn app_icon() -> egui::IconData {
+    let img = image::load_from_memory_with_format(include_bytes!("../assets/icon-256.png"), image::ImageFormat::Png)
+        .expect("bundled icon is a valid PNG")
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData { rgba: img.into_raw(), width, height }
 }
