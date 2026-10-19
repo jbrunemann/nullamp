@@ -75,6 +75,8 @@ The black display at the top is the *LCD*.
 
 Under the LCD is the seek bar. Click or drag to seek.
 
+Behind the bar is a rough waveform of the whole file: the dim outline is the peak level and the brighter body the average loudness, scaled so the loudest point fills the bar. It appears a moment after a track starts (a long mix takes a second or two the first time and is instant afterwards), so you can spot breaks, builds and drops before you get there.
+
 When the playing file is a mix, the timeline is divided into one segment per setlist entry. Thin vertical lines mark the track boundaries and the current track is lit in amber. Solid boundaries are exact. Dashed boundaries are estimates (see [Approximate times](#approximate-times)). Hover a segment to see the track name and its start time. The numbers at the ends are elapsed and total time.
 
 ### The transport
@@ -299,6 +301,7 @@ The letter keys do not fire while you type in a text field.
 | Settings, playlists, saved setlists | `~/Library/Application Support/Nullamp/` |
 | Tag-write backups | `~/Library/Application Support/Nullamp/tag-backups/` |
 | Online responses and artwork | `~/Library/Caches/Nullamp/`. Safe to delete. |
+| Waveforms | `~/Library/Caches/Nullamp/waveforms/`. A few KB per file, recomputed when missing. Entries not used for 90 days are removed when Nullamp starts. |
 
 Set the environment variable `NULLAMP_HOME` to a folder before launching to keep everything in one place, for example on a USB stick or for testing: `NULLAMP_HOME=/some/dir open -a Nullamp`.
 

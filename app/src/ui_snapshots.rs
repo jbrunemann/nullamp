@@ -223,6 +223,35 @@ fn tag_edit_reloads_setlist_from_comment() {
     h.state_mut().player.stop();
 }
 
+/// The waveform of the playing track arrives in the background and is cached; the next
+/// launch prunes cache entries that have gone unused for too long.
+#[test]
+fn waveform_arrives_and_old_cache_entries_are_pruned() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.waveform_cache();
+    std::fs::create_dir_all(&cache).unwrap();
+    let stale = cache.join("0000000000000001.wf");
+    std::fs::write(&stale, b"NWF1").unwrap();
+    let long_ago = std::time::SystemTime::now() - crate::waveform_cache::MAX_AGE - Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&stale).unwrap().set_modified(long_ago).unwrap();
+
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[2].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    assert!(h.state().now.waveform.is_none());
+    settle(&mut h, 1000);
+    let wave = h.state().now.waveform.clone().expect("waveform for the playing track");
+    assert!(wave.peak.iter().any(|&p| p > 20));
+    assert!(!stale.exists(), "unused entry pruned at startup");
+    let cached: Vec<_> = std::fs::read_dir(&cache).unwrap().filter_map(|e| e.ok()).collect();
+    assert_eq!(cached.len(), 1, "the new waveform is cached");
+    h.state_mut().player.stop();
+}
+
 /// Single tracks hide the setlist parts; mixes show them, and ⌘L brings them back for
 /// a single track that should get a setlist.
 #[test]

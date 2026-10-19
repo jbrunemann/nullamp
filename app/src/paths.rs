@@ -51,4 +51,8 @@ impl AppPaths {
     pub fn artwork_cache(&self) -> PathBuf {
         self.cache.join("artwork")
     }
+
+    pub fn waveform_cache(&self) -> PathBuf {
+        self.cache.join("waveforms")
+    }
 }

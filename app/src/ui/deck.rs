@@ -326,34 +326,47 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     let x_of = |t: f64, d: f64| bar.left() + (t / d).clamp(0.0, 1.0) as f32 * bar.width();
     let t_of = |x: f32, d: f64| ((x - bar.left()) / bar.width()).clamp(0.0, 1.0) as f64 * d;
 
-    // Setlist spans.
-    if let (Some(d), Some(setlist)) = (dur, super::setlist_view::shown(app)) {
-        for (i, e) in setlist.entries.iter().enumerate() {
-            let Some((s, end)) = setlist.span(i, Some(d)) else { continue };
-            let r = Rect::from_min_max(pos2(x_of(s, d), bar.top()), pos2(x_of(end, d), bar.bottom()));
-            let active = app.mix.active == Some(i);
-            let fill = if active {
-                theme::LCD_AMBER.gamma_multiply(0.22)
-            } else if i % 2 == 0 {
-                Color32::from_rgb(0x0E, 0x17, 0x15)
-            } else {
-                Color32::from_rgb(0x0B, 0x12, 0x11)
-            };
-            p.rect_filled(r, 0.0, fill);
-            let edge = if e.timing == Timing::Exact { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.45) };
-            if e.timing == Timing::Exact {
-                p.line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0, edge));
-            } else {
-                // Approximate boundaries are dashed: the source only estimated them.
-                let mut y = r.top();
-                while y < r.bottom() {
-                    p.line_segment([pos2(r.left(), y), pos2(r.left(), (y + 2.0).min(r.bottom()))], Stroke::new(1.0, edge));
-                    y += 4.0;
-                }
+    // Setlist spans: the fills go under the waveform, the boundaries over it.
+    let spans: Vec<(Rect, bool, Timing)> = match (dur, super::setlist_view::shown(app)) {
+        (Some(d), Some(setlist)) => setlist
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                let (s, end) = setlist.span(i, Some(d))?;
+                let r = Rect::from_min_max(pos2(x_of(s, d), bar.top()), pos2(x_of(end, d), bar.bottom()));
+                Some((r, app.mix.active == Some(i), e.timing))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (i, (r, active, _)) in spans.iter().enumerate() {
+        let fill = if *active {
+            theme::LCD_AMBER.gamma_multiply(0.22)
+        } else if i % 2 == 0 {
+            Color32::from_rgb(0x0E, 0x17, 0x15)
+        } else {
+            Color32::from_rgb(0x0B, 0x12, 0x11)
+        };
+        p.rect_filled(*r, 0.0, fill);
+    }
+    if let Some(wave) = &app.now.waveform {
+        draw_waveform(&p, bar, wave, ui.ctx().pixels_per_point());
+    }
+    for (r, active, timing) in &spans {
+        let edge = if *timing == Timing::Exact { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.45) };
+        if *timing == Timing::Exact {
+            p.line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0, edge));
+        } else {
+            // Approximate boundaries are dashed: the source only estimated them.
+            let mut y = r.top();
+            while y < r.bottom() {
+                p.line_segment([pos2(r.left(), y), pos2(r.left(), (y + 2.0).min(r.bottom()))], Stroke::new(1.0, edge));
+                y += 4.0;
             }
-            if active {
-                p.line_segment([r.left_top(), r.right_top()], Stroke::new(2.0, theme::LCD_AMBER));
-            }
+        }
+        if *active {
+            p.line_segment([r.left_top(), r.right_top()], Stroke::new(2.0, theme::LCD_AMBER));
         }
     }
 
@@ -410,6 +423,39 @@ fn timeline(app: &mut App, ui: &mut Ui) {
             app.player.command(Command::SeekTo((t_of(p.x, d) * 10.0).round() / 10.0), CommandSource::Ui);
         }
     }
+}
+
+/// The file's loudness envelope inside `bar`, mirrored around the middle: peaks dim, RMS brighter.
+/// One column per point; each takes the loudest of the buckets it covers, so a long mix stays
+/// readable and a short track does not turn into a staircase.
+fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, pixels_per_point: f32) {
+    let inner = bar.shrink(1.0);
+    let columns = inner.width().floor() as usize;
+    let n = wave.peak.len().min(wave.rms.len());
+    if columns == 0 || n == 0 {
+        return;
+    }
+    let half = inner.height() / 2.0;
+    let mid = inner.center().y;
+    let width = inner.width() / columns as f32;
+    let loudest = |values: &[u8], lo: usize, hi: usize| values[lo..hi].iter().copied().max().unwrap_or(0);
+    // The loudest point reaches the edges, so a quietly mastered file is as readable as a loud one. The curve keeps
+    // quiet passages visible: loudness is perceived roughly logarithmically.
+    let top = f32::from(wave.peak.iter().copied().max().unwrap_or(0).max(1));
+    let height = |v: u8| (f32::from(v) / top).powf(0.6) * half;
+    let (peak_color, rms_color) = (theme::LCD_FG.gamma_multiply(0.05), theme::LCD_FG.gamma_multiply(0.10));
+    let mut mesh = egui::Mesh::default();
+    for c in 0..columns {
+        let lo = (c * n / columns).min(n - 1);
+        let hi = ((c + 1) * n / columns).clamp(lo + 1, n);
+        let x0 = (inner.left() + c as f32 * width).round_to_pixels(pixels_per_point);
+        let x1 = (inner.left() + (c + 1) as f32 * width).round_to_pixels(pixels_per_point).max(x0 + 1.0 / pixels_per_point);
+        for (values, color) in [(&wave.peak, peak_color), (&wave.rms, rms_color)] {
+            let h = height(loudest(values, lo, hi)).max(0.5);
+            mesh.add_colored_rect(Rect::from_min_max(pos2(x0, mid - h), pos2(x1, mid + h)), color);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
 }
 
 fn transport(app: &mut App, ui: &mut Ui) {

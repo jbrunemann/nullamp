@@ -7,6 +7,7 @@ mod paths;
 mod player;
 mod store;
 mod ui;
+mod waveform_cache;
 mod workers;
 
 #[cfg(test)]

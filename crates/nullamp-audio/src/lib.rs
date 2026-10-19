@@ -20,6 +20,7 @@ mod decode;
 mod engine;
 mod kind;
 mod output;
+mod waveform;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ use crate::engine::Cmd;
 use crate::output::Shared;
 pub use crate::kind::OutputKind;
 pub use crate::output::OutputDevice;
+pub use crate::waveform::{BUCKETS as WAVEFORM_BUCKETS, Waveform, WaveformError, compute as compute_waveform};
 
 /// Properties of the decoded audio stream.
 #[derive(Clone, Debug, PartialEq)]

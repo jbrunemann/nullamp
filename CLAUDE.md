@@ -28,6 +28,7 @@ cargo test --workspace                       # all tests (about 120, all pass on
 cargo test -p nullamp ui_snapshots -- --ignored --test-threads=1   # renders the real UI offscreen to target/screenshots/*.png
 cargo test -p nullamp-online --test live -- --ignored   # hits MusicBrainz/CAA/Mixcloud for real
 cargo run --release -p nullamp-audio --example probe -- FILE [NEXT_FILE] [--audible]   # engine latency probe, silent by default
+cargo run --release -p nullamp-audio --example waveform FILE   # times the waveform pass for a file
 packaging/macos/bundle.sh                    # builds target/bundle/Nullamp.app
 NULLAMP_HOME=/some/dir cargo run --release   # run with an isolated config/data/cache directory
 ```

@@ -1,10 +1,12 @@
 //! Background work: everything that touches the filesystem or network.
 //!
-//! Three lanes keep slow work away from fast work:
+//! Four lanes keep slow work away from fast work:
 //! - *interactive* (now-playing info, inspector reads, tag writes) is always served
 //!   before *bulk* (playlist scans, folder imports) by the same local workers;
 //! - *online* requests run on their own thread, so a slow network never delays
-//!   local work.
+//!   local work;
+//! - *waveform* overviews run on their own thread too: decoding a long mix takes
+//!   seconds and must not hold up the local workers.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -15,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, select_biased};
+use nullamp_audio::{Waveform, WaveformError};
 use nullamp_core::setlist::{MixInfo, Provenance};
 use nullamp_core::{Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
@@ -22,6 +25,7 @@ use nullamp_online::{ArtworkSource, CoverArtArchive, CoverImage, Http, MusicBrai
 
 use crate::paths::AppPaths;
 use crate::store::{self, SavedSetlist};
+use crate::waveform_cache;
 
 pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "ogg", "oga", "m4a", "mp4", "aac", "aif", "aiff", "caf", "mka", "alac"];
 
@@ -93,6 +97,12 @@ pub enum OnlineJob {
     FetchImage { request: u64, url: String, hosts: &'static [&'static str] },
 }
 
+struct WaveformRequest {
+    generation: u64,
+    token: u64,
+    path: PathBuf,
+}
+
 pub enum JobResult {
     Info { path: PathBuf, info: Result<TrackInfo, String> },
     Missing { paths: Vec<PathBuf> },
@@ -113,6 +123,8 @@ pub enum JobResult {
     Recordings { request: u64, result: Result<Vec<RecordingMatch>, OnlineError> },
     ReleaseImages { request: u64, result: Result<Vec<CoverImage>, OnlineError> },
     OnlineImage { request: u64, url: String, result: Result<(Arc<[u8]>, Thumb), String> },
+    /// Overview of the track loaded under `token`. Abandoned requests send nothing.
+    Waveform { token: u64, result: Result<Waveform, String> },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -121,6 +133,8 @@ pub struct Workers {
     interactive: Sender<Job>,
     bulk: Sender<Job>,
     online: Sender<OnlineJob>,
+    waveform: Sender<WaveformRequest>,
+    waveform_generation: Arc<AtomicU64>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -168,6 +182,33 @@ impl Workers {
                 .expect("spawn worker");
         }
 
+        let waveform_generation = Arc::new(AtomicU64::new(0));
+        let (waveform, waveform_rx) = crossbeam_channel::unbounded::<WaveformRequest>();
+        {
+            let (tx, w, generation, dir) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache());
+            std::thread::Builder::new()
+                .name("nullamp-waveform".into())
+                .spawn(move || {
+                    let removed = waveform_cache::prune(&dir, waveform_cache::MAX_AGE);
+                    if removed > 0 {
+                        log::debug!("removed {removed} unused waveform cache entries");
+                    }
+                    while let Ok(mut request) = waveform_rx.recv() {
+                        // Skipping through a playlist queues requests faster than they run; only the newest matters.
+                        while let Ok(newer) = waveform_rx.try_recv() {
+                            request = newer;
+                        }
+                        if let Some(result) = run_waveform(&dir, &generation, request) {
+                            if tx.send(result).is_err() {
+                                return;
+                            }
+                            w();
+                        }
+                    }
+                })
+                .expect("spawn waveform worker");
+        }
+
         let tx = results_tx;
         let w = waker;
         let cache = paths.online_cache();
@@ -184,7 +225,7 @@ impl Workers {
             })
             .expect("spawn online worker");
 
-        Workers { interactive, bulk, online, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
+        Workers { interactive, bulk, online, waveform, waveform_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
     }
 
     pub fn request_id(&self) -> u64 {
@@ -201,6 +242,13 @@ impl Workers {
 
     pub fn submit_online(&self, job: OnlineJob) {
         let _ = self.online.send(job);
+    }
+
+    /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
+    /// decode already running for an earlier request stops at its next packet.
+    pub fn request_waveform(&self, token: u64, path: PathBuf) {
+        let generation = self.waveform_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.waveform.send(WaveformRequest { generation, token, path });
     }
 
     /// Queue tag reads for playlist rows, in chunks so other work interleaves.
@@ -230,6 +278,26 @@ impl Workers {
     /// Abandon queued scans (e.g. after clearing a large playlist).
     pub fn cancel_scans(&self) {
         self.scan_generation.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `None` when a newer request replaced this one while it ran.
+fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
+    let WaveformRequest { generation, token, path } = request;
+    let fingerprint = store::fingerprint(&path).ok();
+    if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
+        return Some(JobResult::Waveform { token, result: Ok(wave) });
+    }
+    let cancelled = || current.load(Ordering::Relaxed) != generation;
+    match nullamp_audio::compute_waveform(&path, &cancelled) {
+        Ok(wave) => {
+            if let Some(fp) = fingerprint {
+                waveform_cache::store(dir, &fp, &wave);
+            }
+            Some(JobResult::Waveform { token, result: Ok(wave) })
+        }
+        Err(WaveformError::Cancelled) => None,
+        Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()) }),
     }
 }
 

@@ -58,6 +58,17 @@ pub(crate) struct Decoding {
 
 impl Decoding {
     pub fn open(token: u64, path: &Path, out_rate: u32, out_channels: usize) -> Result<Self, LoadError> {
+        Self::open_as(token, path, Some((out_rate, out_channels)))
+    }
+
+    /// Open `path` for analysis: output keeps the file's own rate and channel layout, so
+    /// nothing is resampled or remapped.
+    pub fn open_native(path: &Path) -> Result<Self, LoadError> {
+        Self::open_as(0, path, None)
+    }
+
+    /// `target` is the output (rate, channels); `None` keeps the file's own.
+    fn open_as(token: u64, path: &Path, target: Option<(u32, usize)>) -> Result<Self, LoadError> {
         let file = File::open(path).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => LoadError::NotFound,
             _ => LoadError::Io(e.to_string()),
@@ -117,6 +128,7 @@ impl Decoding {
             },
         };
 
+        let (out_rate, out_channels) = target.unwrap_or((src_rate, src_channels));
         let resampler = if src_rate != out_rate {
             Some(Resample::new(src_rate, out_rate, out_channels).map_err(LoadError::Unsupported)?)
         } else {

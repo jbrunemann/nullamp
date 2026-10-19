@@ -66,6 +66,8 @@ pub struct NowState {
     pub meta: Option<FileMetadata>,
     pub art: Option<TextureHandle>,
     pub art_file: Option<PathBuf>,
+    /// Loudness overview behind the timeline; arrives after the track starts.
+    pub waveform: Option<nullamp_audio::Waveform>,
 }
 
 /// The audio output as the engine last reported it.
@@ -501,6 +503,14 @@ impl App {
                 Err(e) => self.error(format!("Export failed: {e}")),
             },
             JobResult::NowPlaying(info) => self.on_now_playing(*info),
+            JobResult::Waveform { token, result } => {
+                if self.player.current.as_ref().is_some_and(|c| c.token == token) {
+                    match result {
+                        Ok(wave) => self.now.waveform = Some(wave),
+                        Err(e) => log::debug!("waveform: {e}"),
+                    }
+                }
+            }
             JobResult::SetlistSaved(r) => {
                 if let Err(e) = r {
                     self.error(format!("Cannot save setlist: {e}"));
@@ -527,6 +537,7 @@ impl App {
         self.now = NowState::default();
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
+        self.workers.request_waveform(c.token, c.path.clone());
         self.scroll_to = Some(c.entry);
         if self.inspector.follow_playing {
             inspector::load_targets(self, vec![c.path.clone()]);
