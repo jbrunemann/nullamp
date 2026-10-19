@@ -789,7 +789,7 @@ fn click_row(app: &mut App, ui: &Ui, id: EntryId) {
     } else {
         set_single(app, id);
     }
-    if app.side_open && app.shown_tab() == SideTab::Inspector && !app.inspector.follow_playing {
+    if app.side_open && app.shown_tab() == SideTab::Inspector && !app.settings.inspector_follows_playing {
         inspector::load_from_selection(app);
     }
 }

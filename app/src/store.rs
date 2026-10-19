@@ -49,6 +49,8 @@ pub struct Settings {
     pub output_device: Option<String>,
     /// Show covers as green dithered pixel art. A click on the deck artwork flips to the original.
     pub retro_artwork: bool,
+    /// The inspector shows the playing track instead of the playlist selection.
+    pub inspector_follows_playing: bool,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             playlist_columns: Vec::new(),
             output_device: None,
             retro_artwork: true,
+            inspector_follows_playing: false,
         }
     }
 }

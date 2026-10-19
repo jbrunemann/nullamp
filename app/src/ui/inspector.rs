@@ -54,7 +54,6 @@ struct ArtItem {
 #[derive(Default)]
 pub struct InspectorState {
     pub targets: Vec<PathBuf>,
-    pub follow_playing: bool,
     request: Option<u64>,
     loaded: BTreeMap<PathBuf, FileMetadata>,
     errors: Vec<(PathBuf, String)>,
@@ -79,6 +78,14 @@ impl InspectorState {
 
 // ----- Loading -----
 
+/// What a freshly opened panel shows: the playing track when following it, else the selection.
+pub fn load_on_open(app: &mut App) {
+    match app.player.current.clone() {
+        Some(c) if app.settings.inspector_follows_playing => load_targets(app, vec![c.path]),
+        _ => load_from_selection(app),
+    }
+}
+
 pub fn load_from_selection(app: &mut App) {
     let pl = app.player.viewed();
     let mut paths: Vec<PathBuf> = pl.entries().iter().filter(|e| app.selection.ids.contains(&e.id)).map(|e| e.path.clone()).collect();
@@ -99,8 +106,7 @@ pub fn load_targets(app: &mut App, mut paths: Vec<PathBuf>) {
     if paths == app.inspector.targets && !app.inspector.dirty() && app.inspector.request.is_some() {
         return;
     }
-    let follow = app.inspector.follow_playing;
-    app.inspector = InspectorState { follow_playing: follow, ..Default::default() };
+    app.inspector = InspectorState::default();
     if paths.is_empty() {
         return;
     }
@@ -320,15 +326,19 @@ pub fn on_result(app: &mut App, r: JobResult) {
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        let follow = ui.checkbox(&mut app.inspector.follow_playing, "Follow playing track")
+        let follow = ui.checkbox(&mut app.settings.inspector_follows_playing, "Follow playing track")
             .on_hover_text("Always show the track that is playing, whatever is selected in the playlist");
-        if follow.changed() && app.inspector.follow_playing
-            && let Some(c) = app.player.current.clone()
-        {
-            load_targets(app, vec![c.path]);
+        if follow.changed() {
+            app.mark_settings_dirty();
+            if app.settings.inspector_follows_playing
+                && let Some(c) = app.player.current.clone()
+            {
+                load_targets(app, vec![c.path]);
+            }
         }
         if ui.small_button("Inspect selection").on_hover_text("Stop following playback and show the tracks selected in the playlist").clicked() {
-            app.inspector.follow_playing = false;
+            app.settings.inspector_follows_playing = false;
+            app.mark_settings_dirty();
             load_from_selection(app);
         }
     });

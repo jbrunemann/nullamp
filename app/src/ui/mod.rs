@@ -624,7 +624,7 @@ impl App {
         self.workers.request_waveform(c.token, c.path.clone());
         self.workers.request_tempo(c.token, c.path.clone(), None);
         self.scroll_to = Some(c.entry);
-        if self.inspector.follow_playing {
+        if self.settings.inspector_follows_playing {
             inspector::load_targets(self, vec![c.path.clone()]);
         }
         let title = self.player.current_entry().map(|e| e.info.display_line(&e.path)).unwrap_or_default();
@@ -902,7 +902,7 @@ impl App {
             self.side_open = true;
             self.side_tab = tab;
             if tab == SideTab::Inspector && self.inspector.targets.is_empty() {
-                inspector::load_from_selection(self);
+                inspector::load_on_open(self);
             }
         }
         self.mark_settings_dirty();
@@ -929,7 +929,7 @@ impl App {
             if widgets::tab(ui, shown == SideTab::Inspector, "Inspector").clicked() {
                 self.side_tab = SideTab::Inspector;
                 if self.inspector.targets.is_empty() {
-                    inspector::load_from_selection(self);
+                    inspector::load_on_open(self);
                 }
                 self.mark_settings_dirty();
             }
