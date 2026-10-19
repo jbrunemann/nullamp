@@ -647,7 +647,7 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
             Col::Num => cell(ui, r, &format!("{}", i + 1), theme::mono(11.0), theme::text_faint(), col.align()),
             Col::Art => paint_cover(p, r, app.pl_view.art.texture(&e.path)),
             Col::Title => cell(ui, r, &e.info.display_title(&e.path), font.clone(), fg, col.align()),
-            Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
+            Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), fg, col.align()),
             Col::Album => cell(ui, r, e.info.album.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
             Col::Format => cell(ui, r, &format_label(&e.path), theme::mono(10.5), if current { dim } else { theme::text_faint() }, col.align()),
             Col::Time => {

@@ -385,12 +385,14 @@ pub fn on_result(app: &mut App, r: JobResult) {
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        if ui.checkbox(&mut app.inspector.follow_playing, "Follow playing track").changed() && app.inspector.follow_playing
+        let follow = ui.checkbox(&mut app.inspector.follow_playing, "Follow playing track")
+            .on_hover_text("Always show the track that is playing, whatever is selected in the playlist");
+        if follow.changed() && app.inspector.follow_playing
             && let Some(c) = app.player.current.clone()
         {
             load_targets(app, vec![c.path]);
         }
-        if ui.small_button("Inspect selection").clicked() {
+        if ui.small_button("Inspect selection").on_hover_text("Stop following playback and show the tracks selected in the playlist").clicked() {
             app.inspector.follow_playing = false;
             load_from_selection(app);
         }
