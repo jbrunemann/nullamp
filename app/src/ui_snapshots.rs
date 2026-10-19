@@ -501,6 +501,26 @@ fn render_shortcuts() {
     save(&mut h, "06b-shortcuts.png");
 }
 
+/// The audio output picker in the player-only layout, where the menu would not fit below the deck.
+#[test]
+#[ignore]
+fn render_outputs_page() {
+    use nullamp_audio::OutputKind::*;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 160.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().playlist_open = false;
+    h.state_mut().side_open = false;
+    settle(&mut h, 300);
+    let device = |id: &str, kind, is_default| nullamp_audio::OutputDevice { id: id.into(), name: id.into(), kind, is_default };
+    let app = h.state_mut();
+    app.output_devices = vec![device("MacBook Pro Speakers", BuiltIn, true), device("External Headphones", BuiltIn, false), device("Studio Display Speakers", Display, false), device("AirPods Pro", Bluetooth, false), device("BlackHole 2ch", Virtual, false)];
+    app.settings.output_device = Some("AirPods Pro".into());
+    app.dialogs.outputs_open = true;
+    settle(&mut h, 300);
+    save(&mut h, "06c-outputs-page.png");
+}
+
 /// The About page with a few log lines, taking over the deck.
 #[test]
 #[ignore]

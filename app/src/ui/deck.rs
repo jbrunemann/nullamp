@@ -276,11 +276,57 @@ fn output_label(app: &mut App, ui: &mut Ui, p: &egui::Painter, top_right: egui::
         ),
         None => "No audio output device\nClick to choose one".into(),
     };
+    // The menu drops down below the label; when the window ends too close below (the player-only
+    // layout is only as tall as the deck), the list takes over the deck instead.
+    let menu_height = (app.output_devices.len().max(3) + 2) as f32 * ROW_HEIGHT + 40.0;
+    let fits = ui.ctx().content_rect().bottom() - resp.rect.bottom() >= menu_height;
     if resp.clicked() {
         app.player.engine.request_output_devices();
+        if !fits {
+            app.dialogs.shortcuts_open = false;
+            app.dialogs.about_open = false;
+            app.dialogs.outputs_open = true;
+        }
     }
     resp.clone().on_hover_text(tip);
-    egui::Popup::menu(&resp).show(|ui| output_menu(app, ui));
+    if fits {
+        egui::Popup::menu(&resp).show(|ui| output_menu(app, ui));
+    } else {
+        egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+}
+
+/// The device picker as a deck page: the same rows in as many columns as the deck needs.
+/// Returns true once a device is chosen, so the page closes.
+pub fn output_page(app: &mut App, ui: &mut Ui) -> bool {
+    const COLUMN: f32 = 260.0;
+    let chosen = app.settings.output_device.clone();
+    let devices = app.output_devices.clone();
+    let default = devices.iter().find(|d| d.is_default);
+    let default_label = default.map(|d| format!("System default ({})", d.name)).unwrap_or_else(|| "System default".into());
+    let mut rows: Vec<(&str, nullamp_audio::OutputKind, bool, Option<String>)> = vec![(&default_label, default.map(|d| d.kind).unwrap_or_default(), true, None)];
+    rows.extend(devices.iter().filter(|d| d.kind.is_hardware()).chain(devices.iter().filter(|d| !d.kind.is_hardware())).map(|d| (d.name.as_str(), d.kind, d.kind.is_hardware(), Some(d.id.clone()))));
+    let per_column = ((ui.available_height() / (ROW_HEIGHT + ui.spacing().item_spacing.y)).floor() as usize).max(1);
+    let mut picked = None;
+    egui::ScrollArea::both().id_salt("outputs-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        ui.horizontal_top(|ui| {
+            for chunk in rows.chunks(per_column) {
+                ui.vertical(|ui| {
+                    ui.set_width(COLUMN);
+                    for (label, kind, bright, id) in chunk {
+                        if device_row(ui, label, *kind, *bright, chosen == *id) {
+                            picked = Some(id.clone());
+                        }
+                    }
+                });
+            }
+        });
+    });
+    if let Some(id) = picked {
+        app.choose_output(id);
+        return true;
+    }
+    false
 }
 
 /// The device picker: one row per output, real hardware first and in full colour,
@@ -316,11 +362,12 @@ fn output_menu(app: &mut App, ui: &mut Ui) {
 }
 
 const ROW_PAD: f32 = 6.0;
+const ROW_HEIGHT: f32 = 24.0;
 const ROW_ICON: f32 = 15.0;
 
 /// A full-width menu row with an icon. Returns whether it was clicked.
 fn device_row(ui: &mut Ui, label: &str, kind: nullamp_audio::OutputKind, bright: bool, selected: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     let visuals = ui.visuals();
     let fill = if selected {
         visuals.selection.bg_fill

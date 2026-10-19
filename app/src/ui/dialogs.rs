@@ -26,13 +26,15 @@ pub struct Dialogs {
     pub confirm_delete: Option<usize>,
     pub shortcuts_open: bool,
     pub about_open: bool,
+    /// The audio output picker as a deck page, for when its menu would not fit below the deck.
+    pub outputs_open: bool,
     about_icon: Option<egui::TextureHandle>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false, about_icon: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, shortcuts_open: false, about_open: false, outputs_open: false, about_icon: None }
     }
 }
 
@@ -313,10 +315,10 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// The shortcuts and About pages take over the deck instead of floating over the window: in
-/// the compact layout the window is only as tall as the deck, and a free window would be cut off.
+/// The shortcuts, About and audio output pages take over the deck instead of floating over the
+/// window: in the compact layout the window is only as tall as the deck, and a free window would be cut off.
 pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
-    if !app.dialogs.shortcuts_open && !app.dialogs.about_open {
+    if !app.dialogs.shortcuts_open && !app.dialogs.about_open && !app.dialogs.outputs_open {
         return;
     }
     let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
@@ -326,7 +328,14 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
             egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
-                let title = if app.dialogs.about_open { "About Nullamp" } else { "Keyboard shortcuts" };
+                // The output page yields to the others, which open from menus and keys without closing it.
+                let title = if app.dialogs.about_open {
+                    "About Nullamp"
+                } else if app.dialogs.shortcuts_open {
+                    "Keyboard shortcuts"
+                } else {
+                    "Audio output"
+                };
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(title).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -341,8 +350,10 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                 ui.separator();
                 if app.dialogs.about_open {
                     about_body(app, ui);
-                } else {
+                } else if app.dialogs.shortcuts_open {
                     shortcuts_body(ui);
+                } else if super::deck::output_page(app, ui) {
+                    close = true;
                 }
             });
         });
@@ -350,6 +361,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
     if close {
         app.dialogs.shortcuts_open = false;
         app.dialogs.about_open = false;
+        app.dialogs.outputs_open = false;
     }
 }
 
