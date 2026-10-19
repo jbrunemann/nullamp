@@ -23,8 +23,18 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         lcd_display(app, ui, lcd);
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
-        if art_resp.on_hover_text("Artwork · click to open the inspector").clicked() {
-            app.toggle_side(SideTab::Inspector);
+        let retro = app.settings.retro_artwork && app.now.retro_art.is_some();
+        let hint = match (retro, app.now.show_original_art) {
+            (true, false) => "Retro artwork · click to see the original",
+            (true, true) => "Original artwork · click to go back to retro",
+            (false, _) => "Artwork · click to open the inspector",
+        };
+        if art_resp.on_hover_text(hint).clicked() {
+            if retro {
+                app.now.show_original_art = !app.now.show_original_art;
+            } else {
+                app.toggle_side(SideTab::Inspector);
+            }
         }
     });
     ui.add_space(6.0);
@@ -393,7 +403,8 @@ pub fn entry_line(e: &nullamp_core::SetlistEntry) -> String {
 fn artwork(app: &App, ui: &Ui, rect: Rect) {
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 5.0, theme::LCD_BG);
-    if let Some(tex) = app.now.art.as_ref() {
+    let retro = app.settings.retro_artwork && !app.now.show_original_art;
+    if let Some(tex) = retro.then_some(app.now.retro_art.as_ref()).flatten().or(app.now.art.as_ref()) {
         let size = tex.size_vec2();
         let scale = (rect.width() / size.x).min(rect.height() / size.y);
         let r = Rect::from_center_size(rect.center(), size * scale);

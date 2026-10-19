@@ -66,6 +66,9 @@ pub struct Selection {
 pub struct NowState {
     pub meta: Option<FileMetadata>,
     pub art: Option<TextureHandle>,
+    pub retro_art: Option<TextureHandle>,
+    /// The deck shows the original cover instead of the retro one until the next click or track.
+    pub show_original_art: bool,
     pub art_file: Option<PathBuf>,
     /// Loudness overview behind the timeline; arrives after the track starts.
     pub waveform: Option<nullamp_audio::Waveform>,
@@ -677,6 +680,10 @@ impl App {
             let img = egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba);
             self.now.art = Some(self.ctx.load_texture("now-art", img, egui::TextureOptions::LINEAR));
         }
+        if let Some(t) = &info.retro_art {
+            let img = egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba);
+            self.now.retro_art = Some(self.ctx.load_texture("now-art-retro", img, egui::TextureOptions::LINEAR));
+        }
         self.now.art_file = info.art_file.clone();
         match &info.meta {
             Ok(m) => {
@@ -964,6 +971,12 @@ impl App {
                     let next = appearance.next();
                     self.settings.appearance = next.setting().into();
                     theme::set_appearance(ui.ctx(), next);
+                    self.mark_settings_dirty();
+                }
+                let (label, tip) = if self.settings.retro_artwork { ("art: retro", "Click to show covers as they are") } else { ("art: original", "Click to show covers as green pixel art") };
+                if ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(theme::text_faint())).sense(egui::Sense::click())).on_hover_text(tip).clicked() {
+                    self.settings.retro_artwork = !self.settings.retro_artwork;
+                    self.now.show_original_art = false;
                     self.mark_settings_dirty();
                 }
                 if self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {

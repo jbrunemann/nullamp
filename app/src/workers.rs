@@ -57,6 +57,8 @@ pub struct NowPlayingInfo {
     pub path: PathBuf,
     pub meta: Result<FileMetadata, String>,
     pub art: Option<Thumb>,
+    /// `art` as dithered pixel art; made here so switching the setting needs no new work.
+    pub retro_art: Option<Thumb>,
     /// Artwork written to the cache, for the OS media overlay.
     pub art_file: Option<PathBuf>,
     pub fingerprint: Option<String>,
@@ -546,7 +548,8 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
         None => discovered.clone().map(|s| (s, SetlistOrigin::Discovered)),
     };
     let tracklist_urls = meta.as_ref().map(tracklist_urls).unwrap_or_default();
-    NowPlayingInfo { token, path, meta, art, art_file, fingerprint, setlist, discovered, tracklist_urls }
+    let retro_art = art.as_ref().and_then(crate::retro_art::retro_thumb);
+    NowPlayingInfo { token, path, meta, art, retro_art, art_file, fingerprint, setlist, discovered, tracklist_urls }
 }
 
 /// Local setlist sources, in order: a cue sheet with exactly the file's name (`mix.cue`

@@ -492,3 +492,29 @@ fn render_tempo() {
     save(&mut h, "10-tempo-long-title.png");
     h.state_mut().player.stop();
 }
+
+/// The deck artwork: retro by default, the original after a click, and the setting turns it off.
+#[test]
+#[ignore]
+fn render_deck_retro_artwork() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 800);
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[0].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    assert!(h.state().now.art.is_some() && h.state().now.retro_art.is_some(), "the fixture has a cover");
+    save(&mut h, "05-deck-art-retro.png");
+    h.state_mut().now.show_original_art = true;
+    settle(&mut h, 200);
+    save(&mut h, "05b-deck-art-original.png");
+    h.state_mut().settings.retro_artwork = false;
+    h.state_mut().now.show_original_art = false;
+    settle(&mut h, 200);
+    save(&mut h, "05c-deck-art-setting-off.png");
+    h.state_mut().player.stop();
+}

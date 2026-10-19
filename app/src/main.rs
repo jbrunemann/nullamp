@@ -6,6 +6,7 @@
 mod logbuf;
 mod paths;
 mod player;
+mod retro_art;
 mod store;
 mod ui;
 mod waveform_cache;

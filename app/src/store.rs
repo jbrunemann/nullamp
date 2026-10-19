@@ -47,6 +47,8 @@ pub struct Settings {
     pub playlist_columns: Vec<String>,
     /// Audio output chosen by the user (an engine device id). `None` follows the system default.
     pub output_device: Option<String>,
+    /// Show covers as green dithered pixel art. A click on the deck artwork flips to the original.
+    pub retro_artwork: bool,
 }
 
 impl Default for Settings {
@@ -72,6 +74,7 @@ impl Default for Settings {
             appearance: "dark".into(),
             playlist_columns: Vec::new(),
             output_device: None,
+            retro_artwork: true,
         }
     }
 }
