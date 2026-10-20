@@ -72,7 +72,7 @@ Tests: core 54, audio 9, meta 15, sysmedia 2, app 32 (1 screenshot render, ignor
   5. Mirror the edits to any ID3v1 or APE tags.
   6. Verify: tags read back as written, and duration and sample rate are unchanged.
   7. Check the original again for external edits.
-  8. Optionally back up the original. The backup directory has a size budget, oldest deleted first, default 256 MB. Backups are off by default.
+  8. Optionally back up the original. For an MP3 only the tags are saved (`<ms>-<name>.mp3.id3`: magic `NLTAGBK1`, two lengths, the leading ID3v2 bytes, the trailing ID3v1 bytes) and restore splices them around the file's current audio; every other format, and an MP3 with an APE tag, gets a full copy, which restore also still accepts. The backup directory has a size budget, oldest deleted first, default 256 MB. Backups are off by default.
   9. Atomically rename the temp file over the original.
 
   Tests prove the audio bytes, unknown frames (PRIV, TXXX) and CHAP/CTOC chapters survive.

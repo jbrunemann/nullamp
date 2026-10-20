@@ -173,7 +173,7 @@ A file counts as a mix when it has a setlist of at least two entries, or when it
 
 Open **Setlist** in the side panel.
 
-- The top card shows `MIX`, the mix title, DJ and year, and the track that is playing (`NOW`). The ✎ button edits the mix information. It does not touch the file's tags.
+- The top card shows `MIX`, the mix title, DJ and year. The playing track is shown on the LCD and highlighted in the list. Edit the mix title, artist and date in the Inspector, like any other tag.
 - A line below the buttons tells you how many tracks there are, where the list came from, and whether the timing is exact or approximate.
 - The list shows each entry's number, start time, title and artist. The current entry is highlighted in amber.
 - Any problem, such as entries out of order or beyond the end of the file, is listed above the entries.

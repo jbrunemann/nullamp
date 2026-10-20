@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,7 +50,7 @@ impl Edit {
 
 #[derive(Clone, Debug, Default)]
 pub struct WriteOptions {
-    /// Copy the original file here before replacing it.
+    /// Save the original here before replacing it: the tags of an MP3, the whole file otherwise.
     pub backup_dir: Option<PathBuf>,
     /// Total size the backup directory may use; the oldest backups are deleted first.
     pub backup_budget_bytes: u64,
@@ -90,7 +91,7 @@ fn temp_path(path: &Path) -> PathBuf {
 /// 4. write the tags to the copy (keeping the original ID3v2 version);
 /// 5. verify the copy: tags read back as written, audio properties unchanged;
 /// 6. check again that the original was not modified meanwhile;
-/// 7. optionally copy the original to the backup directory;
+/// 7. optionally back up the original (its tags for an MP3, else a full copy);
 /// 8. atomically rename the copy over the original.
 pub fn write(path: &Path, expected: FileStamp, edit: &Edit, opts: &WriteOptions) -> Result<WriteReport, MetaError> {
     for (field, value) in &edit.fields {
@@ -265,20 +266,122 @@ fn verify(path: &Path, edit: &Edit, before: (f64, Option<u32>), unsupported: &[F
     Ok(())
 }
 
+/// First bytes of a tag-only backup; any other backup is a full copy of the file.
+const TAG_BACKUP_MAGIC: &[u8; 8] = b"NLTAGBK1";
+
 fn make_backup(path: &Path, dir: &Path, budget: u64) -> Result<PathBuf, String> {
-    let size = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let tags = if is_mp3(path) { tag_backup_bytes(path).map_err(|e| e.to_string())? } else { None };
+    let size = match &tags {
+        Some(bytes) => bytes.len() as u64,
+        None => fs::metadata(path).map_err(|e| e.to_string())?.len(),
+    };
     if budget > 0 && size > budget / 2 {
-        return Err(format!("file is larger than the backup budget allows ({} MB)", size / 1_000_000));
+        return Err(format!("backup is larger than the backup budget allows ({} MB)", size / 1_000_000));
     }
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-    let dst = dir.join(format!("{secs}-{name}"));
-    fs::copy(path, &dst).map_err(|e| e.to_string())?;
+    let (dst, saved) = match tags {
+        Some(bytes) => {
+            let dst = dir.join(format!("{secs}-{name}.id3"));
+            let saved = fs::write(&dst, bytes);
+            (dst, saved)
+        }
+        None => {
+            let dst = dir.join(format!("{secs}-{name}"));
+            let saved = fs::copy(path, &dst).map(|_| ());
+            (dst, saved)
+        }
+    };
+    saved.map_err(|e| e.to_string())?;
     if budget > 0 {
         prune_backups(dir, budget, &dst);
     }
     Ok(dst)
+}
+
+fn is_mp3(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mp3"))
+}
+
+/// Length of the ID3v2 tag at the start of the file (header, padding and footer), 0 when there is none.
+fn id3v2_len(f: &mut fs::File, file_len: u64) -> std::io::Result<u64> {
+    let mut head = [0u8; 10];
+    f.seek(SeekFrom::Start(0))?;
+    if file_len < 10 {
+        return Ok(0);
+    }
+    f.read_exact(&mut head)?;
+    if &head[..3] != b"ID3" {
+        return Ok(0);
+    }
+    let size = head[6..10].iter().fold(0u64, |acc, b| (acc << 7) | u64::from(b & 0x7F));
+    let footer = if head[5] & 0x10 != 0 { 10 } else { 0 };
+    Ok((10 + size + footer).min(file_len))
+}
+
+/// The byte range holding the audio: after a leading ID3v2 tag and before a trailing ID3v1 tag.
+/// `None` when the file also has an APE tag, which these two ends would not cover.
+fn audio_range(f: &mut fs::File) -> std::io::Result<Option<(u64, u64)>> {
+    let len = f.metadata()?.len();
+    let start = id3v2_len(f, len)?;
+    let mut end = len;
+    if end - start >= 128 {
+        let mut tag = [0u8; 3];
+        f.seek(SeekFrom::Start(len - 128))?;
+        f.read_exact(&mut tag)?;
+        if &tag == b"TAG" {
+            end -= 128;
+        }
+    }
+    if end - start >= 32 {
+        let mut footer = [0u8; 8];
+        f.seek(SeekFrom::Start(end - 32))?;
+        f.read_exact(&mut footer)?;
+        if &footer == b"APETAGEX" {
+            return Ok(None);
+        }
+    }
+    Ok(Some((start, end)))
+}
+
+/// The ID3v2 and ID3v1 tags of an MP3 as a backup: the magic, the two lengths, then both byte ranges.
+/// `None` when the file has an APE tag, so the whole file is copied instead.
+fn tag_backup_bytes(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    let mut f = fs::File::open(path)?;
+    let Some((start, end)) = audio_range(&mut f)? else { return Ok(None) };
+    let len = f.metadata()?.len();
+    let mut out = Vec::with_capacity((start + len - end) as usize + 24);
+    out.extend_from_slice(TAG_BACKUP_MAGIC);
+    out.extend_from_slice(&start.to_le_bytes());
+    out.extend_from_slice(&(len - end).to_le_bytes());
+    f.seek(SeekFrom::Start(0))?;
+    (&mut f).take(start).read_to_end(&mut out)?;
+    f.seek(SeekFrom::Start(end))?;
+    f.read_to_end(&mut out)?;
+    Ok(Some(out))
+}
+
+/// Write `target`'s audio between the tags of a tag-only backup to `tmp`.
+fn splice_tags(tag_backup: &[u8], target: &Path, tmp: &Path) -> Result<(), MetaError> {
+    let lengths = tag_backup.get(8..24).ok_or_else(|| MetaError::Parse("tag backup is truncated".into()))?;
+    let head_len = u64::from_le_bytes(lengths[..8].try_into().expect("8 bytes")) as usize;
+    let tail_len = u64::from_le_bytes(lengths[8..].try_into().expect("8 bytes")) as usize;
+    let tags = &tag_backup[24..];
+    if tags.len() != head_len + tail_len {
+        return Err(MetaError::Parse("tag backup is truncated".into()));
+    }
+    let mut src = fs::File::open(target)?;
+    let Some((start, end)) = audio_range(&mut src)? else {
+        return Err(MetaError::Parse("the file has an APE tag; restore is not possible".into()));
+    };
+    src.seek(SeekFrom::Start(start))?;
+    let mut out = fs::File::create(tmp)?;
+    out.write_all(&tags[..head_len])?;
+    std::io::copy(&mut (&mut src).take(end - start), &mut out)?;
+    out.write_all(&tags[head_len..])?;
+    out.sync_all()?;
+    Ok(())
 }
 
 /// Delete the oldest backups until the directory fits the budget. `keep` is never deleted.
@@ -306,12 +409,18 @@ fn prune_backups(dir: &Path, budget: u64, keep: &Path) {
     }
 }
 
-/// Put a backup copy back in place of `target`, using the same copy-then-rename
-/// procedure as writing.
+/// Put a backup back in place of `target`, using the same copy-then-rename procedure as
+/// writing. A tag-only backup replaces the tags and keeps the audio now in `target`.
 pub fn restore_backup(backup: &Path, target: &Path) -> Result<FileStamp, MetaError> {
     let tmp = temp_path(target);
     let mut guard = TempGuard(Some(tmp.clone()));
-    fs::copy(backup, &tmp)?;
+    let mut magic = [0u8; 8];
+    let is_tag_backup = fs::File::open(backup)?.read_exact(&mut magic).is_ok() && &magic == TAG_BACKUP_MAGIC;
+    if is_tag_backup {
+        splice_tags(&fs::read(backup)?, target, &tmp)?;
+    } else {
+        fs::copy(backup, &tmp)?;
+    }
     fs::rename(&tmp, target)?;
     guard.0 = None;
     Ok(stamp(target)?)
@@ -461,7 +570,11 @@ mod tests {
         let opts = WriteOptions { backup_dir: Some(backups.clone()), backup_budget_bytes: 10 * original.len() as u64 };
         let r = write(&path, stamp(&path).unwrap(), &set(&[(Field::Title, Some("one"))]), &opts).unwrap();
         let backup = r.backup.unwrap();
-        assert_eq!(fs::read(&backup).unwrap(), original);
+        // Only the tags are kept, not the audio.
+        let tags = fs::read(&backup).unwrap();
+        assert!(tags.starts_with(TAG_BACKUP_MAGIC));
+        assert!(tags.len() < original.len(), "{} of {} bytes", tags.len(), original.len());
+        assert_ne!(fs::read(&path).unwrap(), original);
         restore_backup(&backup, &path).unwrap();
         assert_eq!(fs::read(&path).unwrap(), original);
 
@@ -478,5 +591,36 @@ mod tests {
         let small = WriteOptions { backup_dir: Some(backups), backup_budget_bytes: 10 };
         let r = write(&path, stamp(&path).unwrap(), &set(&[(Field::Title, Some("big"))]), &small).unwrap();
         assert!(r.backup.is_none() && r.backup_skipped.is_some());
+    }
+
+    #[test]
+    fn tag_backup_covers_id3v1_and_other_formats_are_copied() {
+        let (dir, path) = scratch_copy("tagged_v23.mp3");
+        let backups = dir.path().join("backups");
+        let opts = WriteOptions { backup_dir: Some(backups.clone()), backup_budget_bytes: 0 };
+        // Append an ID3v1 tag so both ends of the file hold tags.
+        let mut v1 = vec![0u8; 128];
+        v1[..3].copy_from_slice(b"TAG");
+        v1[3..9].copy_from_slice(b"before");
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.extend_from_slice(&v1);
+        fs::write(&path, &bytes).unwrap();
+        let audio = audio_payload(&path);
+
+        let r = write(&path, stamp(&path).unwrap(), &set(&[(Field::Title, Some("after"))]), &opts).unwrap();
+        let backup = r.backup.unwrap();
+        assert!(fs::read(&backup).unwrap().starts_with(TAG_BACKUP_MAGIC));
+        restore_backup(&backup, &path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(audio_payload(&path), audio);
+
+        let (dir, flac) = scratch_copy("tone.flac");
+        let flac_original = fs::read(&flac).unwrap();
+        let opts = WriteOptions { backup_dir: Some(dir.path().join("backups")), backup_budget_bytes: 0 };
+        let r = write(&flac, stamp(&flac).unwrap(), &set(&[(Field::Title, Some("after"))]), &opts).unwrap();
+        let backup = r.backup.unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), flac_original);
+        restore_backup(&backup, &flac).unwrap();
+        assert_eq!(fs::read(&flac).unwrap(), flac_original);
     }
 }

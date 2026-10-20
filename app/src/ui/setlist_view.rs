@@ -60,7 +60,6 @@ pub struct MixState {
     dirty_at: Option<Instant>,
     issues: Vec<Issue>,
     edit: EntryEdit,
-    mix_edit: Option<MixInfo>,
     paste: Option<Paste>,
     text_request: Option<u64>,
     scroll_to_active: bool,
@@ -358,53 +357,8 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
     let entry_artist = app.player.current_entry().and_then(|e| e.info.artist.clone());
     egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        if let Some(edit) = app.mix.mix_edit.as_mut() {
-            let mut done = None;
-            egui::Grid::new("mix-edit").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                for (label, value) in [("Mix title", &mut edit.title), ("DJ", &mut edit.dj), ("Event", &mut edit.event), ("Date", &mut edit.date), ("URL", &mut edit.url)] {
-                    ui.label(RichText::new(label).color(theme::text_dim()));
-                    let mut s = value.clone().unwrap_or_default();
-                    if ui.add(egui::TextEdit::singleline(&mut s).desired_width(f32::INFINITY)).changed() {
-                        *value = Some(s).filter(|s| !s.trim().is_empty());
-                    }
-                    ui.end_row();
-                }
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    done = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    done = Some(false);
-                }
-            });
-            match done {
-                Some(true) => {
-                    let mix = app.mix.mix_edit.take().unwrap();
-                    app.mix.setlist.get_or_insert_with(Setlist::default).mix = mix;
-                    changed(app);
-                }
-                Some(false) => app.mix.mix_edit = None,
-                None => {}
-            }
-            return;
-        }
         let mix = app.mix.setlist.as_ref().map(|s| s.mix.clone()).unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("MIX").size(10.0).color(theme::mix_tag()).monospace());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("✎").on_hover_text("Edit mix information (does not touch the tracks)").clicked() {
-                    let mut m = mix.clone();
-                    if m.title.is_none() {
-                        m.title = Some(entry_title.clone());
-                    }
-                    if m.dj.is_none() {
-                        m.dj = entry_artist.clone();
-                    }
-                    app.mix.mix_edit = Some(m);
-                }
-            });
-        });
+        ui.label(RichText::new("MIX").size(10.0).color(theme::mix_tag()).monospace());
         ui.add(egui::Label::new(RichText::new(mix.title.clone().unwrap_or(entry_title)).strong().size(14.0)).truncate());
         let mut sub = Vec::new();
         if let Some(dj) = mix.dj.clone().or(entry_artist) {
@@ -421,15 +375,6 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
         }
         if let Some(url) = &mix.url {
             ui.hyperlink_to(RichText::new(url).small(), url);
-        }
-        // Currently playing constituent track, visually distinct from the mix identity.
-        if let Some((s, i)) = app.mix.setlist.as_ref().zip(app.mix.active) {
-            let e = &s.entries[i];
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(" NOW ").size(10.0).monospace().color(theme::bg()).background_color(theme::now()));
-                ui.add(egui::Label::new(RichText::new(super::deck::entry_line(e)).color(theme::text())).truncate());
-            });
         }
     });
 }
