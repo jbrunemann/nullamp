@@ -6,6 +6,7 @@
 mod entry_art;
 mod logbuf;
 mod paths;
+mod placeholder_art;
 mod player;
 mod retro_art;
 mod store;

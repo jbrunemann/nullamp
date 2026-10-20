@@ -81,9 +81,11 @@ pub struct NowState {
     /// last asked for, and the tempo found for it once that arrives.
     pub segment_requested: Option<(f64, f64)>,
     pub segment_tempo: Option<nullamp_audio::Tempo>,
-    /// Covers found online for the tracks of the playing mix, by `entry_art::key`, asked for
-    /// when a track first becomes active.
+    /// Covers of the tracks of the playing mix, found online or generated, by `entry_art::key`,
+    /// asked for when a track first becomes active.
     pub entry_art: HashMap<String, EntryCover>,
+    /// The track `update_entry_art` last saw as active, to tell a track becoming active again.
+    pub entry_art_active: Option<String>,
     /// The picture on the deck, and the one it is changing from while a transition runs.
     pub art_shown: Option<ShownArt>,
     pub art_transition: Option<ArtTransition>,
@@ -110,17 +112,24 @@ impl NowState {
     }
 }
 
+/// Whether the lookup that failed `failed_for` ago is repeated now.
+fn retry_due(failed_for: Duration, track_reactivated: bool) -> bool {
+    track_reactivated || failed_for >= ENTRY_ART_RETRY
+}
+
 pub enum EntryCover {
     /// Being looked up since then.
     Looking(Instant),
-    Missing,
+    /// The services could not be asked (no network) at that moment.
+    Failed(Instant),
     Found(EntryArtwork),
 }
 
 pub struct EntryArtwork {
     pub art: TextureHandle,
     pub retro_art: Option<TextureHandle>,
-    pub file: PathBuf,
+    /// The cached image, for the OS media overlay; a generated placeholder has none.
+    pub file: Option<PathBuf>,
 }
 
 /// Whose cover the deck shows.
@@ -160,6 +169,8 @@ pub struct ArtTransition {
 /// How long the deck keeps the previous track's cover while the next one is looked up, so a
 /// quick answer does not flash the mix's cover in between.
 const COVER_HOLD: Duration = Duration::from_secs(2);
+/// A failed cover lookup is not repeated for this long, or while offline it would run every frame.
+const ENTRY_ART_RETRY: Duration = Duration::from_secs(60);
 
 /// The audio output as the engine last reported it.
 #[derive(Clone, Debug, PartialEq)]
@@ -762,16 +773,23 @@ impl App {
         if !self.settings.online_artwork {
             return;
         }
-        let Some((key, e)) = self.active_entry_key() else { return };
-        if self.now.entry_art.contains_key(&key) {
+        let Some((key, e)) = self.active_entry_key() else {
+            self.now.entry_art_active = None;
             return;
-        }
+        };
         let (artist, title) = (e.artist.trim().to_owned(), e.full_title());
+        let reactivated = self.now.entry_art_active.as_deref() != Some(key.as_str());
+        self.now.entry_art_active = Some(key.clone());
+        match self.now.entry_art.get(&key) {
+            None => {}
+            Some(EntryCover::Failed(since)) if retry_due(since.elapsed(), reactivated) => {}
+            Some(_) => return,
+        }
         self.now.entry_art.insert(key.clone(), EntryCover::Looking(Instant::now()));
         self.workers.request_entry_art(key, artist, title);
     }
 
-    fn on_entry_art(&mut self, key: String, result: Result<Option<crate::workers::EntryArt>, String>) {
+    pub(crate) fn on_entry_art(&mut self, key: String, result: Result<crate::workers::EntryArt, String>) {
         // Answers for the tracks of a mix that is no longer playing are dropped.
         if !self.now.entry_art.contains_key(&key) {
             return;
@@ -781,20 +799,17 @@ impl App {
                 let texture = |name: &str, t: &crate::workers::Thumb| {
                     self.ctx.load_texture(name, egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba), egui::TextureOptions::LINEAR)
                 };
-                let cover = match found {
-                    Some(f) => EntryCover::Found(EntryArtwork {
-                        art: texture("entry-art", &f.art),
-                        retro_art: f.retro_art.as_ref().map(|t| texture("entry-art-retro", t)),
-                        file: f.file,
-                    }),
-                    None => EntryCover::Missing,
+                let cover = EntryArtwork {
+                    art: texture("entry-art", &found.art),
+                    retro_art: found.retro_art.as_ref().map(|t| texture("entry-art-retro", t)),
+                    file: found.file,
                 };
-                self.now.entry_art.insert(key, cover);
+                self.now.entry_art.insert(key, EntryCover::Found(cover));
             }
             Err(e) => {
                 log::warn!("artwork lookup failed: {e}");
-                // Try again when the track next becomes active.
-                self.now.entry_art.remove(&key);
+                // Asked again after a pause, or when the track next becomes active.
+                self.now.entry_art.insert(key, EntryCover::Failed(Instant::now()));
             }
         }
     }
@@ -812,7 +827,7 @@ impl App {
         }
     }
 
-    /// The deck's cover: the active track's while a mix plays and one was found, else the
+    /// The deck's cover: the active track's while a mix plays and its cover has arrived, else the
     /// file's. `None` for a moment while the active track's cover is being looked up: the deck
     /// keeps what it shows.
     pub fn deck_art(&self) -> Option<ShownArt> {
@@ -915,8 +930,8 @@ impl App {
             duration: self.player.duration(),
             cover: self.now.art_file.clone(),
         };
-        if let Some(found) = self.active_entry_artwork() {
-            np.cover = Some(found.file.clone());
+        if let Some(file) = self.active_entry_artwork().and_then(|found| found.file.clone()) {
+            np.cover = Some(file);
         }
         if let Some((setlist, idx)) = setlist_view::shown(self).zip(self.mix.active) {
             let e = &setlist.entries[idx];
@@ -1257,6 +1272,19 @@ pub fn select_setlist_entry(app: &mut App, index: usize) {
 #[cfg(test)]
 pub fn inspect_selection(app: &mut App) {
     inspector::load_from_selection(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_cover_lookup_waits_unless_the_track_becomes_active_again() {
+        assert!(!retry_due(Duration::from_millis(40), false), "offline, the next frame must not ask again");
+        assert!(!retry_due(ENTRY_ART_RETRY - Duration::from_secs(1), false));
+        assert!(retry_due(ENTRY_ART_RETRY, false));
+        assert!(retry_due(Duration::ZERO, true));
+    }
 }
 
 /// Shared by views: playlist doc lookup by key.

@@ -117,18 +117,18 @@ struct EntryArtRequest {
     title: String,
 }
 
-/// A cover found online for one track of a mix.
+/// The cover of one track of a mix: found online, or a generated placeholder.
 pub struct EntryArt {
     pub art: Thumb,
     pub retro_art: Option<Thumb>,
-    /// The cached image, for the OS media overlay.
-    pub file: PathBuf,
+    /// The cached image, for the OS media overlay. `None` for a placeholder.
+    pub file: Option<PathBuf>,
 }
 
 pub enum JobResult {
-    /// The cover of the track with this `entry_art::key`: `Ok(None)` when none was found,
-    /// an error when the services could not be asked (the next request tries again).
-    EntryArt { key: String, result: Result<Option<EntryArt>, String> },
+    /// The cover of the track with this `entry_art::key`: a generated placeholder when none was
+    /// found, an error when the services could not be asked (the next request tries again).
+    EntryArt { key: String, result: Result<EntryArt, String> },
     Info { path: PathBuf, info: Result<TrackInfo, String> },
     Missing { paths: Vec<PathBuf> },
     /// `art` is the image's content hash and a small thumbnail, `None` without cover.
@@ -412,10 +412,11 @@ fn run_entry_art(dir: &Path, request: EntryArtRequest) -> JobResult {
         Some(crate::entry_art::Cached::Nothing) => Some(None),
         None => None,
     };
-    let result = match cached {
+    let found = match cached {
         Some(art) => Ok(art),
         None => look_up_entry_art(dir, &key, &artist, &title),
     };
+    let result = found.map(|art| art.unwrap_or_else(|| placeholder_entry_art(&key)));
     JobResult::EntryArt { key, result }
 }
 
@@ -435,7 +436,14 @@ fn look_up_entry_art(dir: &Path, key: &str, artist: &str, title: &str) -> Result
 fn entry_art_from(bytes: &[u8], file: PathBuf) -> Option<EntryArt> {
     let art = decode_thumb(bytes, 512)?;
     let retro_art = crate::retro_art::retro_thumb(&art);
-    Some(EntryArt { art, retro_art, file })
+    Some(EntryArt { art, retro_art, file: Some(file) })
+}
+
+/// Drawn on each request instead of cached, so a better generator also redraws old placeholders.
+fn placeholder_entry_art(key: &str) -> EntryArt {
+    let art = crate::placeholder_art::generate(key);
+    let retro_art = crate::retro_art::retro_thumb(&art);
+    EntryArt { art, retro_art, file: None }
 }
 
 struct Ctx {
@@ -866,11 +874,23 @@ mod tests {
         let (artist, title) = ("Anil Aras", "Dexed Tek");
         let key = crate::entry_art::key(artist, title);
         let request = || EntryArtRequest { key: key.clone(), artist: artist.into(), title: title.into() };
-        let JobResult::EntryArt { result: Ok(Some(first)), .. } = run_entry_art(dir.path(), request()) else { panic!("no cover found") };
+        let JobResult::EntryArt { result: Ok(first), .. } = run_entry_art(dir.path(), request()) else { panic!("no cover found") };
+        let file = first.file.clone().expect("a found cover has a file");
         assert!(first.art.size[0] >= 256 && first.retro_art.is_some());
-        assert!(matches!(crate::entry_art::load(dir.path(), &key), Some(crate::entry_art::Cached::Image(p)) if p == first.file));
-        let JobResult::EntryArt { result: Ok(Some(again)), .. } = run_entry_art(dir.path(), request()) else { panic!("cache missed") };
+        assert!(matches!(crate::entry_art::load(dir.path(), &key), Some(crate::entry_art::Cached::Image(p)) if p == file));
+        let JobResult::EntryArt { result: Ok(again), .. } = run_entry_art(dir.path(), request()) else { panic!("cache missed") };
         assert_eq!(again.file, first.file);
+    }
+
+    #[test]
+    fn a_cached_miss_gets_a_placeholder_without_asking_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = crate::entry_art::key("Pete Oak", "Toro");
+        crate::entry_art::store_nothing(dir.path(), &key);
+        let request = EntryArtRequest { key: key.clone(), artist: "Pete Oak".into(), title: "Toro".into() };
+        let JobResult::EntryArt { result: Ok(art), .. } = run_entry_art(dir.path(), request) else { panic!("no placeholder") };
+        assert!(art.file.is_none() && art.retro_art.is_some());
+        assert_eq!(art.art.rgba, crate::placeholder_art::generate(&key).rgba);
     }
 
     #[test]

@@ -722,6 +722,38 @@ fn render_deck_low_dpi() {
     h.state_mut().player.stop();
 }
 
+#[test]
+fn a_failed_cover_lookup_is_not_asked_again_every_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).wgpu().build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        app.settings.online_artwork = false;
+        app.settings.visualizer = "off".into();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    h.state_mut().player.seek_to(0.2);
+    settle(&mut h, 300);
+
+    let (key, _) = h.state().active_entry_key().expect("the mix fixture names its tracks");
+    let app = h.state_mut();
+    app.now.entry_art.insert(key.clone(), crate::ui::EntryCover::Looking(std::time::Instant::now()));
+    app.now.entry_art_active = Some(key.clone());
+    app.on_entry_art(key.clone(), Err("no network".into()));
+    let crate::ui::EntryCover::Failed(failed_at) = h.state().now.entry_art[&key] else { panic!("an error is remembered as a failure") };
+
+    // Lookups are on again; the track stays active, so nothing is asked until the pause is over.
+    h.state_mut().settings.online_artwork = true;
+    for _ in 0..5 {
+        h.step();
+    }
+    assert!(matches!(h.state().now.entry_art[&key], crate::ui::EntryCover::Failed(at) if at == failed_at));
+    assert!(h.state().deck_art().is_some_and(|a| a.source == crate::ui::ArtSource::File), "the deck keeps the file's cover");
+}
+
 /// The deck's cover turning from the mix's to a track's, frame by frame, side by side in one strip.
 #[test]
 #[ignore]
@@ -747,7 +779,7 @@ fn render_entry_art_transition() {
     let retro = crate::retro_art::retro_thumb(&thumb);
     let texture = |ctx: &egui::Context, t: &crate::workers::Thumb| ctx.load_texture("test-entry-art", egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba), egui::TextureOptions::LINEAR);
     let (key, _) = h.state().active_entry_key().expect("the mix fixture names its tracks");
-    let art = crate::ui::EntryArtwork { art: texture(&h.ctx, &thumb), retro_art: retro.as_ref().map(|t| texture(&h.ctx, t)), file: PathBuf::new() };
+    let art = crate::ui::EntryArtwork { art: texture(&h.ctx, &thumb), retro_art: retro.as_ref().map(|t| texture(&h.ctx, t)), file: None };
     h.state_mut().now.entry_art.insert(key, crate::ui::EntryCover::Found(art));
     h.step();
     assert!(h.state().now.art_transition.is_some(), "a found cover starts the transition");
