@@ -64,6 +64,7 @@ pub struct InspectorState {
     status: Option<(String, bool)>,
     last_backup: Option<(PathBuf, PathBuf)>,
     restore_request: Option<u64>,
+    cover_request: Option<u64>,
 }
 
 impl InspectorState {
@@ -187,6 +188,10 @@ pub fn add_artwork_file(app: &mut App, path: PathBuf) {
 
 fn add_artwork(app: &mut App, data: Arc<[u8]>, mime: Option<String>) {
     let kind = if app.inspector.art.iter().any(|a| a.kind == ArtworkKind::FrontCover) { ArtworkKind::Other } else { ArtworkKind::FrontCover };
+    push_artwork(app, kind, data, mime);
+}
+
+fn push_artwork(app: &mut App, kind: ArtworkKind, data: Arc<[u8]>, mime: Option<String>) {
     app.inspector.art.push(ArtItem { kind, mime, description: None, data, texture: None, size: None, decode_request: None });
     app.inspector.art_touched = true;
     request_art_decodes(app);
@@ -249,6 +254,19 @@ pub fn on_result(app: &mut App, r: JobResult) {
             }
             if !app.inspector.is_loading() {
                 build_fields(app);
+            }
+        }
+        JobResult::TrackCover { request, result } if app.inspector.cover_request == Some(request) => {
+            app.inspector.cover_request = None;
+            match result {
+                Ok(Some(c)) if app.inspector.art.iter().any(|a| *a.data == *c.data) => app.info("That cover is already in the list"),
+                Ok(Some(c)) => {
+                    // Never the front cover: the user chooses that with "Set as front cover".
+                    push_artwork(app, ArtworkKind::Other, c.data, Some(c.mime.into()));
+                    app.info(format!("Added a cover found online: {}", c.source));
+                }
+                Ok(None) => app.info("No cover found online for this artist and title"),
+                Err(e) => app.error(format!("Online lookup failed: {e}")),
             }
         }
         JobResult::Image { request, thumb } => {
@@ -519,8 +537,31 @@ fn actions(app: &mut App, ui: &mut Ui) {
     }
 }
 
+/// The artist and title to look a cover up with, as currently typed (so a fix not yet saved counts).
+fn cover_query(st: &InspectorState) -> Option<(String, String)> {
+    let value = |f: Field| st.fields.get(&f).map(|s| s.value.trim().to_owned()).filter(|v| !v.is_empty());
+    value(Field::Artist).zip(value(Field::Title))
+}
+
+fn find_cover_online(app: &mut App) {
+    let Some((artist, title)) = cover_query(&app.inspector) else { return };
+    let request = app.workers.request_id();
+    app.inspector.cover_request = Some(request);
+    app.workers.request_track_cover(request, artist, title);
+}
+
 fn artwork(app: &mut App, ui: &mut Ui) {
     let writable = app.inspector.loaded.values().all(|m| m.writable);
+    let searching = app.inspector.cover_request.is_some();
+    let find_blocker = if app.inspector.targets.len() != 1 {
+        Some("Select a single file to look its cover up")
+    } else if !app.settings.online_artwork {
+        Some("Online artwork is switched off in the settings")
+    } else if cover_query(&app.inspector).is_none() {
+        Some("Needs an artist and a title")
+    } else {
+        None
+    };
     ui.horizontal(|ui| {
         ui.label(RichText::new("Artwork").strong());
         if app.inspector.art_touched {
@@ -529,6 +570,11 @@ fn artwork(app: &mut App, ui: &mut Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.add_enabled(writable, egui::Button::new("Import…").small()).clicked() {
                 dialogs::pick_artwork(app);
+            }
+            let find = egui::Button::new(if searching { "Finding…" } else { "Find online" }).small();
+            let hint = find_blocker.unwrap_or("Look up a cover by artist and title (Deezer, then iTunes) and add it to the list, without making it the front cover");
+            if ui.add_enabled(writable && !searching && find_blocker.is_none(), find).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
+                find_cover_online(app);
             }
         });
     });

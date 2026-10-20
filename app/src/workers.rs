@@ -8,8 +8,9 @@
 //! - *tempo* analysis has a thread of its own as well, so it neither waits for a waveform nor
 //!   cancels one. Both start after the track has been handed to the audio engine and never
 //!   delay playback;
-//! - *online* artwork lookups for the tracks of a mix wait on the network for seconds, so they
-//!   have a thread of their own too and answer in the order they were asked.
+//! - *online* artwork lookups (the tracks of a mix, and the inspector's "Find online") wait on
+//!   the network for seconds, so they have a thread of their own too and answer in the order
+//!   they were asked.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -117,6 +118,19 @@ struct EntryArtRequest {
     title: String,
 }
 
+enum OnlineRequest {
+    EntryArt(EntryArtRequest),
+    TrackCover { request: u64, artist: String, title: String },
+}
+
+/// A cover found online for the inspector, not yet part of any file's tags.
+pub struct OnlineCover {
+    pub data: Arc<[u8]>,
+    pub mime: &'static str,
+    /// Where it came from, e.g. "Release by Artist on Deezer".
+    pub source: String,
+}
+
 /// The cover of one track of a mix: found online, or a generated placeholder.
 pub struct EntryArt {
     pub art: Thumb,
@@ -126,6 +140,8 @@ pub struct EntryArt {
 }
 
 pub enum JobResult {
+    /// The answer to [`Workers::request_track_cover`]: `Ok(None)` when the services had nothing close enough.
+    TrackCover { request: u64, result: Result<Option<OnlineCover>, String> },
     /// The cover of the track with this `entry_art::key`: a generated placeholder when none was
     /// found, an error when the services could not be asked (the next request tries again).
     EntryArt { key: String, result: Result<EntryArt, String> },
@@ -162,7 +178,7 @@ pub struct Workers {
     waveform_generation: Arc<AtomicU64>,
     tempo: Sender<TempoRequest>,
     tempo_generation: Arc<AtomicU64>,
-    entry_art: Sender<EntryArtRequest>,
+    online: Sender<OnlineRequest>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -258,7 +274,7 @@ impl Workers {
                 .expect("spawn tempo worker");
         }
 
-        let (entry_art, entry_art_rx) = crossbeam_channel::unbounded::<EntryArtRequest>();
+        let (online, online_rx) = crossbeam_channel::unbounded::<OnlineRequest>();
         {
             let (tx, w, dir) = (results_tx.clone(), Arc::clone(&waker), paths.track_artwork_cache());
             std::thread::Builder::new()
@@ -268,8 +284,12 @@ impl Workers {
                     if removed > 0 {
                         log::debug!("removed {removed} expired track artwork cache entries");
                     }
-                    while let Ok(request) = entry_art_rx.recv() {
-                        if tx.send(run_entry_art(&dir, request)).is_err() {
+                    while let Ok(request) = online_rx.recv() {
+                        let result = match request {
+                            OnlineRequest::EntryArt(request) => run_entry_art(&dir, request),
+                            OnlineRequest::TrackCover { request, artist, title } => JobResult::TrackCover { request, result: look_up_track_cover(&artist, &title) },
+                        };
+                        if tx.send(result).is_err() {
                             return;
                         }
                         w();
@@ -285,7 +305,7 @@ impl Workers {
             waveform_generation,
             tempo,
             tempo_generation,
-            entry_art,
+            online,
             results,
             scan_generation,
             cover_generation,
@@ -296,7 +316,14 @@ impl Workers {
     /// Find the cover of one track of a mix: in the cache, else online. Answered with
     /// [`JobResult::EntryArt`] under `key`.
     pub fn request_entry_art(&self, key: String, artist: String, title: String) {
-        let _ = self.entry_art.send(EntryArtRequest { key, artist, title });
+        let _ = self.online.send(OnlineRequest::EntryArt(EntryArtRequest { key, artist, title }));
+    }
+
+    /// Find a cover for one file, for the user to add to its artwork. Answered with
+    /// [`JobResult::TrackCover`] under `request`. Unlike the mix lookups it always asks the
+    /// services and keeps nothing on disk: the user decides whether the image is used.
+    pub fn request_track_cover(&self, request: u64, artist: String, title: String) {
+        let _ = self.online.send(OnlineRequest::TrackCover { request, artist, title });
     }
 
     pub fn request_id(&self) -> u64 {
@@ -431,6 +458,19 @@ fn look_up_entry_art(dir: &Path, key: &str, artist: &str, title: &str) -> Result
     let file = crate::entry_art::store_image(dir, key, &bytes).ok_or("cannot write the artwork cache")?;
     log::info!("artwork for {artist} - {title}: {} by {} on {}", found.candidate.release, found.candidate.artist, found.source.name());
     entry_art_from(&bytes, file).map(Some).ok_or_else(|| "the cover is not an image".to_owned())
+}
+
+fn look_up_track_cover(artist: &str, title: &str) -> Result<Option<OnlineCover>, String> {
+    let program = concat!("Nullamp/", env!("CARGO_PKG_VERSION"));
+    let Some(found) = nullamp_artwork::find(artist, title, program).map_err(|e| e.to_string())? else {
+        log::info!("no artwork found online for {artist} - {title}");
+        return Ok(None);
+    };
+    let bytes = nullamp_artwork::download(&found.candidate.image_url, program).map_err(|e| e.to_string())?;
+    let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
+    let source = format!("{} by {} on {}", found.candidate.release, found.candidate.artist, found.source.name());
+    log::info!("artwork for {artist} - {title}: {source}");
+    Ok(Some(OnlineCover { data: Arc::from(bytes), mime, source }))
 }
 
 fn entry_art_from(bytes: &[u8], file: PathBuf) -> Option<EntryArt> {

@@ -702,6 +702,7 @@ impl App {
             JobResult::Inspected { .. }
             | JobResult::Image { .. }
             | JobResult::Written { .. }
+            | JobResult::TrackCover { .. }
             | JobResult::Restored { .. } => inspector::on_result(self, r),
         }
     }
