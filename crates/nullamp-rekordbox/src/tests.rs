@@ -243,6 +243,19 @@ fn collection_with_the_wrong_key_is_an_error() {
 }
 
 #[test]
+fn path_key_on_windows_ignores_separator_and_case() {
+    assert_eq!(key_of("C:\\Users\\DJ\\Music\\a.mp3", true), key_of("c:/users/dj/music/A.mp3", true));
+    assert_ne!(key_of("/Contents/A.mp3", false), key_of("/Contents/a.mp3", false));
+}
+
+#[test]
+fn under_builds_a_path_from_the_databases_slashes() {
+    assert_eq!(under(Path::new("/stick"), "/Contents/a/b.mp3"), Some(Path::new("/stick").join("Contents").join("a").join("b.mp3")));
+    assert_eq!(under(Path::new("/stick"), "/"), None);
+    assert_eq!(under(Path::new("/stick"), ""), None);
+}
+
+#[test]
 fn detect_finds_only_volumes_with_an_export() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("STICK/PIONEER/rekordbox")).unwrap();

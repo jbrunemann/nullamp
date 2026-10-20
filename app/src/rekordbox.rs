@@ -32,11 +32,22 @@ fn info(t: &Track) -> TrackInfo {
 }
 
 /// The tracks of every stick mounted under `volumes`.
-pub fn load_sticks(volumes: &Path) -> Vec<Loaded> {
-    nullamp_rekordbox::detect(volumes)
+#[cfg(test)]
+fn load_sticks(volumes: &Path) -> Vec<Loaded> {
+    load_stick_roots(nullamp_rekordbox::detect(volumes))
+}
+
+/// The tracks of every stick mounted anywhere the platform mounts them (`/Volumes`, drive letters, ...).
+pub fn load_mounted_sticks() -> Vec<Loaded> {
+    load_stick_roots(nullamp_rekordbox::detect_mounted())
+}
+
+fn load_stick_roots(roots: Vec<PathBuf>) -> Vec<Loaded> {
+    roots
         .into_iter()
         .map(|root| {
-            let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "rekordbox".into());
+            // A Windows drive root has no file name; the drive letter ("E:") names it instead.
+            let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).or_else(|| Some(root.to_string_lossy().trim_end_matches(['\\', '/']).to_owned()).filter(|n| !n.is_empty())).unwrap_or_else(|| "rekordbox".into());
             let tracks = Stick::open(&root).map(|s| s.tracks.iter().map(|t| (t.file.clone(), info(t))).collect()).map_err(|e| e.to_string());
             Loaded { name, tracks }
         })
@@ -172,10 +183,11 @@ pub struct DesktopConfig {
 }
 
 impl DesktopConfig {
-    /// The standard rekordbox 7 location (`~/Library/Pioneer/rekordbox`) with the given key, or
-    /// `None` when the home directory cannot be found.
+    /// The standard rekordbox 7 location with the given key (`~/Library/Pioneer/rekordbox` on macOS,
+    /// `%APPDATA%\Pioneer\rekordbox` on Windows), or `None` when the home directory cannot be found.
     pub fn standard(key: String) -> Option<DesktopConfig> {
-        let base = directories::BaseDirs::new()?.home_dir().join("Library/Pioneer/rekordbox");
+        let dirs = directories::BaseDirs::new()?;
+        let base = if cfg!(windows) { dirs.config_dir().join("Pioneer/rekordbox") } else { dirs.home_dir().join("Library/Pioneer/rekordbox") };
         Some(DesktopConfig { db: base.join("master.db"), share: base.join("share"), key })
     }
 }

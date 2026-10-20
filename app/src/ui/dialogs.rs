@@ -488,12 +488,22 @@ fn rekordbox_body(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.hyperlink_to(RichText::new("pyrekordbox docs").small(), "https://pyrekordbox.readthedocs.io");
     });
-    ui.label(RichText::new("The key opens your rekordbox collection from the List menu and fills in key and BPM for your files. rekordbox 7 uses the same key on every computer: with rekordbox closed, copy the command, run it in Terminal and paste the 64-character result here.").small().weak());
+    ui.label(RichText::new(format!("The key opens your rekordbox collection from the List menu and fills in key and BPM for your files. rekordbox 7 uses the same key on every computer: with rekordbox closed, copy the command, run it in {SHELL} and paste the 64-character result here.")).small().weak());
 }
 
 /// A one-time, copy-paste recipe that installs pyrekordbox into a private virtualenv and prints the
 /// rekordbox desktop key. Kept out of the UI code so it stays easy to update.
+#[cfg(not(windows))]
 const REKORDBOX_KEY_COMMAND: &str = "python3 -m venv ~/.rekordbox-key && ~/.rekordbox-key/bin/pip install -q pyrekordbox && ~/.rekordbox-key/bin/python -c \"import warnings;warnings.filterwarnings('ignore');from pyrekordbox.masterdb import MasterDatabase;print(MasterDatabase().engine.url.password)\"";
+
+/// The same recipe for PowerShell, where the virtualenv's tools live in `Scripts`.
+#[cfg(windows)]
+const REKORDBOX_KEY_COMMAND: &str = "python -m venv $HOME\\.rekordbox-key; & $HOME\\.rekordbox-key\\Scripts\\pip install -q pyrekordbox; & $HOME\\.rekordbox-key\\Scripts\\python -c \"import warnings;warnings.filterwarnings('ignore');from pyrekordbox.masterdb import MasterDatabase;print(MasterDatabase().engine.url.password)\"";
+
+#[cfg(windows)]
+const SHELL: &str = "PowerShell";
+#[cfg(not(windows))]
+const SHELL: &str = "Terminal";
 
 /// The shortcut list in as many columns as the deck is wide, so it fits its height.
 fn shortcuts_body(ui: &mut egui::Ui) {

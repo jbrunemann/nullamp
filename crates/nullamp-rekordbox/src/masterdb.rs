@@ -1,4 +1,5 @@
-//! Reads the rekordbox **desktop** library: `~/Library/Pioneer/rekordbox/master.db`, a
+//! Reads the rekordbox **desktop** library: `master.db` in `~/Library/Pioneer/rekordbox` on macOS or
+//! `%APPDATA%\Pioneer\rekordbox` on Windows, a
 //! SQLCipher-encrypted SQLite database. Unlike a USB stick (`export.pdb`), the desktop app keeps
 //! absolute local paths to the originals, so its tracks play straight from disk, and the analysis
 //! files it points at live under the `share` folder next to the database.
@@ -41,8 +42,7 @@ impl From<rusqlite::Error> for Error {
 /// The analysis files a desktop track points at are named relative to the `share` folder
 /// (`/PIONEER/USBANLZ/...`); on a stick the same path is relative to the stick's root.
 fn under_share(share: &Path, path: &str) -> Option<PathBuf> {
-    let relative = path.trim_start_matches('/');
-    (!relative.is_empty()).then(|| share.join(relative))
+    crate::under(share, path)
 }
 
 impl Collection {

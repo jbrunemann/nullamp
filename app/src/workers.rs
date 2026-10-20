@@ -84,7 +84,7 @@ pub enum Job {
     Covers { generation: u64, paths: Vec<PathBuf> },
     ExpandPaths { request: u64, paths: Vec<PathBuf> },
     ImportPlaylist { request: u64, path: PathBuf },
-    /// Read the library of every rekordbox USB stick mounted under `/Volumes`.
+    /// Read the library of every rekordbox USB stick that is mounted.
     OpenSticks,
     /// Read the rekordbox desktop library (`master.db`) with the configured key.
     OpenCollection,
@@ -601,7 +601,7 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
             });
             vec![JobResult::Imported { request, result }]
         }
-        Job::OpenSticks => vec![JobResult::Sticks(crate::rekordbox::load_sticks(Path::new("/Volumes")))],
+        Job::OpenSticks => vec![JobResult::Sticks(crate::rekordbox::load_mounted_sticks())],
         Job::OpenCollection => vec![JobResult::Collection(ctx.desktop.open_playlists())],
         Job::ExportPlaylist { path, items } => {
             let base = path.parent().map(Path::to_path_buf);

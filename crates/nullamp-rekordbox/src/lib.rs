@@ -109,10 +109,17 @@ fn database(root: &Path) -> PathBuf {
     root.join("PIONEER").join("rekordbox").join("export.pdb")
 }
 
+/// `path` from the database (always written with `/`) below `base`, one component at a time so the
+/// result carries the platform's own separators. `None` for an empty path.
+pub(crate) fn under(base: &Path, path: &str) -> Option<PathBuf> {
+    let mut parts = path.split('/').filter(|p| !p.is_empty()).peekable();
+    parts.peek()?;
+    Some(parts.fold(base.to_path_buf(), |dir, part| dir.join(part)))
+}
+
 /// Paths in the database are absolute on the stick (`/Contents/...`).
 fn on_stick(root: &Path, path: &str) -> Option<PathBuf> {
-    let relative = path.trim_start_matches('/');
-    (!relative.is_empty()).then(|| root.join(relative))
+    under(root, path)
 }
 
 /// The stick that holds `file`: the nearest folder above it with an export.
@@ -121,10 +128,16 @@ pub fn stick_root(file: &Path) -> Option<PathBuf> {
 }
 
 /// A path as a string that compares equal however its accents are encoded. The database holds
-/// "ë" as one character while a FAT or exFAT volume lists it as "e" and a combining mark.
+/// "ë" as one character while a FAT or exFAT volume lists it as "e" and a combining mark. On
+/// Windows it also ignores the separator (the database writes `/`) and the case, as the file system does.
 pub fn path_key(path: &Path) -> String {
+    key_of(&path.to_string_lossy(), cfg!(windows))
+}
+
+fn key_of(path: &str, windows: bool) -> String {
     use unicode_normalization::UnicodeNormalization;
-    path.to_string_lossy().nfc().collect()
+    let key: String = path.nfc().collect();
+    if windows { key.replace('\\', "/").to_lowercase() } else { key }
 }
 
 /// Mounted volumes under `volumes` (`/Volumes` on macOS) that hold a rekordbox export.
@@ -132,6 +145,24 @@ pub fn detect(volumes: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(volumes) else { return Vec::new() };
     let mut found: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).filter(|p| database(p).is_file()).collect();
     found.sort();
+    found
+}
+
+/// Every mounted volume that holds a rekordbox export: the drive letters on Windows, the volumes
+/// under `/Volumes` on macOS and the usual removable-media folders on Linux.
+pub fn detect_mounted() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if cfg!(windows) {
+        let drives = (b'A'..=b'Z').map(|letter| PathBuf::from(format!("{}:\\", letter as char)));
+        found.extend(drives.filter(|root| database(root).is_file()));
+    } else if cfg!(target_os = "macos") {
+        found = detect(Path::new("/Volumes"));
+    } else {
+        let user = std::env::var("USER").unwrap_or_default();
+        for dir in [format!("/run/media/{user}"), format!("/media/{user}"), "/media".into(), "/mnt".into()] {
+            found.extend(detect(Path::new(&dir)));
+        }
+    }
     found
 }
 
