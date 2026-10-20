@@ -3,6 +3,7 @@
 // Release builds on Windows are GUI-subsystem programs so no console window opens behind the player.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod cache;
 mod entry_art;
 mod logbuf;
 mod paths;

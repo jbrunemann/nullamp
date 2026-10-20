@@ -663,6 +663,53 @@ fn render_updates() {
     save(&mut h, "06e-updates.png");
 }
 
+/// The Cache page counts what the cache folder holds, and "Clear all" empties it.
+#[test]
+fn cache_tab_counts_and_clears() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.cache.clone();
+    std::fs::create_dir_all(cache.join("waveforms")).unwrap();
+    std::fs::write(cache.join("waveforms/0000000000000001.wf"), vec![0u8; 4096]).unwrap();
+    std::fs::write(cache.join("waveforms/0000000000000001.bpm"), [0u8; 12]).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 520.0)).build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Cache);
+    settle(&mut h, 500);
+    let usage = h.state().dialogs.cache.usage.clone().expect("scanned on opening the tab");
+    assert_eq!(usage.iter().map(|(_, u)| u.entries).sum::<usize>(), 2);
+    h.get_by_label("Clear all").click();
+    settle(&mut h, 500);
+    assert!(!cache.join("waveforms/0000000000000001.wf").exists());
+    assert!(h.state().dialogs.cache.usage.as_ref().unwrap().iter().all(|(_, u)| u.entries == 0));
+}
+
+/// The Cache page with something in every kind.
+#[test]
+#[ignore]
+fn render_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.cache.clone();
+    for (rel, len) in [
+        ("waveforms/1.wf", 4100),
+        ("waveforms/2.wf", 4100),
+        ("waveforms/1.bpm", 12),
+        ("waveforms/1.rwf", 10240),
+        ("artwork/tracks/1.jpg", 180_000),
+        ("artwork/tracks/2.none", 1),
+        ("artwork/now-1.jpg", 420_000),
+        ("online/0240/page", 29_000_000),
+    ] {
+        std::fs::create_dir_all(cache.join(rel).parent().unwrap()).unwrap();
+        std::fs::write(cache.join(rel), vec![0u8; len]).unwrap();
+    }
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Cache);
+    settle(&mut h, 500);
+    save(&mut h, "06f-cache.png");
+}
+
 /// While a mix plays, the deck shows the tempo of the active track, found when it becomes
 /// active, not one for the whole file.
 #[test]

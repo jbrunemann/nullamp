@@ -6,6 +6,7 @@ use crossbeam_channel::{Receiver, Sender};
 use egui::{Key, RichText};
 
 use super::{App, list_index, playlist_view, setlist_view, theme, widgets};
+use crate::cache::{self, Kind, Usage};
 use crate::workers::{AUDIO_EXTENSIONS, Job};
 
 pub enum DialogResult {
@@ -16,6 +17,8 @@ pub enum DialogResult {
     ExportSetlist { format: setlist_view::ExportFormat, path: PathBuf },
     Artwork(PathBuf),
     UpdateChecked(Result<nullamp_update::Status, nullamp_update::Error>),
+    /// What the cache folder holds, after a scan or a clear.
+    CacheUsage(Vec<(Kind, Usage)>),
 }
 
 /// The pages of the settings screen.
@@ -27,10 +30,11 @@ pub enum SettingsTab {
     About,
     Logs,
     Updates,
+    Cache,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 6] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Updates, SettingsTab::Logs, SettingsTab::About];
+    const ALL: [SettingsTab; 7] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -40,6 +44,7 @@ impl SettingsTab {
             SettingsTab::About => "About",
             SettingsTab::Logs => "Logs",
             SettingsTab::Updates => "Updates",
+            SettingsTab::Cache => "Cache",
         }
     }
 }
@@ -50,6 +55,16 @@ pub enum UpdateState {
     Idle,
     Checking,
     Done(Result<nullamp_update::Status, nullamp_update::Error>),
+}
+
+/// What the Cache tab shows. The folder changes while tracks play, so it is read again on each visit.
+#[derive(Default)]
+pub struct CacheState {
+    pub usage: Option<Vec<(Kind, Usage)>>,
+    /// A scan or a clear is running.
+    busy: bool,
+    /// This visit to the tab has asked for the numbers.
+    requested: bool,
 }
 
 pub struct Dialogs {
@@ -63,12 +78,13 @@ pub struct Dialogs {
     pub settings: Option<SettingsTab>,
     about_icon: Option<egui::TextureHandle>,
     pub update: UpdateState,
+    pub cache: CacheState,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default() }
     }
 }
 
@@ -100,6 +116,22 @@ pub fn check_for_updates(app: &mut App) {
     std::thread::spawn(move || {
         let version = env!("CARGO_PKG_VERSION");
         let _ = tx.send(DialogResult::UpdateChecked(nullamp_update::check(&source, version, &format!("nullamp/{version}"))));
+        ctx.request_repaint();
+    });
+}
+
+/// Read the cache folder, after removing the files of `clear`, on a helper thread (it walks the
+/// folder). The answer is the new `CacheUsage`.
+fn scan_cache(app: &mut App, clear: Vec<Kind>) {
+    app.dialogs.cache.busy = true;
+    app.dialogs.cache.requested = true;
+    let (tx, ctx, paths) = (app.dialogs.tx.clone(), app.ctx.clone(), app.store.paths.clone());
+    std::thread::spawn(move || {
+        if !clear.is_empty() {
+            let removed = cache::clear(&paths, &clear);
+            log::info!("cleared {removed} cache files");
+        }
+        let _ = tx.send(DialogResult::CacheUsage(cache::scan(&paths)));
         ctx.request_repaint();
     });
 }
@@ -242,6 +274,10 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
             }
         }
         DialogResult::UpdateChecked(result) => app.dialogs.update = UpdateState::Done(result),
+        DialogResult::CacheUsage(usage) => {
+            app.dialogs.cache.usage = Some(usage);
+            app.dialogs.cache.busy = false;
+        }
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
@@ -368,7 +404,10 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
 /// The settings page takes over the deck instead of floating over the window: in the compact
 /// layout the window is only as tall as the deck, and a free window would be cut off.
 pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
-    let Some(mut tab) = app.dialogs.settings else { return };
+    let Some(mut tab) = app.dialogs.settings else {
+        app.dialogs.cache.requested = false;
+        return;
+    };
     let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
     let inner = deck.size() - egui::vec2(20.0, 16.0);
     egui::Area::new(egui::Id::NULL.with("deck-overlay")).order(egui::Order::Foreground).fixed_pos(deck.min).show(ctx, |ui| {
@@ -399,10 +438,14 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::About => about_body(app, ui),
                     SettingsTab::Logs => logs_body(ui),
                     SettingsTab::Updates => updates_body(app, ui),
+                    SettingsTab::Cache => cache_body(app, ui),
                 }
             });
         });
     });
+    if tab != SettingsTab::Cache {
+        app.dialogs.cache.requested = false;
+    }
     app.dialogs.settings = if close { None } else { Some(tab) };
 }
 
@@ -542,5 +585,58 @@ fn updates_body(app: &mut App, ui: &mut egui::Ui) {
         UpdateState::Done(Err(e)) => {
             ui.label(format!("Couldn't check for updates: {e}."));
         }
+    }
+}
+
+fn files(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "file" } else { "files" })
+}
+
+/// What the cache holds, with a button to clear each kind and all of it.
+fn cache_body(app: &mut App, ui: &mut egui::Ui) {
+    if !app.dialogs.cache.requested {
+        scan_cache(app, Vec::new());
+    }
+    let dim = theme::text_dim();
+    let busy = app.dialogs.cache.busy;
+    let mut clear: Option<Vec<Kind>> = None;
+    match app.dialogs.cache.usage.clone() {
+        None => {
+            ui.label(RichText::new("Reading the cache...").small().color(dim));
+        }
+        Some(usage) => {
+            let total = usage.iter().fold(Usage::default(), |t, (_, u)| Usage { entries: t.entries + u.entries, bytes: t.bytes + u.bytes });
+            ui.horizontal(|ui| {
+                ui.label(format!("{} in {}", cache::format_bytes(total.bytes), files(total.entries)));
+                if ui.small_button("Show in Finder").clicked() {
+                    reveal(&app.store.paths.cache);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add_enabled(!busy && total.entries > 0, egui::Button::new("Clear all")).on_hover_text("Everything here is made again when needed").clicked() {
+                        clear = Some(Kind::ALL.to_vec());
+                    }
+                });
+            });
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical().id_salt("cache-scroll").auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().interact_size.y = 16.0;
+                ui.spacing_mut().button_padding.y = 1.0;
+                egui::Grid::new("cache-usage").num_columns(4).spacing([14.0, 2.0]).show(ui, |ui| {
+                    // Leftovers only matter to someone who ran older versions.
+                    for (kind, u) in usage.iter().filter(|(k, u)| *k != Kind::Leftovers || u.entries > 0) {
+                        ui.label(RichText::new(kind.label()).size(12.0)).on_hover_text(kind.about());
+                        ui.label(RichText::new(files(u.entries)).size(12.0).color(dim));
+                        ui.label(RichText::new(cache::format_bytes(u.bytes)).size(12.0).color(dim));
+                        if ui.add_enabled(!busy && u.entries > 0, egui::Button::new(RichText::new("Clear").size(11.0)).small()).on_hover_text(kind.about()).clicked() {
+                            clear = Some(vec![*kind]);
+                        }
+                        ui.end_row();
+                    }
+                });
+            });
+        }
+    }
+    if let Some(kinds) = clear {
+        scan_cache(app, kinds);
     }
 }
