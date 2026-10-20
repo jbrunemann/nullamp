@@ -69,8 +69,6 @@ pub struct NowState {
     pub meta: Option<FileMetadata>,
     pub art: Option<TextureHandle>,
     pub retro_art: Option<TextureHandle>,
-    /// The deck shows the original cover instead of the retro one until the next click or track.
-    pub show_original_art: bool,
     pub art_file: Option<PathBuf>,
     /// Loudness overview behind the timeline; arrives after the track starts.
     pub waveform: Option<nullamp_audio::Waveform>,

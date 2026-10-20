@@ -25,14 +25,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
         let retro = app.settings.retro_artwork && app.now.art_shown.as_ref().is_some_and(|a| a.retro_art.is_some());
-        let hint = match (retro, app.now.show_original_art) {
+        let hint = match (retro, app.settings.original_artwork) {
             (true, false) => "Retro artwork · click to see the original",
             (true, true) => "Original artwork · click to go back to retro",
             (false, _) => "Artwork · click to open the inspector",
         };
         if art_resp.on_hover_text(hint).clicked() {
             if retro {
-                app.now.show_original_art = !app.now.show_original_art;
+                app.settings.original_artwork = !app.settings.original_artwork;
+                app.mark_settings_dirty();
             } else {
                 app.toggle_side(SideTab::Inspector);
             }
@@ -495,7 +496,7 @@ fn artwork(app: &mut App, ui: &Ui, rect: Rect) {
     app.refresh_deck_art(time);
     let p = ui.painter_at(rect);
     p.rect_filled(rect, ART_RADIUS, theme::LCD_BG);
-    let retro = app.settings.retro_artwork && !app.now.show_original_art;
+    let retro = app.settings.retro_artwork && !app.settings.original_artwork;
     let shown = app.now.art_shown.as_ref().and_then(|a| a.pick(retro));
     match &app.now.art_transition {
         Some(t) => {

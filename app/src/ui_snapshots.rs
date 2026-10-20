@@ -808,11 +808,11 @@ fn render_deck_retro_artwork() {
     settle(&mut h, 1500);
     assert!(h.state().now.art.is_some() && h.state().now.retro_art.is_some(), "the fixture has a cover");
     save(&mut h, "05-deck-art-retro.png");
-    h.state_mut().now.show_original_art = true;
+    h.state_mut().settings.original_artwork = true;
     settle(&mut h, 200);
     save(&mut h, "05b-deck-art-original.png");
     h.state_mut().settings.retro_artwork = false;
-    h.state_mut().now.show_original_art = false;
+    h.state_mut().settings.original_artwork = false;
     settle(&mut h, 200);
     save(&mut h, "05c-deck-art-setting-off.png");
     h.state_mut().player.stop();

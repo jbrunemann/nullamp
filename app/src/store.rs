@@ -50,8 +50,11 @@ pub struct Settings {
     pub playlist_columns: Vec<String>,
     /// Audio output chosen by the user (an engine device id). `None` follows the system default.
     pub output_device: Option<String>,
-    /// Show covers as green dithered pixel art. A click on the deck artwork flips to the original.
+    /// Show covers as green dithered pixel art.
     pub retro_artwork: bool,
+    /// A click on the deck artwork flips to the original covers and back; the choice is kept
+    /// across tracks and restarts.
+    pub original_artwork: bool,
     /// The inspector shows the playing track instead of the playlist selection.
     pub inspector_follows_playing: bool,
     /// Keys shown as Camelot codes (8A) rather than musical names (Am). Only set in settings.json.
@@ -96,6 +99,7 @@ impl Default for Settings {
             playlist_columns: Vec::new(),
             output_device: None,
             retro_artwork: true,
+            original_artwork: false,
             inspector_follows_playing: false,
             camelot: true,
             update_url: DEFAULT_UPDATE_URL.into(),
