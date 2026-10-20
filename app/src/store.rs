@@ -65,6 +65,11 @@ pub struct Settings {
     /// Tracks on a rekordbox USB stick show the waveform rekordbox analysed instead of one
     /// decoded from the file.
     pub rekordbox_waveform: bool,
+    /// The SQLCipher key (64 hex characters) for the rekordbox **desktop** library (`master.db`),
+    /// which the user supplies once. Empty turns the desktop library off. Only set in settings.json
+    /// or the field on the Settings General tab.
+    #[serde(default)]
+    pub rekordbox_key: String,
 }
 
 impl Default for Settings {
@@ -96,6 +101,7 @@ impl Default for Settings {
             update_url: DEFAULT_UPDATE_URL.into(),
             online_artwork: true,
             rekordbox_waveform: true,
+            rekordbox_key: String::new(),
         }
     }
 }

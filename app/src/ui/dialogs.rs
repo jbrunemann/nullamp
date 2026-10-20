@@ -467,10 +467,37 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.add_space(10.0);
     ui.label(RichText::new("Waveform").small().weak());
-    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's analysis for tracks on its USB sticks").on_hover_text("Takes effect when the next track starts").changed() {
+    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's analysis for tracks on its USB sticks and desktop library").on_hover_text("Takes effect when the next track starts").changed() {
         app.mark_settings_dirty();
     }
+    ui.add_space(10.0);
+    ui.label(RichText::new("rekordbox desktop library").small().weak());
+    ui.horizontal(|ui| {
+        ui.label("master.db key:");
+        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.rekordbox_key).password(true).hint_text("64 hex characters").desired_width(260.0));
+        if field.changed() {
+            app.workers.set_rekordbox_key(&app.settings.rekordbox_key);
+            app.mark_settings_dirty();
+        }
+    });
+    ui.label(RichText::new("Opens your rekordbox collection from the List menu and fills in key and BPM for your files.").small().weak());
+    ui.collapsing("How to get this key", |ui| {
+        ui.label(RichText::new("rekordbox 7 uses the same key on every computer, so this is a one-time step. With rekordbox closed, run this in Terminal and paste the 64-character result above:").small());
+        ui.add_space(4.0);
+        ui.label(RichText::new(REKORDBOX_KEY_COMMAND).monospace().small());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button("Copy command").clicked() {
+                ui.ctx().copy_text(REKORDBOX_KEY_COMMAND.to_owned());
+            }
+            ui.hyperlink_to(RichText::new("pyrekordbox docs").small(), "https://pyrekordbox.readthedocs.io");
+        });
+    });
 }
+
+/// A one-time, copy-paste recipe that installs pyrekordbox into a private virtualenv and prints the
+/// rekordbox desktop key. Kept out of the UI code so it stays easy to update.
+const REKORDBOX_KEY_COMMAND: &str = "python3 -m venv ~/.rekordbox-key && ~/.rekordbox-key/bin/pip install -q pyrekordbox && ~/.rekordbox-key/bin/python -c \"import warnings;warnings.filterwarnings('ignore');from pyrekordbox.masterdb import MasterDatabase;print(MasterDatabase().engine.url.password)\"";
 
 /// The shortcut list in as many columns as the deck is wide, so it fits its height.
 fn shortcuts_body(ui: &mut egui::Ui) {

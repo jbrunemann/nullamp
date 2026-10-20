@@ -255,6 +255,7 @@ impl App {
         }
 
         let workers = Workers::start(store.paths.clone(), waker);
+        workers.set_rekordbox_key(&settings.rekordbox_key);
         let (system_tx, system_events) = crossbeam_channel::unbounded::<SystemEvent>();
         let sysmedia = {
             let tx = system_tx.clone();
@@ -662,6 +663,10 @@ impl App {
                 }
             }
             JobResult::Sticks(sticks) => self.on_sticks(sticks),
+            JobResult::Collection(result) => match result {
+                Ok(lists) => self.on_sticks(lists),
+                Err(e) => self.error(format!("Cannot read the rekordbox collection: {e}")),
+            },
             JobResult::Exported { path, result } => match result {
                 Ok(()) => self.info(format!("Exported {}", path.display())),
                 Err(e) => self.error(format!("Export failed: {e}")),

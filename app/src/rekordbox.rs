@@ -141,19 +141,119 @@ impl Sticks {
     }
 
     pub fn waveform(&self, file: &Path) -> Option<Analysed> {
-        let track = self.track(file)?;
-        match track.waveform() {
-            Ok(Some(wave)) => {
-                let (peak, rms) = wave.buckets(nullamp_audio::WAVEFORM_BUCKETS);
-                log::info!("waveform of {} from the rekordbox analysis ({} columns)", file.display(), wave.heights.len());
-                Some(Analysed { wave: nullamp_audio::Waveform { peak, rms }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
-            }
-            Ok(None) => None,
-            Err(e) => {
-                log::debug!("rekordbox waveform of {}: {e}", file.display());
-                None
+        analysed(file, &self.track(file)?)
+    }
+}
+
+/// The waveform rekordbox analysed for `track`, in the timeline's form. Shared by the stick and the
+/// desktop library, which differ only in how they find the track.
+fn analysed(file: &Path, track: &Track) -> Option<Analysed> {
+    match track.waveform() {
+        Ok(Some(wave)) => {
+            let (peak, rms) = wave.buckets(nullamp_audio::WAVEFORM_BUCKETS);
+            log::info!("waveform of {} from the rekordbox analysis ({} columns)", file.display(), wave.heights.len());
+            Some(Analysed { wave: nullamp_audio::Waveform { peak, rms }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
+        }
+        Ok(None) => None,
+        Err(e) => {
+            log::debug!("rekordbox waveform of {}: {e}", file.display());
+            None
+        }
+    }
+}
+
+/// Where the desktop library lives and the key to open it. The share folder holds the analysis
+/// files, normally the `share` directory beside `master.db`.
+#[derive(Clone, PartialEq)]
+pub struct DesktopConfig {
+    pub db: PathBuf,
+    pub key: String,
+    pub share: PathBuf,
+}
+
+impl DesktopConfig {
+    /// The standard rekordbox 7 location (`~/Library/Pioneer/rekordbox`) with the given key, or
+    /// `None` when the home directory cannot be found.
+    pub fn standard(key: String) -> Option<DesktopConfig> {
+        let base = directories::BaseDirs::new()?.home_dir().join("Library/Pioneer/rekordbox");
+        Some(DesktopConfig { db: base.join("master.db"), share: base.join("share"), key })
+    }
+}
+
+/// The parsed desktop library, by file path, as of the database's modification time.
+struct LoadedCollection {
+    modified: Option<SystemTime>,
+    tracks: HashMap<String, Track>,
+}
+
+/// The rekordbox **desktop** library: the tracks of `master.db`, indexed by file path so what
+/// rekordbox knows fills any file the user plays, wherever it came from. Parallels [`Sticks`] but
+/// for the local collection, which needs a key the user supplies once. Empty until a key is set.
+#[derive(Default)]
+pub struct Desktop {
+    config: Mutex<Option<DesktopConfig>>,
+    loaded: Mutex<Option<LoadedCollection>>,
+}
+
+impl Desktop {
+    /// Points the library at a new location and key (or clears it). Drops the parsed library so the
+    /// next lookup reads the new one.
+    pub fn set_config(&self, config: Option<DesktopConfig>) {
+        let mut slot = self.config.lock().unwrap();
+        if *slot != config {
+            *slot = config;
+            *self.loaded.lock().unwrap() = None;
+        }
+    }
+
+    /// Opens the configured library for browsing: the whole collection as one playlist, then every
+    /// non-empty rekordbox playlist as its own. `Err` when no key is set or the database will not open.
+    pub fn open_playlists(&self) -> Result<Vec<Loaded>, String> {
+        let config = self.config.lock().unwrap().clone().ok_or("No rekordbox key set (Settings > General)")?;
+        let col = nullamp_rekordbox::Collection::open(&config.db, &config.key, &config.share).map_err(|e| e.to_string())?;
+        let entry = |t: &Track| (t.file.clone(), info(t));
+        let mut lists = vec![Loaded { name: "rekordbox".into(), tracks: Ok(col.tracks.iter().map(entry).collect()) }];
+        for p in &col.playlists {
+            if !p.tracks.is_empty() {
+                lists.push(Loaded { name: p.name.clone(), tracks: Ok(p.tracks.iter().map(|&i| entry(&col.tracks[i])).collect()) });
             }
         }
+        Ok(lists)
+    }
+
+    /// rekordbox's record of `file`, reloading the library when `master.db` has changed. `None` when
+    /// no key is set, the library will not open, or the file is not in it.
+    fn track(&self, file: &Path) -> Option<Track> {
+        let config = self.config.lock().unwrap().clone()?;
+        let modified = std::fs::metadata(&config.db).and_then(|m| m.modified()).ok();
+        let mut loaded = self.loaded.lock().unwrap();
+        if loaded.as_ref().is_none_or(|c| c.modified != modified) {
+            let tracks = match nullamp_rekordbox::Collection::open(&config.db, &config.key, &config.share) {
+                Ok(col) => col.tracks.into_iter().map(|t| (nullamp_rekordbox::path_key(&t.file), t)).collect(),
+                Err(e) => {
+                    log::debug!("rekordbox desktop library {}: {e}", config.db.display());
+                    HashMap::new()
+                }
+            };
+            *loaded = Some(LoadedCollection { modified, tracks });
+        }
+        loaded.as_ref()?.tracks.get(&nullamp_rekordbox::path_key(file)).cloned()
+    }
+
+    /// Fills what the file's own tags leave out from the library. `false` when the file is not in it.
+    pub fn fill(&self, file: &Path, info: &mut TrackInfo) -> bool {
+        let Some(track) = self.track(file) else { return false };
+        fill_gaps(info, &self::info(&track));
+        true
+    }
+
+    /// The cacheable record of a file in the library, `None` for any other file.
+    pub fn data(&self, file: &Path) -> Option<Data> {
+        self.track(file).map(|t| Data::of(&t))
+    }
+
+    pub fn waveform(&self, file: &Path) -> Option<Analysed> {
+        analysed(file, &self.track(file)?)
     }
 }
 

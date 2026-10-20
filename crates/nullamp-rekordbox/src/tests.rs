@@ -153,6 +153,95 @@ fn stick_root_is_the_folder_with_the_export() {
     assert_eq!(stick_root(Path::new("/definitely/not/a/stick/file.mp3")), None);
 }
 
+// A throwaway key, only ever used to build the test database below; the real key is the user's and
+// never lives in the repo.
+const TEST_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// Builds a tiny encrypted master.db and a `share` folder beside it, with one analysed track (its
+/// analysis files copied from the stick fixture), one bare track, one deleted track, a playlist and
+/// a folder. Returns the temp dir to keep it alive, the database path and the share path.
+fn synthetic_collection() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let master = dir.path().join("master.db");
+    let share = dir.path().join("share");
+    let anlz = share.join("PIONEER/USBANLZ/TEST");
+    std::fs::create_dir_all(&anlz).unwrap();
+    for ext in ["DAT", "EXT"] {
+        std::fs::copy(fixture().join(format!("PIONEER/USBANLZ/P011/00020633/ANLZ0000.{ext}")), anlz.join(format!("ANLZ0000.{ext}"))).unwrap();
+    }
+
+    let conn = rusqlite::Connection::open(&master).unwrap();
+    // As rekordbox does, the key is a passphrase (SQLCipher runs its KDF over it), not a raw key.
+    conn.pragma_update(None, "key", TEST_KEY).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE djmdArtist(ID TEXT, Name TEXT);
+         CREATE TABLE djmdAlbum(ID TEXT, Name TEXT);
+         CREATE TABLE djmdGenre(ID TEXT, Name TEXT);
+         CREATE TABLE djmdLabel(ID TEXT, Name TEXT);
+         CREATE TABLE djmdKey(ID TEXT, ScaleName TEXT);
+         CREATE TABLE djmdContent(ID TEXT, FolderPath TEXT, Title TEXT, BPM INTEGER, Length INTEGER, \
+             TrackNo INTEGER, DiscNo INTEGER, BitRate INTEGER, SampleRate INTEGER, FileSize INTEGER, \
+             Rating INTEGER, DJPlayCount INTEGER, ReleaseYear INTEGER, Commnt TEXT, StockDate TEXT, \
+             AnalysisDataPath TEXT, ColorID TEXT, ArtistID TEXT, AlbumID TEXT, GenreID TEXT, \
+             LabelID TEXT, KeyID TEXT, rb_local_deleted INTEGER);
+         CREATE TABLE djmdPlaylist(ID TEXT, Name TEXT, ParentID TEXT, Attribute INTEGER, Seq INTEGER, rb_local_deleted INTEGER);
+         CREATE TABLE djmdSongPlaylist(PlaylistID TEXT, ContentID TEXT, TrackNo INTEGER, rb_local_deleted INTEGER);
+         INSERT INTO djmdArtist VALUES('A1','Alpha Artist');
+         INSERT INTO djmdAlbum  VALUES('AL1','Alpha Album');
+         INSERT INTO djmdGenre  VALUES('G1','Trance');
+         INSERT INTO djmdLabel  VALUES('L1','Deal Records');
+         INSERT INTO djmdKey    VALUES('K1','Bbm');
+         INSERT INTO djmdContent VALUES('100','/Users/x/Music/a.mp3','Alpha',12800,425,3,1,320,44100,6899624,5,7,1999,'hi','2025-08-07','/PIONEER/USBANLZ/TEST/ANLZ0000.DAT','6','A1','AL1','G1','L1','K1',0);
+         INSERT INTO djmdContent VALUES('200','/Users/x/Music/b.mp3','Beta',0,100,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
+         INSERT INTO djmdContent VALUES('300','/Users/x/Music/gone.mp3','Gone',0,0,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',1);
+         INSERT INTO djmdPlaylist VALUES('P1','My List','root',0,1,0);
+         INSERT INTO djmdPlaylist VALUES('F1','Folder','root',1,2,0);
+         INSERT INTO djmdSongPlaylist VALUES('P1','100',0,0);
+         INSERT INTO djmdSongPlaylist VALUES('P1','300',1,0);",
+    )
+    .unwrap();
+    (dir, master, share)
+}
+
+#[test]
+fn collection_reads_tracks_resolving_names_paths_and_analysis() {
+    let (_dir, master, share) = synthetic_collection();
+    let col = Collection::open(&master, TEST_KEY, &share).unwrap();
+    assert_eq!(col.tracks.len(), 2, "the deleted track is left out");
+    let t = col.tracks.iter().find(|t| t.id == 100).unwrap();
+    assert_eq!((t.title.as_str(), t.artist.as_str(), t.album.as_str()), ("Alpha", "Alpha Artist", "Alpha Album"));
+    assert_eq!((t.genre.as_str(), t.label.as_str(), t.key.as_deref()), ("Trance", "Deal Records", Some("Bbm")));
+    assert_eq!((t.bpm, t.duration_secs, t.year, t.bitrate, t.rating, t.play_count), (Some(128.0), 425, Some(1999), 320, 5, 7));
+    assert_eq!(t.color, Some(Color::Aqua));
+    assert_eq!(t.file, PathBuf::from("/Users/x/Music/a.mp3"));
+    assert_eq!(t.analysis, Some(share.join("PIONEER/USBANLZ/TEST/ANLZ0000.DAT")));
+    assert!(t.waveform().unwrap().is_some(), "the copied analysis file yields a waveform");
+
+    let bare = col.tracks.iter().find(|t| t.id == 200).unwrap();
+    assert_eq!((bare.bpm, bare.key.as_deref(), bare.color), (None, None, None));
+    assert_eq!(bare.analysis, None);
+    assert_eq!(bare.waveform().unwrap(), None);
+}
+
+#[test]
+fn collection_reads_playlists_and_folders() {
+    let (_dir, master, share) = synthetic_collection();
+    let col = Collection::open(&master, TEST_KEY, &share).unwrap();
+    let list = col.playlists.iter().find(|p| p.name == "My List").unwrap();
+    assert!(!list.is_folder && list.parent.is_none());
+    let i = col.tracks.iter().position(|t| t.id == 100).unwrap();
+    assert_eq!(list.tracks, vec![i], "the deleted track's entry is dropped");
+    let folder = col.playlists.iter().find(|p| p.name == "Folder").unwrap();
+    assert!(folder.is_folder && folder.tracks.is_empty());
+}
+
+#[test]
+fn collection_with_the_wrong_key_is_an_error() {
+    let (_dir, master, share) = synthetic_collection();
+    let wrong = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    assert!(matches!(Collection::open(&master, wrong, &share), Err(Error::Format(_))));
+}
+
 #[test]
 fn detect_finds_only_volumes_with_an_export() {
     let dir = tempfile::tempdir().unwrap();

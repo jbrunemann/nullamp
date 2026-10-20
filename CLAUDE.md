@@ -22,7 +22,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
 | `crates/nullamp-artwork` | Cover of one track of a mix by artist and title: Deezer search, then iTunes Search, via `curl`; result matching |
 | `crates/nullamp-update` | Update check: asks a release address (GitHub latest release by default) via `curl` and compares versions; copied from macsplorer's `update-check` |
-| `crates/nullamp-rekordbox` | Read-only reader of rekordbox USB exports: tracks from `export.pdb`, waveforms from the analysis files |
+| `crates/nullamp-rekordbox` | Read-only reader of rekordbox libraries: a USB export (tracks from `export.pdb`, waveforms from the analysis files) and the desktop `master.db` (tracks and playlists, SQLCipher, user-supplied key) |
 | `app/` | The `nullamp` binary: egui UI (`src/ui/`), playback controller (`player.rs`), persistence (`store.rs`), background workers (`workers.rs`) |
 | `tests/fixtures/` | Small generated audio files (ffmpeg) used by tests |
 | `packaging/` | macOS bundle script, Info.plist, icon generator; unused Linux Dockerfile and .desktop file |

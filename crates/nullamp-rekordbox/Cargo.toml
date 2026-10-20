@@ -1,6 +1,6 @@
 [package]
 name = "nullamp-rekordbox"
-description = "Nullamp rekordbox export reader: tracks from export.pdb and waveforms from the analysis files, read-only."
+description = "Nullamp rekordbox reader: tracks and waveforms from a USB export, and tracks and playlists from the desktop master.db, read-only."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 unicode-normalization = "0.1"
+# SQLCipher, statically built, so reading the desktop library's encrypted master.db needs no system library.
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [dev-dependencies]
 nullamp-audio.workspace = true

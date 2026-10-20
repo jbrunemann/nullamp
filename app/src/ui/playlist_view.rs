@@ -351,6 +351,11 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 app.workers.submit(Job::OpenSticks);
                 ui.close();
             }
+            let collection = ui.add_enabled(!app.settings.rekordbox_key.is_empty(), egui::Button::new("Open rekordbox collection"));
+            if collection.on_hover_text("Add the desktop rekordbox library and its playlists. Needs the key set on the Settings General tab").clicked() {
+                app.workers.submit(Job::OpenCollection);
+                ui.close();
+            }
             if ui.button("Import M3U / M3U8…").clicked() {
                 dialogs::import_playlist(app);
                 ui.close();

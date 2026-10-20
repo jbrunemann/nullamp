@@ -3,11 +3,13 @@
 //! files it lists must stay in step, and only rekordbox may change them.
 
 mod anlz;
+mod masterdb;
 mod pdb;
 
 use std::path::{Path, PathBuf};
 
 pub use anlz::Waveform;
+pub use masterdb::{Collection, Playlist};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -15,6 +17,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("unreadable rekordbox data: {0}")]
     Format(&'static str),
+    #[error("rekordbox database: {0}")]
+    Sql(String),
 }
 
 /// The colour label rekordbox lets you give a track.
