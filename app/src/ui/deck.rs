@@ -110,13 +110,16 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 
     // Stream format line under the time.
+    // The playlist's bitrate (from the file's headers) wins over the engine's size-based estimate, which also counts
+    // artwork and tags, so the two places show the same number.
+    let entry_kbps = app.player.current_entry().and_then(|e| e.info.bitrate);
     let fmt = app.player.current.as_ref().and_then(|c| c.info.as_ref()).map(|i| {
         let ch = match i.channels {
             1 => "MONO".to_owned(),
             2 => "STEREO".to_owned(),
             n => format!("{n} CH"),
         };
-        let kbps = i.bitrate.map(|b| format!("{b} KBPS · ")).unwrap_or_default();
+        let kbps = entry_kbps.or(i.bitrate).map(|b| format!("{b} KBPS · ")).unwrap_or_default();
         format!("{} · {kbps}{:.1} KHZ · {ch}", i.codec, i.sample_rate as f64 / 1000.0)
     });
     let fmt_rect = p.text(
