@@ -15,6 +15,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
+/// Raised whenever matching accepts more than before, so earlier "nothing found" answers are
+/// asked again. 2: semicolons separate artists.
+pub const MATCHER_VERSION: u32 = 2;
+
 /// How long one request may take.
 pub const TIMEOUT_SECS: u32 = 15;
 /// Search answers are a few kilobytes.
@@ -213,10 +217,10 @@ pub fn normalize(text: &str) -> String {
     out.trim_end().to_owned()
 }
 
-/// The single names in a credit such as "A & B feat. C".
+/// The single names in a credit such as "A & B feat. C" or "A; B" (as rekordbox writes them).
 fn artists(credit: &str) -> Vec<String> {
     let mut text = format!(" {} ", credit.to_lowercase());
-    for sep in [" & ", ",", " feat. ", " feat ", " ft. ", " ft ", " featuring ", " vs. ", " vs ", " x ", " and ", " with ", " + ", "/"] {
+    for sep in [" & ", ",", ";", " feat. ", " feat ", " ft. ", " ft ", " featuring ", " vs. ", " vs ", " x ", " and ", " with ", " + ", "/"] {
         text = text.replace(sep, "\u{1}");
     }
     text.split('\u{1}').map(normalize).filter(|a| !a.is_empty()).collect()
@@ -346,6 +350,7 @@ mod tests {
         assert_eq!(artists("CHRIS STASSY & Toman"), ["chris stassy", "toman"]);
         assert_eq!(artists("A feat. B, C x D"), ["a", "b", "c", "d"]);
         assert_eq!(artists("Rico Scott & Leigh Hunt"), ["rico scott", "leigh hunt"]);
+        assert_eq!(artists("Donnie; Yung Felix"), ["donnie", "yung felix"]);
     }
 
     #[test]
@@ -374,6 +379,13 @@ mod tests {
         let c = [candidate("CHRIS STASSY", "Boiling Point (Edit)", "Timewriter EP")];
         assert_eq!(best("CHRIS STASSY & Toman", "Boiling Point (Edit)", &c), Some(&c[0]));
         assert_eq!(best("Toman", "Boiling Point", &c), None, "the one artist named is not ours");
+    }
+
+    #[test]
+    fn semicolons_separate_artists() {
+        let c = [candidate("Donnie", "Troopa (Instrumental)", "Troopa"), candidate("Matan Caspi, Darko De Jan", "Black Street", "Black Street")];
+        assert_eq!(best("Donnie; Yung Felix", "Troopa (Instrumental)", &c), Some(&c[0]));
+        assert_eq!(best("Matan Caspi; Darko De Jan", "Black Street", &c), Some(&c[1]));
     }
 
     #[test]
@@ -452,6 +464,8 @@ mod tests {
         let found = find("Tino & Malachy", "Keepin' On", "nullamp-artwork-test/0").unwrap().unwrap();
         assert_eq!(found.candidate.release, "Foundations EP");
         assert!(download(&found.candidate.image_url, "nullamp-artwork-test/0").unwrap().len() > 10_000);
+        let found = find("Donnie; Yung Felix", "Troopa (Instrumental)", "nullamp-artwork-test/0").unwrap().unwrap();
+        assert_eq!(found.candidate.release, "Troopa");
         assert_eq!(find("Zzqx Nonexistent Artist", "Qqzx No Such Title", "nullamp-artwork-test/0"), Ok(None));
     }
 }

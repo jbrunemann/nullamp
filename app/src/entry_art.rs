@@ -3,7 +3,8 @@
 //!
 //! Entries are keyed by the track's artist and title (see [`key`]): the same track in another
 //! mix finds the same cover. A found cover is kept as the image file itself, which also serves
-//! the OS Now Playing overlay; "nothing found" is kept as an empty marker. Both expire, since
+//! the OS Now Playing overlay; "nothing found" is kept as a marker holding the matcher's
+//! version, so a better matcher asks again. Both expire, since
 //! the services add releases and covers: misses sooner than hits.
 
 use std::fs;
@@ -44,7 +45,9 @@ pub fn load(dir: &Path, key: &str) -> Option<Cached> {
             return Some(Cached::Image(path));
         }
     }
-    age(&entry(dir, key, MISS)).is_some_and(|a| a < MISS_AGE).then_some(Cached::Nothing)
+    let miss = entry(dir, key, MISS);
+    let current = fs::read_to_string(&miss).is_ok_and(|v| v.trim() == nullamp_artwork::MATCHER_VERSION.to_string());
+    (current && age(&miss).is_some_and(|a| a < MISS_AGE)).then_some(Cached::Nothing)
 }
 
 /// Keep the cover found for `key` and return where it is.
@@ -59,7 +62,7 @@ pub fn store_image(dir: &Path, key: &str, bytes: &[u8]) -> Option<PathBuf> {
 
 /// Remember that nothing was found for `key`.
 pub fn store_nothing(dir: &Path, key: &str) {
-    write(&entry(dir, key, MISS), b"");
+    write(&entry(dir, key, MISS), nullamp_artwork::MATCHER_VERSION.to_string().as_bytes());
 }
 
 fn write(path: &Path, bytes: &[u8]) -> bool {
@@ -108,6 +111,9 @@ mod tests {
         assert!(load(dir.path(), "a").is_none());
         store_nothing(dir.path(), "a");
         assert!(matches!(load(dir.path(), "a"), Some(Cached::Nothing)));
+        fs::write(entry(dir.path(), "a", MISS), b"").unwrap();
+        assert!(load(dir.path(), "a").is_none(), "a miss from an older matcher is asked again");
+        store_nothing(dir.path(), "a");
         let path = store_image(dir.path(), "a", b"\x89PNG....").unwrap();
         assert_eq!(path.extension().unwrap(), "png");
         assert!(matches!(load(dir.path(), "a"), Some(Cached::Image(p)) if p == path), "a cover replaces the miss");
