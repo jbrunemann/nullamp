@@ -252,7 +252,28 @@ impl Workers {
                         while let Ok(newer) = waveform_rx.try_recv() {
                             request = newer;
                         }
-                        if let Some(result) = run_waveform(&dir, &generation, &sticks, request) {
+                        // On a rekordbox stick the analysis is shown first and what rekordbox knows is cached
+                        // afterwards (for the same file played from elsewhere later), so the cache never delays the waveform.
+                        let found = request.rekordbox.then(|| sticks.waveform(&request.path)).flatten();
+                        if let Some(found) = &found {
+                            let result = JobResult::Waveform { token: request.token, result: Ok(found.wave.clone()), colors: found.colors.clone() };
+                            if tx.send(result).is_err() {
+                                return;
+                            }
+                            w();
+                        }
+                        if let Some(data) = sticks.data(&request.path)
+                            && let Ok(fingerprint) = store::fingerprint(&request.path)
+                        {
+                            waveform_cache::store_rekordbox_data(&dir, &fingerprint, &data);
+                            if let Some(found) = &found {
+                                waveform_cache::store_rekordbox(&dir, &fingerprint, found);
+                            }
+                        }
+                        if found.is_some() {
+                            continue;
+                        }
+                        if let Some(result) = run_waveform(&dir, &generation, request) {
                             if tx.send(result).is_err() {
                                 return;
                             }
@@ -395,12 +416,13 @@ impl Workers {
 }
 
 /// `None` when a newer request replaced this one while it ran.
-fn run_waveform(dir: &Path, current: &AtomicU64, sticks: &crate::rekordbox::Sticks, request: WaveformRequest) -> Option<JobResult> {
+fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
     let WaveformRequest { generation, token, path, rekordbox } = request;
-    if let Some(found) = rekordbox.then(|| sticks.waveform(&path)).flatten() {
+    let fingerprint = store::fingerprint(&path).ok();
+    // The same file once analysed by rekordbox, now played from somewhere else.
+    if let Some(found) = rekordbox.then(|| fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox(dir, fp))).flatten() {
         return Some(JobResult::Waveform { token, result: Ok(found.wave), colors: found.colors });
     }
-    let fingerprint = store::fingerprint(&path).ok();
     if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
         return Some(JobResult::Waveform { token, result: Ok(wave), colors: None });
     }
@@ -710,7 +732,13 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     let retro_art = art.as_ref().and_then(crate::retro_art::retro_thumb);
     let track_info = meta.as_ref().ok().map(|m| {
         let mut info = m.track_info();
-        ctx.sticks.fill(&path, &mut info);
+        // A file on a stick takes its key and BPM from the stick's library; the same file anywhere else
+        // from what was cached when it last played from a stick.
+        if !ctx.sticks.fill(&path, &mut info)
+            && let Some(data) = fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox_data(&ctx.paths.waveform_cache(), fp))
+        {
+            crate::rekordbox::fill_from_cache(&mut info, &data);
+        }
         info
     });
     NowPlayingInfo { token, path, meta, art, retro_art, art_file, fingerprint, setlist, discovered, tracklist_urls, track_info }

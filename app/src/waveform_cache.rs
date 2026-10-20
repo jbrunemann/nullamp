@@ -57,6 +57,48 @@ pub fn store(dir: &Path, fingerprint: &str, wave: &Waveform) {
     write_entry(&entry(dir, fingerprint), &wave.to_bytes());
 }
 
+const RECORDBOX_MAGIC: &[u8; 4] = b"NRW1";
+
+/// A waveform taken from rekordbox's analysis, in `entry_as(.., "rwf")` beside the decoded one so
+/// that turning rekordbox off brings the decoded waveform back: magic, bucket count (u32 LE), peaks,
+/// RMS values, then optionally the three colour bytes of every bucket.
+pub fn load_rekordbox(dir: &Path, fingerprint: &str) -> Option<crate::rekordbox::Analysed> {
+    let bytes = read_entry(&entry_as(dir, fingerprint, "rwf"))?;
+    let (head, body) = bytes.split_at_checked(8)?;
+    if &head[..4] != RECORDBOX_MAGIC {
+        return None;
+    }
+    let n = u32::from_le_bytes(head[4..8].try_into().ok()?) as usize;
+    if n == 0 || n > nullamp_audio::WAVEFORM_BUCKETS || !(body.len() == n * 2 || body.len() == n * 5) {
+        return None;
+    }
+    let colors = (body.len() == n * 5).then(|| body[n * 2..].chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect());
+    Some(crate::rekordbox::Analysed { wave: Waveform { peak: body[..n].to_vec(), rms: body[n..n * 2].to_vec() }, colors })
+}
+
+pub fn store_rekordbox(dir: &Path, fingerprint: &str, found: &crate::rekordbox::Analysed) {
+    let n = found.wave.peak.len().min(found.wave.rms.len());
+    let mut bytes = RECORDBOX_MAGIC.to_vec();
+    bytes.extend_from_slice(&(n as u32).to_le_bytes());
+    bytes.extend_from_slice(&found.wave.peak[..n]);
+    bytes.extend_from_slice(&found.wave.rms[..n]);
+    if let Some(colors) = found.colors.as_ref().filter(|c| c.len() == n) {
+        bytes.extend(colors.iter().flatten());
+    }
+    write_entry(&entry_as(dir, fingerprint, "rwf"), &bytes);
+}
+
+/// rekordbox's record of the file (key, BPM, rating, colour label) as JSON in a `.rbi` entry.
+pub fn load_rekordbox_data(dir: &Path, fingerprint: &str) -> Option<crate::rekordbox::Data> {
+    serde_json::from_slice(&read_entry(&entry_as(dir, fingerprint, "rbi"))?).ok()
+}
+
+pub fn store_rekordbox_data(dir: &Path, fingerprint: &str, data: &crate::rekordbox::Data) {
+    if let Ok(bytes) = serde_json::to_vec(data) {
+        write_entry(&entry_as(dir, fingerprint, "rbi"), &bytes);
+    }
+}
+
 const TEMPO_MAGIC: &[u8; 4] = b"NBP1";
 
 /// `Some(None)` is a cached "no clear beat", so such a file is not analysed again; `None` is a miss.
@@ -109,6 +151,33 @@ mod tests {
         store(dir.path(), "abc", &wave());
         assert_eq!(load(dir.path(), "abc"), Some(wave()));
         assert_eq!(load(dir.path(), "abd"), None);
+    }
+
+    #[test]
+    fn rekordbox_waveform_is_kept_apart_from_the_decoded_one() {
+        use crate::rekordbox::Analysed;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_rekordbox(dir.path(), "abc").is_none());
+        let coloured = Analysed { wave: wave(), colors: Some(vec![[255, 0, 0], [0, 255, 0], [0, 0, 255]]) };
+        store_rekordbox(dir.path(), "abc", &coloured);
+        let back = load_rekordbox(dir.path(), "abc").unwrap();
+        assert_eq!((back.wave, back.colors), (wave(), coloured.colors));
+        assert_eq!(load(dir.path(), "abc"), None, "the decoded entry is separate");
+        store_rekordbox(dir.path(), "plain", &Analysed { wave: wave(), colors: None });
+        assert_eq!(load_rekordbox(dir.path(), "plain").unwrap().colors, None);
+        fs::write(entry_as(dir.path(), "abc", "rwf"), b"NRW1\x03\0\0\0xx").unwrap();
+        assert!(load_rekordbox(dir.path(), "abc").is_none(), "damage is a miss");
+    }
+
+    #[test]
+    fn rekordbox_data_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_rekordbox_data(dir.path(), "abc"), None);
+        let data = crate::rekordbox::Data { key: Some("Am".into()), bpm: Some(128.5), rating: 3, color: Some("aqua".into()) };
+        store_rekordbox_data(dir.path(), "abc", &data);
+        assert_eq!(load_rekordbox_data(dir.path(), "abc"), Some(data));
+        fs::write(entry_as(dir.path(), "abc", "rbi"), b"{ not json").unwrap();
+        assert_eq!(load_rekordbox_data(dir.path(), "abc"), None, "damage is a miss");
     }
 
     #[test]

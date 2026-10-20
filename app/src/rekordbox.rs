@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use nullamp_core::{Key, TrackInfo};
+use serde::{Deserialize, Serialize};
 use nullamp_rekordbox::{Stick, Track};
 
 /// One mounted stick, ready to become a playlist.
@@ -40,6 +41,35 @@ pub fn load_sticks(volumes: &Path) -> Vec<Loaded> {
             Loaded { name, tracks }
         })
         .collect()
+}
+
+/// What rekordbox knows about a track that the file's own tags usually lack, kept in the cache by the
+/// file's content fingerprint so it is still there when the same file is played from somewhere else.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Data {
+    /// As rekordbox names it ("Am", "Bbm").
+    pub key: Option<String>,
+    pub bpm: Option<f32>,
+    /// Stars, 0 to 5. Kept for later; nothing shows it yet.
+    pub rating: u8,
+    /// The colour label ("red", "aqua", ...). Kept for later; nothing shows it yet.
+    pub color: Option<String>,
+}
+
+impl Data {
+    fn of(t: &Track) -> Data {
+        Data { key: t.key.clone(), bpm: t.bpm, rating: t.rating, color: t.color.map(|c| c.name().to_owned()) }
+    }
+
+    /// The part of it that playlist rows show.
+    fn info(&self) -> TrackInfo {
+        TrackInfo { key: self.key.as_deref().and_then(Key::parse), bpm: self.bpm, ..TrackInfo::default() }
+    }
+}
+
+/// Fills what `tags` leave out from `data`, the cached record of the same file on a stick.
+pub fn fill_from_cache(tags: &mut TrackInfo, data: &Data) {
+    fill_gaps(tags, &data.info());
 }
 
 /// A stick's tracks by file, as of the database's modification time.
@@ -82,11 +112,16 @@ impl Sticks {
     }
 
     /// Fills what the file's own tags leave out (key and BPM mostly: rekordbox keeps them in its
-    /// database, not in the file) from the stick's library.
-    pub fn fill(&self, file: &Path, info: &mut TrackInfo) {
-        if let Some(track) = self.track(file) {
-            fill_gaps(info, &self::info(&track));
-        }
+    /// database, not in the file) from the stick's library. `false` when the file is not on a stick.
+    pub fn fill(&self, file: &Path, info: &mut TrackInfo) -> bool {
+        let Some(track) = self.track(file) else { return false };
+        fill_gaps(info, &self::info(&track));
+        true
+    }
+
+    /// The cacheable record of a file on a stick, `None` for any other file.
+    pub fn data(&self, file: &Path) -> Option<Data> {
+        self.track(file).map(|t| Data::of(&t))
     }
 
     pub fn waveform(&self, file: &Path) -> Option<Analysed> {
@@ -153,6 +188,18 @@ mod tests {
         assert_eq!(found.colors.map(|c| c.len()), Some(found.wave.peak.len()));
         assert!(sticks.waveform(&fixtures().join("beat_120.mp3")).is_none(), "not on a stick");
         assert!(sticks.waveform(&fixtures().join("rekordbox/Contents/Signum/other.mp3")).is_none(), "not in the library");
+    }
+
+    #[test]
+    fn data_of_a_stick_file_and_none_for_others() {
+        let sticks = Sticks::default();
+        let file = fixtures().join("rekordbox/Contents/Veracocha/Carte Blanche/Veracocha - Carte Blanche (Original Mix).mp3");
+        let data = sticks.data(&file).expect("on the stick");
+        assert_eq!((data.key.as_deref(), data.bpm, data.rating, data.color.as_deref()), (Some("Bbm"), Some(140.02), 0, None));
+        assert!(sticks.data(&fixtures().join("beat_120.mp3")).is_none());
+        let mut tags = TrackInfo { bpm: Some(128.0), ..TrackInfo::default() };
+        fill_from_cache(&mut tags, &data);
+        assert_eq!((tags.bpm, tags.key), (Some(128.0), Key::parse("Bbm")));
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub(crate) struct RawTrack {
     pub year: u16,
     pub duration: u16,
     pub rating: u8,
+    pub color: u8,
     pub date_added: String,
     pub analyze_path: String,
     pub comment: String,
@@ -91,7 +92,7 @@ fn string_at(row: &[u8], o: usize) -> Option<String> {
 }
 
 /// Rows of one page, each as the slice from its start to the end of the page.
-fn page_rows(page: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn page_rows(page: &[u8]) -> Vec<&[u8]> {
     let flags = page.get(27).copied().unwrap_or(0x40);
     if flags & 0x40 != 0 {
         return Vec::new();
@@ -136,6 +137,7 @@ fn track(row: &[u8]) -> Option<RawTrack> {
         play_count: u16_at(row, 78)?,
         year: u16_at(row, 80)?,
         duration: u16_at(row, 84)?,
+        color: u8_at(row, 88)?,
         rating: u8_at(row, 89)?,
         date_added: string(10)?,
         analyze_path: string(14)?,

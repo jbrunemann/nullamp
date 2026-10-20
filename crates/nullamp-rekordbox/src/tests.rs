@@ -113,6 +113,34 @@ fn truncated_or_foreign_files_are_errors() {
 }
 
 #[test]
+fn rating_and_colour_label_come_from_the_track_row() {
+    let mut data = std::fs::read(fixture().join("PIONEER/rekordbox/export.pdb")).unwrap();
+    let stick = stick();
+    assert!(stick.tracks.iter().all(|t| t.rating == 0 && t.color.is_none()), "the fixture's tracks have neither");
+    // Set both on the first track row (colour at offset 88, rating at 89), found through the tracks table.
+    let page_size = 4096;
+    let first = u32::from_le_bytes(data[28 + 8..28 + 12].try_into().unwrap()) as usize;
+    let last = u32::from_le_bytes(data[28 + 12..28 + 16].try_into().unwrap()) as usize;
+    let mut patched = 0;
+    for page in first..=last {
+        let range = page * page_size..(page + 1) * page_size;
+        let offsets: Vec<usize> = pdb::page_rows(&data[range.clone()]).iter().map(|row| row.as_ptr() as usize - data.as_ptr() as usize).collect();
+        for at in offsets {
+            data[at + 88] = 6;
+            data[at + 89] = 4;
+            patched += 1;
+        }
+    }
+    assert_eq!(patched, 3);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("PIONEER/rekordbox")).unwrap();
+    std::fs::write(dir.path().join("PIONEER/rekordbox/export.pdb"), data).unwrap();
+    let stick = Stick::open(dir.path()).unwrap();
+    assert!(stick.tracks.iter().all(|t| t.rating == 4 && t.color == Some(Color::Aqua)));
+    assert_eq!(Color::from_name(Color::Aqua.name()), Some(Color::Aqua));
+}
+
+#[test]
 fn path_key_ignores_how_accents_are_encoded() {
     assert_eq!(path_key(Path::new("/Contents/Ti\u{eb}sto")), path_key(Path::new("/Contents/Tie\u{308}sto")));
     assert_ne!(path_key(Path::new("/Contents/Tiesto")), path_key(Path::new("/Contents/Ti\u{eb}sto")));

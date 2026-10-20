@@ -17,6 +17,52 @@ pub enum Error {
     Format(&'static str),
 }
 
+/// The colour label rekordbox lets you give a track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Color {
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Aqua,
+    Blue,
+    Purple,
+}
+
+impl Color {
+    fn from_id(id: u8) -> Option<Color> {
+        Some(match id {
+            1 => Color::Pink,
+            2 => Color::Red,
+            3 => Color::Orange,
+            4 => Color::Yellow,
+            5 => Color::Green,
+            6 => Color::Aqua,
+            7 => Color::Blue,
+            8 => Color::Purple,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Color::Pink => "pink",
+            Color::Red => "red",
+            Color::Orange => "orange",
+            Color::Yellow => "yellow",
+            Color::Green => "green",
+            Color::Aqua => "aqua",
+            Color::Blue => "blue",
+            Color::Purple => "purple",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Color> {
+        [Color::Pink, Color::Red, Color::Orange, Color::Yellow, Color::Green, Color::Aqua, Color::Blue, Color::Purple].into_iter().find(|c| c.name() == name)
+    }
+}
+
 /// One track of the stick's library.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
@@ -36,7 +82,9 @@ pub struct Track {
     pub bitrate: u32,
     pub sample_rate: u32,
     pub file_size: u32,
+    /// Stars, 0 to 5.
     pub rating: u8,
+    pub color: Option<Color>,
     pub play_count: u16,
     pub comment: String,
     pub date_added: String,
@@ -108,7 +156,8 @@ impl Stick {
                 bitrate: t.bitrate,
                 sample_rate: t.sample_rate,
                 file_size: t.file_size,
-                rating: t.rating,
+                rating: t.rating.min(5),
+                color: Color::from_id(t.color),
                 play_count: t.play_count,
                 comment: t.comment.clone(),
                 date_added: t.date_added.clone(),

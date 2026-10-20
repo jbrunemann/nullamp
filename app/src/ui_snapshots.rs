@@ -274,6 +274,56 @@ fn waveform_arrives_and_old_cache_entries_are_pruned() {
     h.state_mut().player.stop();
 }
 
+/// A file played from a rekordbox stick leaves its waveform and its key and BPM in the cache, so the same
+/// file played from an ordinary folder later still gets them, and the decoded waveform without the setting.
+#[test]
+fn rekordbox_waveform_is_cached_for_the_same_file_elsewhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.waveform_cache();
+    let stick = dir.path().join("STICK");
+    let copy_dir = |from: &Path, to: &Path| {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            std::fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    };
+    let fixture_stick = fixtures().join("rekordbox/PIONEER");
+    copy_dir(&fixture_stick.join("rekordbox"), &stick.join("PIONEER/rekordbox"));
+    copy_dir(&fixture_stick.join("USBANLZ/P011/00020633"), &stick.join("PIONEER/USBANLZ/P011/00020633"));
+    let on_stick = stick.join("Contents/Veracocha/Carte Blanche/Veracocha - Carte Blanche (Original Mix).mp3");
+    std::fs::create_dir_all(on_stick.parent().unwrap()).unwrap();
+    std::fs::copy(fixtures().join("tagged_v23.mp3"), &on_stick).unwrap();
+    let elsewhere = dir.path().join("Music/renamed.mp3");
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    std::fs::copy(&on_stick, &elsewhere).unwrap();
+
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    play_file(&mut h, on_stick.clone());
+    let from_stick = h.state().now.waveform.clone().expect("waveform from the stick");
+    assert!(h.state().now.wave_colors.is_some(), "rekordbox's colours");
+    assert_eq!(from_stick.peak.len(), nullamp_audio::WAVEFORM_BUCKETS, "not the decoded one, which has one bucket per 10 ms at most");
+    let fingerprint = crate::store::fingerprint(&on_stick).unwrap();
+    assert!(crate::waveform_cache::load_rekordbox(&cache, &fingerprint).is_some(), "stored for the file's content");
+
+    // The stick is gone; the same content elsewhere still has it.
+    std::fs::remove_dir_all(&stick).unwrap();
+    play_file(&mut h, elsewhere.clone());
+    assert_eq!(h.state().now.waveform.as_ref(), Some(&from_stick));
+    assert!(h.state().now.wave_colors.is_some());
+    // Key and BPM, which the file's tags lack, come from the cached record and reach the playlist row.
+    let row = h.state().player.lists[0].playlist.entries().iter().find(|e| e.path == elsewhere).map(|e| e.info.clone()).unwrap();
+    assert_eq!((row.bpm, row.key), (Some(140.02), nullamp_core::Key::parse("Bbm")));
+    let record = crate::waveform_cache::load_rekordbox_data(&cache, &fingerprint).unwrap();
+    assert_eq!((record.key.as_deref(), record.rating, record.color.as_deref()), (Some("Bbm"), 0, None));
+
+    h.state_mut().settings.rekordbox_waveform = false;
+    play_file(&mut h, elsewhere);
+    assert!(h.state().now.wave_colors.is_none(), "with the setting off the decoded waveform is used");
+    h.state_mut().player.stop();
+}
+
 /// Play `path` (added to the first list) and let the background work arrive.
 fn play_file(h: &mut Harness<'_, App>, path: PathBuf) {
     let app = h.state_mut();
