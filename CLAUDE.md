@@ -9,7 +9,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 ## Current focus (user preference)
 
 - **macOS only for now.** The user wants a working, likeable macOS app before any Linux or Windows work. Do not run Docker, cross-builds or other-OS packaging unless asked.
-- **No online features.** Tracklist search and the MusicBrainz/Cover Art Archive lookup were both removed on purpose (too error prone and complex for how rarely they were used), and the `nullamp-online` crate is gone. The app makes no network requests. See "Online sources" in `docs/HANDOFF.md` before proposing anything online again.
+- **No online features.** Tracklist search and the MusicBrainz/Cover Art Archive lookup were both removed on purpose (too error prone and complex for how rarely they were used), and the `nullamp-online` crate is gone. The only network request is the user-initiated update check on the Settings Updates tab (`nullamp-update`, runs `curl`, never automatic). See "Online sources" in `docs/HANDOFF.md` before proposing anything online again.
 - Disk space is tight: `/` and `/Volumes/Development` share one APFS container. Keep `target/` lean and never create large Docker artifacts.
 
 ## Layout
@@ -20,6 +20,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | `crates/nullamp-audio` | Audio engine: symphonia decoding on its own thread, rubato resampling, rtrb ring buffer, cpal output, gapless preload, device recovery |
 | `crates/nullamp-meta` | Tags via lofty, ID3 chapters via id3, artwork, technical info, safe tag writing with backups |
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
+| `crates/nullamp-update` | Update check: asks a release address (GitHub latest release by default) via `curl` and compares versions; copied from macsplorer's `update-check` |
 | `app/` | The `nullamp` binary: egui UI (`src/ui/`), playback controller (`player.rs`), persistence (`store.rs`), background workers (`workers.rs`) |
 | `tests/fixtures/` | Small generated audio files (ffmpeg) used by tests |
 | `packaging/` | macOS bundle script, Info.plist, icon generator; unused Linux Dockerfile and .desktop file |

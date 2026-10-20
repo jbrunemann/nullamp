@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::paths::AppPaths;
 
+/// The release the update check asks about unless settings.json says otherwise.
+pub const DEFAULT_UPDATE_URL: &str = "https://api.github.com/repos/jbrunemann/nullamp/releases/latest";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -53,6 +56,9 @@ pub struct Settings {
     pub inspector_follows_playing: bool,
     /// Keys shown as Camelot codes (8A) rather than musical names (Am). Only set in settings.json.
     pub camelot: bool,
+    /// Where the update check asks for the newest release: GitHub's "latest release" API or a
+    /// JSON file with `version` and `url`. Only set in settings.json.
+    pub update_url: String,
 }
 
 impl Default for Settings {
@@ -81,6 +87,7 @@ impl Default for Settings {
             retro_artwork: true,
             inspector_follows_playing: false,
             camelot: true,
+            update_url: DEFAULT_UPDATE_URL.into(),
         }
     }
 }

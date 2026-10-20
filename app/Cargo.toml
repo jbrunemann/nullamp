@@ -11,6 +11,7 @@ nullamp-core.workspace = true
 nullamp-audio.workspace = true
 nullamp-meta.workspace = true
 nullamp-sysmedia.workspace = true
+nullamp-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true

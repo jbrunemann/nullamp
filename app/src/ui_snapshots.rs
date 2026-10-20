@@ -562,10 +562,22 @@ fn render_outputs_page() {
     save(&mut h, "06c-outputs-page.png");
 }
 
-/// The About page with a few log lines, taking over the deck.
+/// The About page, taking over the deck.
 #[test]
 #[ignore]
 fn render_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::About);
+    settle(&mut h, 500);
+    save(&mut h, "06-about.png");
+}
+
+/// The Logs page with a few log lines.
+#[test]
+#[ignore]
+fn render_logs() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(800.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
@@ -573,9 +585,24 @@ fn render_about() {
     for i in 0..60 {
         log::info!("nullamp: sample log line {i}");
     }
-    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::About);
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Logs);
     settle(&mut h, 500);
-    save(&mut h, "06-about.png");
+    save(&mut h, "06d-logs.png");
+}
+
+/// The Updates page with an update available.
+#[test]
+#[ignore]
+fn render_updates() {
+    use crate::ui::dialogs::UpdateState;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let release = nullamp_update::Release { version: "1.2.0".into(), page: Some("https://github.com/jbrunemann/nullamp/releases/tag/v1.2.0".into()) };
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Updates);
+    h.state_mut().dialogs.update = UpdateState::Done(Ok(nullamp_update::Status::Available(release)));
+    settle(&mut h, 500);
+    save(&mut h, "06e-updates.png");
 }
 
 /// While a mix plays, the deck shows the tempo of the active track, found when it becomes

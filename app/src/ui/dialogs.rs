@@ -15,6 +15,7 @@ pub enum DialogResult {
     ImportSetlist(PathBuf),
     ExportSetlist { format: setlist_view::ExportFormat, path: PathBuf },
     Artwork(PathBuf),
+    UpdateChecked(Result<nullamp_update::Status, nullamp_update::Error>),
 }
 
 /// The pages of the settings screen.
@@ -24,10 +25,12 @@ pub enum SettingsTab {
     Audio,
     Shortcuts,
     About,
+    Logs,
+    Updates,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 4] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::About];
+    const ALL: [SettingsTab; 6] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Updates, SettingsTab::Logs, SettingsTab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -35,8 +38,18 @@ impl SettingsTab {
             SettingsTab::Audio => "Audio device",
             SettingsTab::Shortcuts => "Shortcuts",
             SettingsTab::About => "About",
+            SettingsTab::Logs => "Logs",
+            SettingsTab::Updates => "Updates",
         }
     }
+}
+
+/// Where the update check stands. It only runs when the user asks.
+#[derive(Debug)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    Done(Result<nullamp_update::Status, nullamp_update::Error>),
 }
 
 pub struct Dialogs {
@@ -49,12 +62,13 @@ pub struct Dialogs {
     /// The settings page taking over the deck, on this tab.
     pub settings: Option<SettingsTab>,
     about_icon: Option<egui::TextureHandle>,
+    pub update: UpdateState,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle }
     }
 }
 
@@ -72,6 +86,21 @@ where
             let _ = tx.send(r);
             ctx.request_repaint();
         }
+    });
+}
+
+/// Ask the update address for the newest release on a helper thread (it runs curl and may take
+/// seconds). Ignored while a check is running.
+pub fn check_for_updates(app: &mut App) {
+    if matches!(app.dialogs.update, UpdateState::Checking) {
+        return;
+    }
+    app.dialogs.update = UpdateState::Checking;
+    let (tx, ctx, source) = (app.dialogs.tx.clone(), app.ctx.clone(), app.settings.update_url.clone());
+    std::thread::spawn(move || {
+        let version = env!("CARGO_PKG_VERSION");
+        let _ = tx.send(DialogResult::UpdateChecked(nullamp_update::check(&source, version, &format!("nullamp/{version}"))));
+        ctx.request_repaint();
     });
 }
 
@@ -212,6 +241,7 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
                 app.workers.submit(Job::ExportPlaylist { path, items });
             }
         }
+        DialogResult::UpdateChecked(result) => app.dialogs.update = UpdateState::Done(result),
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
@@ -367,6 +397,8 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::Audio => super::deck::output_page(app, ui),
                     SettingsTab::Shortcuts => shortcuts_body(ui),
                     SettingsTab::About => about_body(app, ui),
+                    SettingsTab::Logs => logs_body(ui),
+                    SettingsTab::Updates => updates_body(app, ui),
                 }
             });
         });
@@ -434,43 +466,76 @@ fn shortcuts_body(ui: &mut egui::Ui) {
     });
 }
 
-/// Product info on the left, the log tail on the right.
+/// Product info.
 fn about_body(app: &mut App, ui: &mut egui::Ui) {
     let icon = app.dialogs.about_icon.get_or_insert_with(|| {
         let data = crate::app_icon();
         let image = egui::ColorImage::from_rgba_unmultiplied([data.width as usize, data.height as usize], &data.rgba);
         ui.ctx().load_texture("about-icon", image, egui::TextureOptions::LINEAR)
     });
-    let height = ui.available_height();
     ui.horizontal_top(|ui| {
         ui.add(egui::Image::new(&*icon).fit_to_exact_size(egui::vec2(72.0, 72.0)));
         ui.vertical(|ui| {
-            ui.set_width(250.0);
             ui.heading(format!("Nullamp {}", env!("CARGO_PKG_VERSION")));
             ui.label("A fast, retro-inspired music and DJ mix player.");
             ui.label(RichText::new(format!("License: {}", env!("CARGO_PKG_LICENSE"))).small().color(theme::text_dim()));
         });
-        ui.separator();
-        ui.vertical(|ui| {
-            let lines = crate::logbuf::tail();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Log (last {} lines)", lines.len())).small().color(theme::text_dim()));
-                if ui.small_button("Copy").clicked() {
-                    ui.ctx().copy_text(lines.join("\n"));
-                }
-            });
-            egui::Frame::new().fill(theme::bg()).stroke(egui::Stroke::new(1.0, theme::border())).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
-                let size = egui::vec2(ui.available_width(), (height - 30.0).max(40.0));
-                ui.set_min_size(size);
-                egui::ScrollArea::both().id_salt("about-log").max_height(size.y).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-                    if lines.is_empty() {
-                        ui.label(RichText::new("Nothing logged yet.").small().color(theme::text_faint()));
-                    }
-                    for l in &lines {
-                        ui.add(egui::Label::new(RichText::new(l).font(theme::mono(11.0)).color(theme::text())).extend());
-                    }
-                });
-            });
+    });
+}
+
+/// The tail of the log, newest line at the bottom.
+fn logs_body(ui: &mut egui::Ui) {
+    let height = ui.available_height();
+    let lines = crate::logbuf::tail();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("Log (last {} lines)", lines.len())).small().color(theme::text_dim()));
+        if ui.small_button("Copy").clicked() {
+            ui.ctx().copy_text(lines.join("\n"));
+        }
+    });
+    egui::Frame::new().fill(theme::bg()).stroke(egui::Stroke::new(1.0, theme::border())).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+        let size = egui::vec2(ui.available_width(), (height - 30.0).max(40.0));
+        ui.set_min_size(size);
+        egui::ScrollArea::both().id_salt("about-log").max_height(size.y).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+            if lines.is_empty() {
+                ui.label(RichText::new("Nothing logged yet.").small().color(theme::text_faint()));
+            }
+            for l in &lines {
+                ui.add(egui::Label::new(RichText::new(l).font(theme::mono(11.0)).color(theme::text())).extend());
+            }
         });
     });
+}
+
+/// The running version, a button that asks whether a newer one exists, and the answer.
+fn updates_body(app: &mut App, ui: &mut egui::Ui) {
+    use nullamp_update::Status;
+    ui.label(RichText::new(format!("You are running Nullamp {}.", env!("CARGO_PKG_VERSION"))));
+    ui.add_space(6.0);
+    let checking = matches!(app.dialogs.update, UpdateState::Checking);
+    if ui.add_enabled(!checking, egui::Button::new("Check for updates")).clicked() {
+        check_for_updates(app);
+    }
+    ui.add_space(6.0);
+    let dim = theme::text_dim();
+    match &app.dialogs.update {
+        UpdateState::Idle => {
+            ui.label(RichText::new("Nullamp only contacts the update address when you press the button.").small().color(dim));
+        }
+        UpdateState::Checking => {
+            ui.label("Checking for updates...");
+        }
+        UpdateState::Done(Ok(Status::UpToDate { .. })) => {
+            ui.label("You have the latest version.");
+        }
+        UpdateState::Done(Ok(Status::Available(release))) => {
+            ui.label(format!("Version {} is available.", release.version));
+            if let Some(page) = &release.page {
+                ui.hyperlink_to("Open the download page", page).on_hover_text(page);
+            }
+        }
+        UpdateState::Done(Err(e)) => {
+            ui.label(format!("Couldn't check for updates: {e}."));
+        }
+    }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "nullamp-update"
+description = "Asks a web address whether a newer version of Nullamp has been released: GitHub's latest release, or a small JSON file on any server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true

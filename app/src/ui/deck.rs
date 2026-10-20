@@ -53,7 +53,7 @@ fn settings_menu(app: &mut App, ui: &mut Ui, lcd: &egui::Response) {
         use super::dialogs::SettingsTab;
         ui.label(RichText::new("Settings").strong().color(theme::text_dim()));
         ui.separator();
-        for (label, tab) in [("General", SettingsTab::General), ("Audio device", SettingsTab::Audio), ("Keyboard shortcuts", SettingsTab::Shortcuts), ("About Nullamp", SettingsTab::About)] {
+        for (label, tab) in [("General", SettingsTab::General), ("Audio device", SettingsTab::Audio), ("Keyboard shortcuts", SettingsTab::Shortcuts), ("Updates", SettingsTab::Updates), ("Logs", SettingsTab::Logs), ("About Nullamp", SettingsTab::About)] {
             if ui.button(label).clicked() {
                 app.dialogs.settings = Some(tab);
             }
