@@ -805,3 +805,27 @@ fn render_entry_art_transition() {
     strip.save(out_dir().join("12-entry-art-transition.png")).unwrap();
     h.state_mut().player.stop();
 }
+
+/// The timeline with a waveform from the fixture stick's rekordbox analysis, in its colours and,
+/// for comparison, as the plain tint a decoded waveform gets.
+#[test]
+#[ignore]
+fn render_rekordbox_waveform() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[5].id;
+    h.state_mut().player.play_entry(0, id, 0.0);
+    settle(&mut h, 1500);
+    let stick_file = fixtures().join("rekordbox/Contents/Veracocha/Carte Blanche/Veracocha - Carte Blanche (Original Mix).mp3");
+    let found = crate::rekordbox::Sticks::default().waveform(&stick_file).expect("fixture waveform");
+    h.state_mut().player.seek_to(2.6);
+    h.state_mut().now.waveform = Some(found.wave);
+    h.state_mut().now.wave_colors = found.colors;
+    settle(&mut h, 300);
+    save(&mut h, "rekordbox-waveform-colour.png");
+    h.state_mut().now.wave_colors = None;
+    settle(&mut h, 100);
+    save(&mut h, "rekordbox-waveform-plain.png");
+    h.state_mut().player.stop();
+}

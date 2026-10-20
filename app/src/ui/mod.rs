@@ -74,6 +74,8 @@ pub struct NowState {
     pub art_file: Option<PathBuf>,
     /// Loudness overview behind the timeline; arrives after the track starts.
     pub waveform: Option<nullamp_audio::Waveform>,
+    /// rekordbox's colour for each bucket of `waveform`, when the waveform came from there.
+    pub wave_colors: Option<Vec<[u8; 3]>>,
     /// Tempo found by analysing the audio; arrives after the track starts, and not at all
     /// for files whose tags state a BPM.
     pub tempo: Option<nullamp_audio::Tempo>,
@@ -659,15 +661,19 @@ impl App {
                     Err(e) => self.error(format!("Cannot import playlist: {e}")),
                 }
             }
+            JobResult::Sticks(sticks) => self.on_sticks(sticks),
             JobResult::Exported { path, result } => match result {
                 Ok(()) => self.info(format!("Exported {}", path.display())),
                 Err(e) => self.error(format!("Export failed: {e}")),
             },
             JobResult::NowPlaying(info) => self.on_now_playing(*info),
-            JobResult::Waveform { token, result } => {
+            JobResult::Waveform { token, result, colors } => {
                 if self.player.current.as_ref().is_some_and(|c| c.token == token) {
                     match result {
-                        Ok(wave) => self.now.waveform = Some(wave),
+                        Ok(wave) => {
+                            self.now.waveform = Some(wave);
+                            self.now.wave_colors = colors;
+                        }
                         Err(e) => log::debug!("waveform: {e}"),
                     }
                 }
@@ -707,13 +713,44 @@ impl App {
         }
     }
 
+    /// Each stick becomes a playlist named after its volume; opening it again refreshes that playlist.
+    fn on_sticks(&mut self, sticks: Vec<crate::rekordbox::Loaded>) {
+        if sticks.is_empty() {
+            self.warn("No rekordbox USB stick found");
+            return;
+        }
+        for stick in sticks {
+            let entries = match stick.tracks {
+                Ok(tracks) => tracks.into_iter().map(|(path, info)| PlaylistEntry::with_info(path, info)).collect::<Vec<_>>(),
+                Err(e) => {
+                    self.error(format!("Cannot read the rekordbox library on {}: {e}", stick.name));
+                    continue;
+                }
+            };
+            let list = match self.player.lists.iter().position(|d| d.playlist.name == stick.name) {
+                Some(i) => {
+                    self.player.edit_list(i, |p| p.clear());
+                    i
+                }
+                None => {
+                    playlist_view::new_playlist(self, &stick.name);
+                    self.player.viewing
+                }
+            };
+            self.player.viewing = list;
+            let paths: Vec<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
+            self.insert_entries(list, entries, None);
+            self.workers.check_exists(paths);
+        }
+    }
+
     fn on_track_changed(&mut self) {
         let Some(c) = self.player.current.clone() else { return };
         self.mark_settings_dirty();
         self.now = NowState::default();
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
-        self.workers.request_waveform(c.token, c.path.clone());
+        self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform);
         self.workers.request_tempo(c.token, c.path.clone(), None);
         self.scroll_to = Some(c.entry);
         if self.settings.inspector_follows_playing {
@@ -896,7 +933,7 @@ impl App {
         match &info.meta {
             Ok(m) => {
                 // Keep playlist rows in sync with what the file says now.
-                let ti = m.track_info();
+                let ti = info.track_info.clone().unwrap_or_else(|| m.track_info());
                 self.apply_info(info.path.clone(), Ok(ti));
                 self.now.meta = Some(m.clone());
             }

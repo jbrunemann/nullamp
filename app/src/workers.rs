@@ -71,6 +71,8 @@ pub struct NowPlayingInfo {
     pub discovered: Option<Setlist>,
     /// Tracklist pages referenced in the file's tags.
     pub tracklist_urls: Vec<String>,
+    /// The file's tags as playlist info, with what rekordbox's library adds for a file on its USB stick.
+    pub track_info: Option<TrackInfo>,
 }
 
 pub enum Job {
@@ -82,6 +84,8 @@ pub enum Job {
     Covers { generation: u64, paths: Vec<PathBuf> },
     ExpandPaths { request: u64, paths: Vec<PathBuf> },
     ImportPlaylist { request: u64, path: PathBuf },
+    /// Read the library of every rekordbox USB stick mounted under `/Volumes`.
+    OpenSticks,
     ExportPlaylist { path: PathBuf, items: Vec<(PathBuf, TrackInfo)> },
     NowPlaying { token: u64, path: PathBuf },
     Inspect { request: u64, path: PathBuf },
@@ -102,6 +106,8 @@ struct WaveformRequest {
     generation: u64,
     token: u64,
     path: PathBuf,
+    /// Prefer the waveform rekordbox analysed when the file is on one of its USB sticks.
+    rekordbox: bool,
 }
 
 struct TempoRequest {
@@ -150,6 +156,8 @@ pub enum JobResult {
     /// `art` is the image's content hash and a small thumbnail, `None` without cover.
     Cover { path: PathBuf, art: Option<(u64, Thumb)> },
     Expanded { request: u64, paths: Vec<PathBuf>, skipped: usize },
+    /// The answer to [`Job::OpenSticks`], one entry per stick found.
+    Sticks(Vec<crate::rekordbox::Loaded>),
     Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
     Exported { path: PathBuf, result: Result<(), String> },
     NowPlaying(Box<NowPlayingInfo>),
@@ -162,7 +170,8 @@ pub enum JobResult {
     Restored { request: u64, target: PathBuf, result: Result<(), String> },
     TextWritten { path: PathBuf, result: Result<(), String> },
     /// Overview of the track loaded under `token`. Abandoned requests send nothing.
-    Waveform { token: u64, result: Result<Waveform, String> },
+    /// `colors` (one per bucket, red to blue by pitch) only for a waveform that came from rekordbox.
+    Waveform { token: u64, result: Result<Waveform, String>, colors: Option<Vec<[u8; 3]>> },
     /// Tempo of the track loaded under `token` (of the part of it between `span`, if that was
     /// asked for), `Ok(None)` for no clear beat. A whole-file request is not answered when the
     /// file's tags already state a BPM, and abandoned requests send nothing.
@@ -192,10 +201,11 @@ impl Workers {
         let (results_tx, results) = crossbeam_channel::unbounded();
         let scan_generation = Arc::new(AtomicU64::new(1));
         let cover_generation = Arc::new(AtomicU64::new(1));
+        let sticks = Arc::new(crate::rekordbox::Sticks::default());
 
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 4);
         for i in 0..threads {
-            let (irx, brx, tx, w, gen_, cover_gen, p) = (
+            let (irx, brx, tx, w, gen_, cover_gen, p, sticks) = (
                 interactive_rx.clone(),
                 bulk_rx.clone(),
                 results_tx.clone(),
@@ -203,11 +213,12 @@ impl Workers {
                 Arc::clone(&scan_generation),
                 Arc::clone(&cover_generation),
                 paths.clone(),
+                Arc::clone(&sticks),
             );
             std::thread::Builder::new()
                 .name(format!("nullamp-worker-{i}"))
                 .spawn(move || {
-                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen };
+                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen, sticks };
                     loop {
                         let job = select_biased! {
                             recv(irx) -> j => j,
@@ -228,7 +239,7 @@ impl Workers {
         let waveform_generation = Arc::new(AtomicU64::new(0));
         let (waveform, waveform_rx) = crossbeam_channel::unbounded::<WaveformRequest>();
         {
-            let (tx, w, generation, dir) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache());
+            let (tx, w, generation, dir, sticks) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache(), Arc::clone(&sticks));
             std::thread::Builder::new()
                 .name("nullamp-waveform".into())
                 .spawn(move || {
@@ -241,7 +252,7 @@ impl Workers {
                         while let Ok(newer) = waveform_rx.try_recv() {
                             request = newer;
                         }
-                        if let Some(result) = run_waveform(&dir, &generation, request) {
+                        if let Some(result) = run_waveform(&dir, &generation, &sticks, request) {
                             if tx.send(result).is_err() {
                                 return;
                             }
@@ -340,9 +351,9 @@ impl Workers {
 
     /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
     /// decode already running for an earlier request stops at its next packet.
-    pub fn request_waveform(&self, token: u64, path: PathBuf) {
+    pub fn request_waveform(&self, token: u64, path: PathBuf, rekordbox: bool) {
         let generation = self.waveform_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.waveform.send(WaveformRequest { generation, token, path });
+        let _ = self.waveform.send(WaveformRequest { generation, token, path, rekordbox });
     }
 
     /// Compute (or load from the cache) the tempo of `path`, loaded under `token`, of the whole
@@ -384,11 +395,14 @@ impl Workers {
 }
 
 /// `None` when a newer request replaced this one while it ran.
-fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
-    let WaveformRequest { generation, token, path } = request;
+fn run_waveform(dir: &Path, current: &AtomicU64, sticks: &crate::rekordbox::Sticks, request: WaveformRequest) -> Option<JobResult> {
+    let WaveformRequest { generation, token, path, rekordbox } = request;
+    if let Some(found) = rekordbox.then(|| sticks.waveform(&path)).flatten() {
+        return Some(JobResult::Waveform { token, result: Ok(found.wave), colors: found.colors });
+    }
     let fingerprint = store::fingerprint(&path).ok();
     if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
-        return Some(JobResult::Waveform { token, result: Ok(wave) });
+        return Some(JobResult::Waveform { token, result: Ok(wave), colors: None });
     }
     let cancelled = || current.load(Ordering::Relaxed) != generation;
     match nullamp_audio::compute_waveform(&path, &cancelled) {
@@ -396,10 +410,10 @@ fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Op
             if let Some(fp) = fingerprint {
                 waveform_cache::store(dir, &fp, &wave);
             }
-            Some(JobResult::Waveform { token, result: Ok(wave) })
+            Some(JobResult::Waveform { token, result: Ok(wave), colors: None })
         }
         Err(WaveformError::Cancelled) => None,
-        Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()) }),
+        Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()), colors: None }),
     }
 }
 
@@ -490,6 +504,7 @@ struct Ctx {
     paths: AppPaths,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
+    sticks: Arc<crate::rekordbox::Sticks>,
 }
 
 /// Longest side of playlist cover thumbnails: the hover preview at full size, the row thumbnail mipmapped down.
@@ -503,7 +518,10 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
                 if ctx.scan_generation.load(Ordering::Relaxed) != generation {
                     break;
                 }
-                let info = nullamp_meta::read_track_info(&path).map_err(|e| e.to_string());
+                let mut info = nullamp_meta::read_track_info(&path).map_err(|e| e.to_string());
+                if let Ok(info) = &mut info {
+                    ctx.sticks.fill(&path, info);
+                }
                 out.push(JobResult::Info { path, info });
             }
             out
@@ -543,6 +561,7 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
             });
             vec![JobResult::Imported { request, result }]
         }
+        Job::OpenSticks => vec![JobResult::Sticks(crate::rekordbox::load_sticks(Path::new("/Volumes")))],
         Job::ExportPlaylist { path, items } => {
             let base = path.parent().map(Path::to_path_buf);
             let text = m3u::write(items.iter().map(|(p, i)| (p.as_path(), i)), &m3u::WriteOptions { relative_to: base });
@@ -689,7 +708,12 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     };
     let tracklist_urls = meta.as_ref().map(tracklist_urls).unwrap_or_default();
     let retro_art = art.as_ref().and_then(crate::retro_art::retro_thumb);
-    NowPlayingInfo { token, path, meta, art, retro_art, art_file, fingerprint, setlist, discovered, tracklist_urls }
+    let track_info = meta.as_ref().ok().map(|m| {
+        let mut info = m.track_info();
+        ctx.sticks.fill(&path, &mut info);
+        info
+    });
+    NowPlayingInfo { token, path, meta, art, retro_art, art_file, fingerprint, setlist, discovered, tracklist_urls, track_info }
 }
 
 /// Local setlist sources, in order: a cue sheet with exactly the file's name (`mix.cue`

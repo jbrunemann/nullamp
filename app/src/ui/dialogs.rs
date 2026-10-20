@@ -422,6 +422,11 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+    ui.add_space(10.0);
+    ui.label(RichText::new("Waveform").small().weak());
+    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's analysis for tracks on its USB sticks").on_hover_text("Takes effect when the next track starts").changed() {
+        app.mark_settings_dirty();
+    }
 }
 
 /// The shortcut list in as many columns as the deck is wide, so it fits its height.

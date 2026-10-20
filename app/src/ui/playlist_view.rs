@@ -347,6 +347,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             }
         });
         ui.menu_button("List", |ui| {
+            if ui.button("Open rekordbox USB").on_hover_text("Add the tracks of a USB stick exported by rekordbox as a playlist").clicked() {
+                app.workers.submit(Job::OpenSticks);
+                ui.close();
+            }
             if ui.button("Import M3U / M3U8…").clicked() {
                 dialogs::import_playlist(app);
                 ui.close();

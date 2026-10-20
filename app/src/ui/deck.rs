@@ -623,7 +623,7 @@ fn timeline(app: &mut App, ui: &mut Ui) {
         p.rect_filled(*r, 0.0, fill);
     }
     if let Some(wave) = &app.now.waveform {
-        draw_waveform(&p, bar, wave, ui.ctx().pixels_per_point());
+        draw_waveform(&p, bar, wave, app.now.wave_colors.as_deref(), ui.ctx().pixels_per_point());
     }
     for (r, active, timing) in &spans {
         let edge = if *timing == Timing::Exact { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.45) };
@@ -697,10 +697,14 @@ fn timeline(app: &mut App, ui: &mut Ui) {
     }
 }
 
+/// How far in from each end of the timeline rekordbox's colours fade in, in points: past the time labels.
+const WAVE_FADE: f32 = 90.0;
+
 /// The file's loudness envelope inside `bar`, mirrored around the middle: peaks dim, RMS brighter.
 /// One column per point; each takes the loudest of the buckets it covers, so a long mix stays
-/// readable and a short track does not turn into a staircase.
-fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, pixels_per_point: f32) {
+/// readable and a short track does not turn into a staircase. With rekordbox's `colors` (one per bucket) each column
+/// takes the colour of its loudest bucket and is drawn much brighter than the faint LCD tint of a decoded waveform.
+fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, colors: Option<&[[u8; 3]]>, pixels_per_point: f32) {
     let inner = bar.shrink(1.0);
     let columns = inner.width().floor() as usize;
     let n = wave.peak.len().min(wave.rms.len());
@@ -716,12 +720,27 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, p
     let top = f32::from(wave.peak.iter().copied().max().unwrap_or(0).max(1));
     let height = |v: u8| (f32::from(v) / top).powf(0.6) * half;
     let (peak_color, rms_color) = (theme::LCD_FG.gamma_multiply(0.05), theme::LCD_FG.gamma_multiply(0.10));
+    let colors = colors.filter(|c| c.len() >= n);
     let mut mesh = egui::Mesh::default();
     for c in 0..columns {
         let lo = (c * n / columns).min(n - 1);
         let hi = ((c + 1) * n / columns).clamp(lo + 1, n);
         let x0 = (inner.left() + c as f32 * width).round_to_pixels(pixels_per_point);
         let x1 = (inner.left() + (c + 1) as f32 * width).round_to_pixels(pixels_per_point).max(x0 + 1.0 / pixels_per_point);
+        let (peak_color, rms_color) = match colors {
+            Some(colors) => {
+                let loudest_bucket = (lo..hi).max_by_key(|&i| wave.peak[i]).unwrap_or(lo);
+                let [r, g, b] = colors[loudest_bucket];
+                let color = Color32::from_rgb(r, g, b);
+                // The ends fade to the bar's background so the time labels stay readable.
+                let from_end = (x0 - inner.left()).min(inner.right() - x1).max(0.0) / WAVE_FADE;
+                // Smoothstep, squared: dark under the label, full strength once clear of it.
+                let t = from_end.min(1.0);
+                let fade = (t * t * (3.0 - 2.0 * t)).powi(2);
+                (color.gamma_multiply(0.30 * fade), color.gamma_multiply(0.75 * fade))
+            }
+            None => (peak_color, rms_color),
+        };
         for (values, color) in [(&wave.peak, peak_color), (&wave.rms, rms_color)] {
             let h = height(loudest(values, lo, hi)).max(0.5);
             mesh.add_colored_rect(Rect::from_min_max(pos2(x0, mid - h), pos2(x1, mid + h)), color);

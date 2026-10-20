@@ -62,6 +62,9 @@ pub struct Settings {
     /// Look up the covers of the tracks inside a mix on Deezer and iTunes as each one starts
     /// playing. Only set in settings.json.
     pub online_artwork: bool,
+    /// Tracks on a rekordbox USB stick show the waveform rekordbox analysed instead of one
+    /// decoded from the file.
+    pub rekordbox_waveform: bool,
 }
 
 impl Default for Settings {
@@ -92,6 +95,7 @@ impl Default for Settings {
             camelot: true,
             update_url: DEFAULT_UPDATE_URL.into(),
             online_artwork: true,
+            rekordbox_waveform: true,
         }
     }
 }
