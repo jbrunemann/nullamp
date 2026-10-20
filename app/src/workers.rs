@@ -582,7 +582,7 @@ pub fn discover_local_setlist(path: &Path, meta: Option<&FileMetadata>) -> Optio
                 && s.entries.len() >= 2
             {
                 for e in &mut s.entries {
-                    e.provenance = Provenance::CueSheet { path: "embedded in tags".into() };
+                    e.provenance = Provenance::CueSheet { path: Provenance::EMBEDDED_CUE_PATH.into() };
                 }
                 fill_mix(&mut s.mix, &mix);
                 return Some(s);

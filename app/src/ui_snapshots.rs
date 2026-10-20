@@ -231,6 +231,14 @@ fn tag_edit_reloads_setlist_from_comment() {
     write_comment("Just a note.\n");
     refresh(&mut h);
     assert_eq!(titles(&h), ["Two"], "only the correction remains");
+
+    // A cue sheet pasted into the comment loads as a timed setlist.
+    write_comment("FILE \"mix.mp3\" MP3\n TRACK 01 AUDIO\n TITLE \"Alpha\"\n PERFORMER \"P\"\n INDEX 01 00:00:00\n TRACK 02 AUDIO\n TITLE \"Beta\"\n PERFORMER \"P\"\n INDEX 01 01:00:00\n");
+    refresh(&mut h);
+    let t = titles(&h);
+    assert!(t.contains(&"Alpha".to_owned()) && t.contains(&"Beta".to_owned()), "{t:?}");
+    let beta = h.state().mix.setlist.as_ref().unwrap().entries.iter().find(|e| e.title == "Beta").unwrap().start;
+    assert_eq!(beta, Some(60.0));
     h.state_mut().player.stop();
 }
 

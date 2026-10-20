@@ -134,13 +134,13 @@ pub fn on_now_playing(app: &mut App, info: &NowPlayingInfo) {
 }
 
 /// After the playing file's tags were rewritten: entries read from its Comment or
-/// Description follow the tag. Corrections by the user, and entries from any other
+/// Description (a track list or a cue sheet) follow the tag. Corrections by the user, and entries from any other
 /// source (chapters, imports, pasted lists), stay as they are.
 fn refresh_tag_entries(app: &mut App, discovered: Option<Setlist>) {
-    let from_tag = |e: &SetlistEntry| e.provenance == Provenance::TagDescription && !e.user_edited;
+    let from_tag = |e: &SetlistEntry| e.provenance.is_from_tags() && !e.user_edited;
     let key = |e: &SetlistEntry| (e.artist.clone(), e.title.clone(), e.version.clone(), e.label.clone(), e.start);
     let (incoming_mix, incoming): (MixInfo, Vec<SetlistEntry>) = match discovered {
-        Some(s) => (s.mix, s.entries.into_iter().filter(|e| e.provenance == Provenance::TagDescription).collect()),
+        Some(s) => (s.mix, s.entries.into_iter().filter(|e| e.provenance.is_from_tags()).collect()),
         None => (MixInfo::default(), Vec::new()),
     };
     let current: Vec<_> = app.mix.setlist.iter().flat_map(|s| s.entries.iter()).filter(|e| from_tag(e)).map(key).collect();

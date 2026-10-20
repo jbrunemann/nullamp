@@ -35,6 +35,19 @@ pub enum Provenance {
 }
 
 impl Provenance {
+    /// The `CueSheet` path of a sheet read out of a tag (a CUESHEET item, or a cue
+    /// list pasted into the comment). Saved setlists hold it, so it must not change.
+    pub const EMBEDDED_CUE_PATH: &'static str = "embedded in tags";
+
+    /// Whether this came out of the file's own tags, so a tag rewrite can replace it.
+    pub fn is_from_tags(&self) -> bool {
+        match self {
+            Provenance::TagDescription => true,
+            Provenance::CueSheet { path } => path == Self::EMBEDDED_CUE_PATH,
+            _ => false,
+        }
+    }
+
     pub fn label(&self) -> String {
         match self {
             Provenance::EmbeddedChapters => "Embedded chapters".into(),
