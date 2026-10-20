@@ -730,10 +730,7 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
 
     let saved = fingerprint.as_deref().and_then(|fp| store::find_setlist(&ctx.paths, fp, &path));
     let discovered = discover_local_setlist(&path, meta.as_ref().ok());
-    let setlist = match saved {
-        Some(s) => Some((s.setlist, SetlistOrigin::Saved)),
-        None => discovered.clone().map(|s| (s, SetlistOrigin::Discovered)),
-    };
+    let setlist = choose_setlist(saved.map(|s| s.setlist), discovered.as_ref());
     let tracklist_urls = meta.as_ref().map(tracklist_urls).unwrap_or_default();
     let retro_art = art.as_ref().and_then(crate::retro_art::retro_thumb);
     let track_info = meta.as_ref().ok().map(|m| {
@@ -748,6 +745,17 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
         info
     });
     NowPlayingInfo { token, path, meta, art, retro_art, art_file, fingerprint, setlist, discovered, tracklist_urls, track_info }
+}
+
+/// A saved setlist wins over what the file's own sources hold, because it carries the
+/// user's work. The exception is an untimed list nobody edited (text read before a parser
+/// learned the cue sheet, say): it stays saved on disk but gives way to a timed discovery.
+fn choose_setlist(saved: Option<Setlist>, discovered: Option<&Setlist>) -> Option<(Setlist, SetlistOrigin)> {
+    match (saved, discovered) {
+        (Some(s), Some(d)) if s.is_untouched_reference() && d.has_times() => Some((d.clone(), SetlistOrigin::Discovered)),
+        (Some(s), _) => Some((s, SetlistOrigin::Saved)),
+        (None, d) => d.map(|d| (d.clone(), SetlistOrigin::Discovered)),
+    }
 }
 
 /// Local setlist sources, in order: a cue sheet with exactly the file's name (`mix.cue`
@@ -877,6 +885,35 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures").join(name)
+    }
+
+    #[test]
+    fn an_untouched_untimed_saved_setlist_yields_to_a_timed_discovery() {
+        let entry = |start, provenance| nullamp_core::setlist::SetlistEntry::new("A", "One", start, provenance);
+        let imported = || Provenance::Imported { origin_url: None };
+        let stale = Setlist { entries: vec![entry(None, imported()), entry(None, imported())], ..Default::default() };
+        let found = Setlist { entries: vec![entry(Some(0.0), Provenance::EmbeddedChapters)], ..Default::default() };
+        let untimed_found = Setlist { entries: vec![entry(None, Provenance::TagDescription)], ..Default::default() };
+
+        let (s, origin) = choose_setlist(Some(stale.clone()), Some(&found)).unwrap();
+        assert_eq!((s.entries.len(), origin), (1, SetlistOrigin::Discovered));
+
+        // Nothing better to offer: the saved list stays.
+        assert_eq!(choose_setlist(Some(stale.clone()), Some(&untimed_found)).unwrap().1, SetlistOrigin::Saved);
+        assert_eq!(choose_setlist(Some(stale.clone()), None).unwrap().1, SetlistOrigin::Saved);
+
+        // The user's work stays: a correction, an entry typed in, or a timed list.
+        let mut edited = stale.clone();
+        edited.entries[0].user_edited = true;
+        assert_eq!(choose_setlist(Some(edited), Some(&found)).unwrap().1, SetlistOrigin::Saved);
+        let mut typed = stale.clone();
+        typed.entries.push(entry(None, Provenance::Manual));
+        assert_eq!(choose_setlist(Some(typed), Some(&found)).unwrap().1, SetlistOrigin::Saved);
+        let timed = Setlist { entries: vec![entry(Some(5.0), imported())], ..Default::default() };
+        assert_eq!(choose_setlist(Some(timed), Some(&found)).unwrap().1, SetlistOrigin::Saved);
+
+        assert_eq!(choose_setlist(None, Some(&found)).unwrap().1, SetlistOrigin::Discovered);
+        assert!(choose_setlist(None, None).is_none());
     }
 
     #[test]

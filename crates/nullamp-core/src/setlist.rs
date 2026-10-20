@@ -373,6 +373,18 @@ impl Setlist {
         issues
     }
 
+    /// Whether any entry has a start time, so the list can be sought by.
+    pub fn has_times(&self) -> bool {
+        self.entries.iter().any(|e| e.start.is_some())
+    }
+
+    /// An untimed list the user never touched: no corrections and nothing typed in.
+    /// Such a list is only a copy of some text, so a timed one found in the file's own
+    /// sources is better than it.
+    pub fn is_untouched_reference(&self) -> bool {
+        !self.entries.is_empty() && self.entries.iter().all(|e| e.start.is_none() && !e.user_edited && e.provenance != Provenance::Manual)
+    }
+
     /// Stable-sort entries by start time; entries without a start keep their
     /// position relative to the entry before them.
     pub fn sort_by_start(&mut self) {
