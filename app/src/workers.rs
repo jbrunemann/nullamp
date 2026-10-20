@@ -161,7 +161,7 @@ pub enum JobResult {
     Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
     Exported { path: PathBuf, result: Result<(), String> },
     NowPlaying(Box<NowPlayingInfo>),
-    Inspected { request: u64, path: PathBuf, meta: Result<FileMetadata, String> },
+    Inspected { request: u64, path: PathBuf, meta: Result<FileMetadata, String>, rekordbox: Vec<(String, String)> },
     Image { request: u64, thumb: Option<Thumb> },
     Written { request: u64, results: Vec<(PathBuf, Result<nullamp_meta::WriteReport, String>)> },
     SetlistSaved(Result<(), String>),
@@ -593,7 +593,13 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::NowPlaying { token, path } => vec![JobResult::NowPlaying(Box::new(now_playing(ctx, token, path)))],
         Job::Inspect { request, path } => {
             let meta = nullamp_meta::read(&path).map_err(|e| e.to_string());
-            vec![JobResult::Inspected { request, path, meta }]
+            // From the stick's library when the file is on one, else what was cached when it last played from one.
+            let record = ctx.sticks.data(&path).or_else(|| {
+                let fingerprint = store::fingerprint(&path).ok()?;
+                waveform_cache::load_rekordbox_data(&ctx.paths.waveform_cache(), &fingerprint)
+            });
+            let rekordbox = record.map(|d| d.scalars()).unwrap_or_default();
+            vec![JobResult::Inspected { request, path, meta, rekordbox }]
         }
         Job::LogFingerprint { path } => {
             match nullamp_audio::compute_fingerprint(&path) {

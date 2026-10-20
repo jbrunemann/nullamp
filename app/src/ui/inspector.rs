@@ -56,6 +56,8 @@ pub struct InspectorState {
     pub targets: Vec<PathBuf>,
     request: Option<u64>,
     loaded: BTreeMap<PathBuf, FileMetadata>,
+    /// What rekordbox knows of each file, empty when it knows nothing.
+    rekordbox: BTreeMap<PathBuf, Vec<(String, String)>>,
     errors: Vec<(PathBuf, String)>,
     fields: BTreeMap<Field, FieldState>,
     art: Vec<ArtItem>,
@@ -245,9 +247,10 @@ fn save(app: &mut App) {
 
 pub fn on_result(app: &mut App, r: JobResult) {
     match r {
-        JobResult::Inspected { request, path, meta } if app.inspector.request == Some(request) => {
+        JobResult::Inspected { request, path, meta, rekordbox } if app.inspector.request == Some(request) => {
             match meta {
                 Ok(m) => {
+                    app.inspector.rekordbox.insert(path.clone(), rekordbox);
                     app.inspector.loaded.insert(path, m);
                 }
                 Err(e) => app.inspector.errors.push((path, e)),
@@ -655,6 +658,17 @@ fn technical(app: &mut App, ui: &mut Ui) {
             row("Artwork", format!("{} image{}", m.artwork.len(), if m.artwork.len() == 1 { "" } else { "s" }));
             row("Chapters", m.chapters.len().to_string());
         });
+        if let Some(rows) = app.inspector.targets.first().and_then(|p| app.inspector.rekordbox.get(p)).filter(|r| !r.is_empty()) {
+            egui::CollapsingHeader::new(RichText::new("From rekordbox").small()).id_salt("rekordbox-data").default_open(true).show(ui, |ui| {
+                egui::Grid::new("rekordbox-grid").num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
+                    for (k, v) in rows {
+                        ui.label(RichText::new(k).small().color(theme::text_dim()));
+                        ui.label(RichText::new(v).small().monospace());
+                        ui.end_row();
+                    }
+                });
+            });
+        }
         if !m.chapters.is_empty() {
             egui::CollapsingHeader::new(RichText::new(format!("Embedded chapters ({})", m.chapters.len())).small()).id_salt("chapters").show(ui, |ui| {
                 for c in &m.chapters {

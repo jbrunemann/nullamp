@@ -50,9 +50,9 @@ pub struct Data {
     /// As rekordbox names it ("Am", "Bbm").
     pub key: Option<String>,
     pub bpm: Option<f32>,
-    /// Stars, 0 to 5. Kept for later; nothing shows it yet.
+    /// Stars, 0 to 5. Shown in the inspector only.
     pub rating: u8,
-    /// The colour label ("red", "aqua", ...). Kept for later; nothing shows it yet.
+    /// The colour label ("red", "aqua", ...). Shown in the inspector only.
     pub color: Option<String>,
 }
 
@@ -64,6 +64,22 @@ impl Data {
     /// The part of it that playlist rows show.
     fn info(&self) -> TrackInfo {
         TrackInfo { key: self.key.as_deref().and_then(Key::parse), bpm: self.bpm, ..TrackInfo::default() }
+    }
+}
+
+impl Data {
+    /// Every entry of the record that is not an object or an array, as the key and its value in
+    /// text, for the inspector to show what rekordbox knows. A missing value reads "none".
+    pub fn scalars(&self) -> Vec<(String, String)> {
+        let Ok(serde_json::Value::Object(map)) = serde_json::to_value(self) else { return Vec::new() };
+        map.into_iter()
+            .filter_map(|(k, v)| match v {
+                serde_json::Value::Null => Some((k, "none".to_owned())),
+                serde_json::Value::String(s) => Some((k, s)),
+                serde_json::Value::Bool(_) | serde_json::Value::Number(_) => Some((k, v.to_string())),
+                serde_json::Value::Object(_) | serde_json::Value::Array(_) => None,
+            })
+            .collect()
     }
 }
 
@@ -160,6 +176,17 @@ mod tests {
 
     fn fixtures() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures")
+    }
+
+    #[test]
+    fn scalars_list_every_plain_value_of_the_record() {
+        let data = Data { key: Some("Am".into()), bpm: Some(128.5), rating: 3, color: None };
+        let rows = data.scalars();
+        let get = |k: &str| rows.iter().find(|(name, _)| name == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("key"), Some("Am"));
+        assert_eq!(get("bpm"), Some("128.5"));
+        assert_eq!(get("rating"), Some("3"));
+        assert_eq!(get("color"), Some("none"));
     }
 
     #[test]
