@@ -7,7 +7,9 @@
 //!   seconds and must not hold up the local workers;
 //! - *tempo* analysis has a thread of its own as well, so it neither waits for a waveform nor
 //!   cancels one. Both start after the track has been handed to the audio engine and never
-//!   delay playback.
+//!   delay playback;
+//! - *online* artwork lookups for the tracks of a mix wait on the network for seconds, so they
+//!   have a thread of their own too and answer in the order they were asked.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -109,7 +111,24 @@ struct TempoRequest {
     span: Option<(f64, f64)>,
 }
 
+struct EntryArtRequest {
+    key: String,
+    artist: String,
+    title: String,
+}
+
+/// A cover found online for one track of a mix.
+pub struct EntryArt {
+    pub art: Thumb,
+    pub retro_art: Option<Thumb>,
+    /// The cached image, for the OS media overlay.
+    pub file: PathBuf,
+}
+
 pub enum JobResult {
+    /// The cover of the track with this `entry_art::key`: `Ok(None)` when none was found,
+    /// an error when the services could not be asked (the next request tries again).
+    EntryArt { key: String, result: Result<Option<EntryArt>, String> },
     Info { path: PathBuf, info: Result<TrackInfo, String> },
     Missing { paths: Vec<PathBuf> },
     /// `art` is the image's content hash and a small thumbnail, `None` without cover.
@@ -143,6 +162,7 @@ pub struct Workers {
     waveform_generation: Arc<AtomicU64>,
     tempo: Sender<TempoRequest>,
     tempo_generation: Arc<AtomicU64>,
+    entry_art: Sender<EntryArtRequest>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -238,7 +258,45 @@ impl Workers {
                 .expect("spawn tempo worker");
         }
 
-        Workers { interactive, bulk, waveform, waveform_generation, tempo, tempo_generation, results, scan_generation, cover_generation, next_request: AtomicU64::new(1) }
+        let (entry_art, entry_art_rx) = crossbeam_channel::unbounded::<EntryArtRequest>();
+        {
+            let (tx, w, dir) = (results_tx.clone(), Arc::clone(&waker), paths.track_artwork_cache());
+            std::thread::Builder::new()
+                .name("nullamp-online".into())
+                .spawn(move || {
+                    let removed = crate::entry_art::prune(&dir);
+                    if removed > 0 {
+                        log::debug!("removed {removed} expired track artwork cache entries");
+                    }
+                    while let Ok(request) = entry_art_rx.recv() {
+                        if tx.send(run_entry_art(&dir, request)).is_err() {
+                            return;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn online worker");
+        }
+
+        Workers {
+            interactive,
+            bulk,
+            waveform,
+            waveform_generation,
+            tempo,
+            tempo_generation,
+            entry_art,
+            results,
+            scan_generation,
+            cover_generation,
+            next_request: AtomicU64::new(1),
+        }
+    }
+
+    /// Find the cover of one track of a mix: in the cache, else online. Answered with
+    /// [`JobResult::EntryArt`] under `key`.
+    pub fn request_entry_art(&self, key: String, artist: String, title: String) {
+        let _ = self.entry_art.send(EntryArtRequest { key, artist, title });
     }
 
     pub fn request_id(&self) -> u64 {
@@ -345,6 +403,39 @@ fn run_tempo(dir: &Path, current: &AtomicU64, request: TempoRequest) -> Option<J
         Err(TempoError::Cancelled) => None,
         Err(e) => Some(JobResult::Tempo { token, span, result: Err(e.to_string()) }),
     }
+}
+
+fn run_entry_art(dir: &Path, request: EntryArtRequest) -> JobResult {
+    let EntryArtRequest { key, artist, title } = request;
+    let cached = match crate::entry_art::load(dir, &key) {
+        Some(crate::entry_art::Cached::Image(file)) => std::fs::read(&file).ok().and_then(|bytes| entry_art_from(&bytes, file)).map(Some),
+        Some(crate::entry_art::Cached::Nothing) => Some(None),
+        None => None,
+    };
+    let result = match cached {
+        Some(art) => Ok(art),
+        None => look_up_entry_art(dir, &key, &artist, &title),
+    };
+    JobResult::EntryArt { key, result }
+}
+
+fn look_up_entry_art(dir: &Path, key: &str, artist: &str, title: &str) -> Result<Option<EntryArt>, String> {
+    let program = concat!("Nullamp/", env!("CARGO_PKG_VERSION"));
+    let Some(found) = nullamp_artwork::find(artist, title, program).map_err(|e| e.to_string())? else {
+        log::info!("no artwork found online for {artist} - {title}");
+        crate::entry_art::store_nothing(dir, key);
+        return Ok(None);
+    };
+    let bytes = nullamp_artwork::download(&found.candidate.image_url, program).map_err(|e| e.to_string())?;
+    let file = crate::entry_art::store_image(dir, key, &bytes).ok_or("cannot write the artwork cache")?;
+    log::info!("artwork for {artist} - {title}: {} by {} on {}", found.candidate.release, found.candidate.artist, found.source.name());
+    entry_art_from(&bytes, file).map(Some).ok_or_else(|| "the cover is not an image".to_owned())
+}
+
+fn entry_art_from(bytes: &[u8], file: PathBuf) -> Option<EntryArt> {
+    let art = decode_thumb(bytes, 512)?;
+    let retro_art = crate::retro_art::retro_thumb(&art);
+    Some(EntryArt { art, retro_art, file })
 }
 
 struct Ctx {
@@ -765,6 +856,21 @@ mod tests {
         meta.other_items.push(("WXXX:".into(), "https://www.mixcloud.com/u/m/".into()));
         let urls = tracklist_urls(&meta);
         assert_eq!(urls, ["https://www.1001tracklists.com/tracklist/abc/x.html", "https://www.mixcloud.com/u/m/"]);
+    }
+
+    /// Needs the network.
+    #[test]
+    #[ignore = "asks Deezer; run with --ignored"]
+    fn looks_up_and_caches_entry_art() {
+        let dir = tempfile::tempdir().unwrap();
+        let (artist, title) = ("Anil Aras", "Dexed Tek");
+        let key = crate::entry_art::key(artist, title);
+        let request = || EntryArtRequest { key: key.clone(), artist: artist.into(), title: title.into() };
+        let JobResult::EntryArt { result: Ok(Some(first)), .. } = run_entry_art(dir.path(), request()) else { panic!("no cover found") };
+        assert!(first.art.size[0] >= 256 && first.retro_art.is_some());
+        assert!(matches!(crate::entry_art::load(dir.path(), &key), Some(crate::entry_art::Cached::Image(p)) if p == first.file));
+        let JobResult::EntryArt { result: Ok(Some(again)), .. } = run_entry_art(dir.path(), request()) else { panic!("cache missed") };
+        assert_eq!(again.file, first.file);
     }
 
     #[test]

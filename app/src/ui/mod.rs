@@ -10,7 +10,7 @@ pub mod theme;
 mod visualizer;
 pub(crate) mod widgets;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -81,7 +81,85 @@ pub struct NowState {
     /// last asked for, and the tempo found for it once that arrives.
     pub segment_requested: Option<(f64, f64)>,
     pub segment_tempo: Option<nullamp_audio::Tempo>,
+    /// Covers found online for the tracks of the playing mix, by `entry_art::key`, asked for
+    /// when a track first becomes active.
+    pub entry_art: HashMap<String, EntryCover>,
+    /// The picture on the deck, and the one it is changing from while a transition runs.
+    pub art_shown: Option<ShownArt>,
+    pub art_transition: Option<ArtTransition>,
 }
+
+impl NowState {
+    /// Put `next` on the deck. A change between a mix's cover (or the placeholder) and a
+    /// track's cover, or from one track's to another's, is animated; flipping between the
+    /// retro and the original picture of the same cover is not.
+    fn show_art(&mut self, next: ShownArt, time: f64) {
+        let Some(prev) = self.art_shown.take() else {
+            self.art_shown = Some(next);
+            return;
+        };
+        let animate = prev.source != next.source && (prev.source.is_entry() || next.source.is_entry()) && next.art.is_some();
+        if animate {
+            self.art_transition = Some(ArtTransition { from: prev, started: time });
+            self.art_shown = Some(next);
+        } else if prev.source != next.source || prev.art.as_ref().map(|t| t.id()) != next.art.as_ref().map(|t| t.id()) {
+            self.art_shown = Some(next);
+        } else {
+            self.art_shown = Some(prev);
+        }
+    }
+}
+
+pub enum EntryCover {
+    /// Being looked up since then.
+    Looking(Instant),
+    Missing,
+    Found(EntryArtwork),
+}
+
+pub struct EntryArtwork {
+    pub art: TextureHandle,
+    pub retro_art: Option<TextureHandle>,
+    pub file: PathBuf,
+}
+
+/// Whose cover the deck shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ArtSource {
+    /// The playing file's own, or the placeholder when it has none.
+    File,
+    /// A track of the mix, by `entry_art::key`.
+    Entry(String),
+}
+
+impl ArtSource {
+    fn is_entry(&self) -> bool {
+        matches!(self, ArtSource::Entry(_))
+    }
+}
+
+pub struct ShownArt {
+    pub source: ArtSource,
+    pub art: Option<TextureHandle>,
+    pub retro_art: Option<TextureHandle>,
+}
+
+impl ShownArt {
+    /// The picture to draw: the retro one when `retro` is wanted and there is one.
+    pub fn pick(&self, retro: bool) -> Option<&TextureHandle> {
+        retro.then_some(self.retro_art.as_ref()).flatten().or(self.art.as_ref())
+    }
+}
+
+pub struct ArtTransition {
+    pub from: ShownArt,
+    /// `egui` input time at the start.
+    pub started: f64,
+}
+
+/// How long the deck keeps the previous track's cover while the next one is looked up, so a
+/// quick answer does not flash the mix's cover in between.
+const COVER_HOLD: Duration = Duration::from_secs(2);
 
 /// The audio output as the engine last reported it.
 #[derive(Clone, Debug, PartialEq)]
@@ -495,6 +573,7 @@ impl App {
         }
         setlist_view::update_active(self);
         self.update_segment_tempo();
+        self.update_entry_art();
         self.publish_now_playing();
         self.flush_saves(false);
     }
@@ -527,6 +606,7 @@ impl App {
 
     fn on_job_result(&mut self, r: JobResult) {
         match r {
+            JobResult::EntryArt { key, result } => self.on_entry_art(key, result),
             JobResult::Info { path, info } => self.apply_info(path, info),
             JobResult::Cover { path, art } => self.pl_view.art.insert(&self.ctx, path, art),
             JobResult::Missing { paths } => {
@@ -667,6 +747,95 @@ impl App {
         }
     }
 
+    /// The lookup key of the active track of the playing mix, when it names one.
+    pub(crate) fn active_entry_key(&self) -> Option<(String, &nullamp_core::SetlistEntry)> {
+        let (setlist, i) = setlist_view::shown(self).zip(self.mix.active)?;
+        let e = setlist.entries.get(i)?;
+        if e.artist.trim().is_empty() || e.title.trim().is_empty() || e.is_unidentified() {
+            return None;
+        }
+        Some((crate::entry_art::key(&e.artist, &e.full_title()), e))
+    }
+
+    /// Ask for the cover of the active track of a mix the first time it becomes active.
+    fn update_entry_art(&mut self) {
+        if !self.settings.online_artwork {
+            return;
+        }
+        let Some((key, e)) = self.active_entry_key() else { return };
+        if self.now.entry_art.contains_key(&key) {
+            return;
+        }
+        let (artist, title) = (e.artist.trim().to_owned(), e.full_title());
+        self.now.entry_art.insert(key.clone(), EntryCover::Looking(Instant::now()));
+        self.workers.request_entry_art(key, artist, title);
+    }
+
+    fn on_entry_art(&mut self, key: String, result: Result<Option<crate::workers::EntryArt>, String>) {
+        // Answers for the tracks of a mix that is no longer playing are dropped.
+        if !self.now.entry_art.contains_key(&key) {
+            return;
+        }
+        match result {
+            Ok(found) => {
+                let texture = |name: &str, t: &crate::workers::Thumb| {
+                    self.ctx.load_texture(name, egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba), egui::TextureOptions::LINEAR)
+                };
+                let cover = match found {
+                    Some(f) => EntryCover::Found(EntryArtwork {
+                        art: texture("entry-art", &f.art),
+                        retro_art: f.retro_art.as_ref().map(|t| texture("entry-art-retro", t)),
+                        file: f.file,
+                    }),
+                    None => EntryCover::Missing,
+                };
+                self.now.entry_art.insert(key, cover);
+            }
+            Err(e) => {
+                log::warn!("artwork lookup failed: {e}");
+                // Try again when the track next becomes active.
+                self.now.entry_art.remove(&key);
+            }
+        }
+    }
+
+    fn active_entry_cover(&self) -> Option<(String, &EntryCover)> {
+        let (key, _) = self.active_entry_key()?;
+        let cover = self.now.entry_art.get(&key)?;
+        Some((key, cover))
+    }
+
+    fn active_entry_artwork(&self) -> Option<&EntryArtwork> {
+        match self.active_entry_cover()? {
+            (_, EntryCover::Found(found)) => Some(found),
+            _ => None,
+        }
+    }
+
+    /// The deck's cover: the active track's while a mix plays and one was found, else the
+    /// file's. `None` for a moment while the active track's cover is being looked up: the deck
+    /// keeps what it shows.
+    pub fn deck_art(&self) -> Option<ShownArt> {
+        match self.active_entry_cover() {
+            Some((key, EntryCover::Found(found))) => {
+                return Some(ShownArt { source: ArtSource::Entry(key), art: Some(found.art.clone()), retro_art: found.retro_art.clone() });
+            }
+            Some((_, EntryCover::Looking(since))) if since.elapsed() < COVER_HOLD && self.now.art_shown.is_some() => return None,
+            _ => {}
+        }
+        Some(ShownArt { source: ArtSource::File, art: self.now.art.clone(), retro_art: self.now.retro_art.clone() })
+    }
+
+    /// Update the deck's picture, starting a transition when it changes and ending one that has run its course.
+    pub fn refresh_deck_art(&mut self, time: f64) {
+        if let Some(next) = self.deck_art() {
+            self.now.show_art(next, time);
+        }
+        if self.now.art_transition.as_ref().is_some_and(|t| time - t.started >= deck::ART_TRANSITION_SECS) {
+            self.now.art_transition = None;
+        }
+    }
+
     /// Whether the playing file's tags switch the tempo off (BPM `-1`).
     pub fn current_bpm_off(&self) -> bool {
         self.now.meta.as_ref().and_then(|m| m.fields.get(&nullamp_meta::Field::Bpm)).is_some_and(|v| nullamp_meta::is_bpm_off(v))
@@ -746,6 +915,9 @@ impl App {
             duration: self.player.duration(),
             cover: self.now.art_file.clone(),
         };
+        if let Some(found) = self.active_entry_artwork() {
+            np.cover = Some(found.file.clone());
+        }
         if let Some((setlist, idx)) = setlist_view::shown(self).zip(self.mix.active) {
             let e = &setlist.entries[idx];
             let mix_name = setlist.mix.title.clone().unwrap_or_else(|| np.title.clone());

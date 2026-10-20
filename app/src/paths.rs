@@ -48,6 +48,11 @@ impl AppPaths {
         self.cache.join("artwork")
     }
 
+    /// Covers found online for the tracks inside mixes.
+    pub fn track_artwork_cache(&self) -> PathBuf {
+        self.artwork_cache().join("tracks")
+    }
+
     pub fn waveform_cache(&self) -> PathBuf {
         self.cache.join("waveforms")
     }

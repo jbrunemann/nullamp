@@ -1,0 +1,10 @@
+[package]
+name = "nullamp-artwork"
+description = "Finds the cover of one track of a DJ mix by its artist and title: Deezer first, then iTunes Search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true

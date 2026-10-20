@@ -59,6 +59,9 @@ pub struct Settings {
     /// Where the update check asks for the newest release: GitHub's "latest release" API or a
     /// JSON file with `version` and `url`. Only set in settings.json.
     pub update_url: String,
+    /// Look up the covers of the tracks inside a mix on Deezer and iTunes as each one starts
+    /// playing. Only set in settings.json.
+    pub online_artwork: bool,
 }
 
 impl Default for Settings {
@@ -88,6 +91,7 @@ impl Default for Settings {
             inspector_follows_playing: false,
             camelot: true,
             update_url: DEFAULT_UPDATE_URL.into(),
+            online_artwork: true,
         }
     }
 }

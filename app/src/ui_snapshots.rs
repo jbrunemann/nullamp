@@ -721,3 +721,55 @@ fn render_deck_low_dpi() {
     save(&mut h, "11-deck-1x.png");
     h.state_mut().player.stop();
 }
+
+/// The deck's cover turning from the mix's to a track's, frame by frame, side by side in one strip.
+#[test]
+#[ignore]
+fn render_entry_art_transition() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        app.settings.online_artwork = false;
+        app.settings.visualizer = "off".into();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    // The first track; the fixture's second has no artist to look up.
+    h.state_mut().player.seek_to(0.2);
+    settle(&mut h, 300);
+
+    // A found cover for the active track, as if it had just arrived.
+    let bytes = std::fs::read(fixtures().join("cover.jpg")).unwrap();
+    let thumb = crate::workers::decode_thumb(&bytes, 512).unwrap();
+    let retro = crate::retro_art::retro_thumb(&thumb);
+    let texture = |ctx: &egui::Context, t: &crate::workers::Thumb| ctx.load_texture("test-entry-art", egui::ColorImage::from_rgba_unmultiplied(t.size, &t.rgba), egui::TextureOptions::LINEAR);
+    let (key, _) = h.state().active_entry_key().expect("the mix fixture names its tracks");
+    let art = crate::ui::EntryArtwork { art: texture(&h.ctx, &thumb), retro_art: retro.as_ref().map(|t| texture(&h.ctx, t)), file: PathBuf::new() };
+    h.state_mut().now.entry_art.insert(key, crate::ui::EntryCover::Found(art));
+    h.step();
+    assert!(h.state().now.art_transition.is_some(), "a found cover starts the transition");
+
+    let (art_size, ppp) = (106.0 + 16.0, 2.0);
+    let (x, y) = (((1180.0 - art_size) * ppp) as u32, 0);
+    let side = (art_size * ppp) as u32;
+    let moments = [0.0, 0.12, 0.24, 0.36, 0.48, 0.6, 0.7, 0.8];
+    let mut strip = image::RgbaImage::new(side * moments.len() as u32, side);
+    // The harness moves its clock on by a fixed step each frame; the transition reads it during the next one.
+    let before = h.ctx.input(|i| i.time);
+    h.step();
+    let frame_step = h.ctx.input(|i| i.time) - before;
+    for (i, at) in moments.iter().enumerate() {
+        let now = h.ctx.input(|i| i.time) + frame_step;
+        if let Some(t) = h.state_mut().now.art_transition.as_mut() {
+            t.started = now - at;
+        }
+        h.step();
+        let frame = h.render().expect("render");
+        image::imageops::replace(&mut strip, &image::imageops::crop_imm(&frame, x, y, side, side).to_image(), (side * i as u32) as i64, 0);
+    }
+    strip.save(out_dir().join("12-entry-art-transition.png")).unwrap();
+    h.state_mut().player.stop();
+}

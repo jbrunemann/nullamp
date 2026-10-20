@@ -24,7 +24,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         settings_menu(app, ui, &lcd_resp);
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
-        let retro = app.settings.retro_artwork && app.now.retro_art.is_some();
+        let retro = app.settings.retro_artwork && app.now.art_shown.as_ref().is_some_and(|a| a.retro_art.is_some());
         let hint = match (retro, app.now.show_original_art) {
             (true, false) => "Retro artwork · click to see the original",
             (true, true) => "Original artwork · click to go back to retro",
@@ -478,16 +478,47 @@ pub fn entry_line(e: &nullamp_core::SetlistEntry) -> String {
     if e.artist.trim().is_empty() { e.full_title() } else { format!("{} — {}", e.artist.trim(), e.full_title()) }
 }
 
-fn artwork(app: &App, ui: &Ui, rect: Rect) {
+const ART_RADIUS: f32 = 5.0;
+/// Blocks along each side of the cover in the transition between two covers.
+const ART_CELLS: usize = 12;
+/// The blocks turn over during this time, then each flashes for `ART_FLASH_SECS`.
+const ART_REVEAL_SECS: f64 = 0.6;
+const ART_FLASH_SECS: f64 = 0.18;
+pub const ART_TRANSITION_SECS: f64 = ART_REVEAL_SECS + ART_FLASH_SECS;
+const BAYER4: [[f64; 4]; 4] = [[0.0, 8.0, 2.0, 10.0], [12.0, 4.0, 14.0, 6.0], [3.0, 11.0, 1.0, 9.0], [15.0, 7.0, 13.0, 5.0]];
+
+fn artwork(app: &mut App, ui: &Ui, rect: Rect) {
+    let time = ui.input(|i| i.time);
+    app.refresh_deck_art(time);
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 5.0, theme::LCD_BG);
+    p.rect_filled(rect, ART_RADIUS, theme::LCD_BG);
     let retro = app.settings.retro_artwork && !app.now.show_original_art;
-    if let Some(tex) = retro.then_some(app.now.retro_art.as_ref()).flatten().or(app.now.art.as_ref()) {
-        let size = tex.size_vec2();
-        let scale = (rect.width() / size.x).min(rect.height() / size.y);
-        let r = Rect::from_center_size(rect.center(), size * scale);
+    let shown = app.now.art_shown.as_ref().and_then(|a| a.pick(retro));
+    match &app.now.art_transition {
+        Some(t) => {
+            picture(ui, &p, rect, t.from.pick(retro));
+            if let Some(tex) = shown {
+                dissolve(&p, rect, tex, time - t.started);
+            }
+            ui.ctx().request_repaint();
+        }
+        None => picture(ui, &p, rect, shown),
+    }
+    p.rect_stroke(rect, ART_RADIUS, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
+}
+
+/// `tex` fitted into `rect`, keeping its shape.
+fn fitted(rect: Rect, tex: &egui::TextureHandle) -> Rect {
+    let size = tex.size_vec2();
+    let scale = (rect.width() / size.x).min(rect.height() / size.y);
+    Rect::from_center_size(rect.center(), size * scale)
+}
+
+fn picture(ui: &Ui, p: &egui::Painter, rect: Rect, tex: Option<&egui::TextureHandle>) {
+    if let Some(tex) = tex {
+        let r = fitted(rect, tex);
         // Rounded like the frame, or the picture's square corners poke out past it.
-        egui::Image::new(egui::load::SizedTexture::new(tex.id(), r.size())).corner_radius(5.0).paint_at(ui, r);
+        egui::Image::new(egui::load::SizedTexture::new(tex.id(), r.size())).corner_radius(ART_RADIUS).paint_at(ui, r);
     } else {
         // Placeholder: a stylised record.
         let c = rect.center();
@@ -497,7 +528,63 @@ fn artwork(app: &App, ui: &Ui, rect: Rect) {
         }
         p.circle_filled(c, rect.width() * 0.07, theme::ACCENT_DIM);
     }
-    p.rect_stroke(rect, 5.0, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
+}
+
+/// The new cover turning over block by block, `elapsed` seconds in: a diagonal sweep from the
+/// top left, broken up in the same ordered dither as the retro artwork, each block flashing in
+/// the display's green as it turns. Drawn as plain meshes, which unlike rounded images have no
+/// feathered edges to leave seams between the blocks.
+fn dissolve(p: &egui::Painter, rect: Rect, tex: &egui::TextureHandle, elapsed: f64) {
+    let r = fitted(rect, tex);
+    let (mut back, mut image, mut flash) = (egui::Mesh::default(), egui::Mesh::with_texture(tex.id()), egui::Mesh::default());
+    let edge = |from: f32, length: f32, i: usize| from + length * i as f32 / ART_CELLS as f32;
+    for y in 0..ART_CELLS {
+        for x in 0..ART_CELLS {
+            let sweep = (x + y) as f64 / (2 * (ART_CELLS - 1)) as f64;
+            let turned = elapsed - (0.7 * sweep + 0.3 * BAYER4[y % 4][x % 4] / 16.0) * ART_REVEAL_SECS;
+            if turned < 0.0 {
+                continue;
+            }
+            let cell = Rect::from_min_max(
+                pos2(edge(rect.min.x, rect.width(), x), edge(rect.min.y, rect.height(), y)),
+                pos2(edge(rect.min.x, rect.width(), x + 1), edge(rect.min.y, rect.height(), y + 1)),
+            );
+            back.add_colored_rect(cell, theme::LCD_BG);
+            let part = cell.intersect(r);
+            if part.is_positive() {
+                let uv = |at: egui::Pos2| pos2((at.x - r.min.x) / r.width(), (at.y - r.min.y) / r.height());
+                image.add_rect_with_uv(part, Rect::from_min_max(uv(part.min), uv(part.max)), Color32::WHITE);
+            }
+            if turned < ART_FLASH_SECS {
+                flash.add_colored_rect(cell, theme::LCD_FG.gamma_multiply((0.6 * (1.0 - turned / ART_FLASH_SECS)) as f32));
+            }
+        }
+    }
+    p.add(back);
+    p.add(image);
+    p.add(flash);
+    round_off_corners(p, rect, ART_RADIUS, theme::deck_bg());
+}
+
+/// Paint the deck's background over the part of each corner of `rect` outside a rounding of
+/// `radius`, since the blocks are square.
+fn round_off_corners(p: &egui::Painter, rect: Rect, radius: f32, color: Color32) {
+    const STEPS: usize = 8;
+    let mut mesh = egui::Mesh::default();
+    let corners = [(rect.left_top(), vec2(1.0, 1.0)), (rect.right_top(), vec2(-1.0, 1.0)), (rect.right_bottom(), vec2(-1.0, -1.0)), (rect.left_bottom(), vec2(1.0, -1.0))];
+    for (corner, inward) in corners {
+        let center = corner + inward * radius;
+        let tip = mesh.vertices.len() as u32;
+        mesh.colored_vertex(corner, color);
+        for i in 0..=STEPS {
+            let angle = std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
+            mesh.colored_vertex(center - vec2(inward.x * angle.cos(), inward.y * angle.sin()) * radius, color);
+        }
+        for i in 0..STEPS as u32 {
+            mesh.add_triangle(tip, tip + 1 + i, tip + 2 + i);
+        }
+    }
+    p.add(mesh);
 }
 
 fn timeline(app: &mut App, ui: &mut Ui) {
