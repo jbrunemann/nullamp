@@ -19,6 +19,9 @@ pub struct TrackInfo {
     /// Duration in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Audio bitrate in kbit/s, as the file's properties report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitrate: Option<u32>,
     /// Beats per minute, from the file's tags or, when `bpm_detected`, found by listening.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bpm: Option<f32>,

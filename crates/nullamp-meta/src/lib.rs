@@ -316,6 +316,7 @@ impl FileMetadata {
             artist: self.fields.get(&Field::Artist).cloned(),
             album: self.fields.get(&Field::Album).cloned(),
             duration: self.technical.duration,
+            bitrate: self.technical.audio_bitrate_kbps.or(self.technical.bitrate_kbps),
             bpm: self.fields.get(&Field::Bpm).and_then(|v| parse_bpm(v)),
             bpm_detected: false,
             bpm_off: self.fields.get(&Field::Bpm).is_some_and(|v| is_bpm_off(v)),
@@ -450,6 +451,7 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         artist: get(ItemKey::TrackArtist),
         album: get(ItemKey::AlbumTitle),
         duration: (duration > 0.0).then_some(duration),
+        bitrate: tagged.properties().audio_bitrate().or(tagged.properties().overall_bitrate()),
         bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
         bpm_detected: false,
         bpm_off: tag.and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off),
@@ -645,6 +647,8 @@ mod tests {
     fn track_info_and_errors() {
         let info = read_track_info(&fixture("tagged_v24.mp3")).unwrap();
         assert_eq!(info.title.as_deref(), Some("V24 Tone"));
+        assert!(info.bitrate.is_some_and(|b| b > 0));
+        assert_eq!(info.bitrate, read(&fixture("tagged_v24.mp3")).unwrap().track_info().bitrate);
         assert!(matches!(read_track_info(&fixture("nope.mp3")), Err(MetaError::NotFound)));
         assert!(read(&fixture("corrupt.mp3")).is_err());
     }

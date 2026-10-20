@@ -452,7 +452,7 @@ impl App {
         let mut known = Vec::new();
         for doc in &self.player.lists {
             for e in doc.playlist.entries() {
-                if e.info == Default::default() { unknown.push(e.path.clone()) } else { known.push(e.path.clone()) }
+                if e.info == Default::default() || e.info.bitrate.is_none() { unknown.push(e.path.clone()) } else { known.push(e.path.clone()) }
             }
         }
         unknown.sort();

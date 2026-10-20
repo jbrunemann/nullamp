@@ -41,12 +41,13 @@ pub enum Col {
     Artist,
     Album,
     Format,
+    Bitrate,
     Bpm,
     Key,
     Time,
 }
 
-const COLUMN_IDS: [&str; 9] = ["num", "art", "title", "artist", "album", "format", "bpm", "key", "time"];
+const COLUMN_IDS: [&str; 10] = ["num", "art", "title", "artist", "album", "format", "bitrate", "bpm", "key", "time"];
 
 /// Space between columns, taken from the right of each one.
 const GAP: f32 = 8.0;
@@ -54,7 +55,9 @@ const GAP: f32 = 8.0;
 const ROW_HEIGHT_ART: f32 = 24.0;
 
 impl Col {
-    const ALL: [Col; 9] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bpm, Col::Key, Col::Time];
+    const ALL: [Col; 10] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bitrate, Col::Bpm, Col::Key, Col::Time];
+    /// What a fresh install shows; the bitrate is there to be switched on.
+    const DEFAULT: [Col; 9] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bpm, Col::Key, Col::Time];
 
     fn id(self) -> &'static str {
         COLUMN_IDS[Self::ALL.iter().position(|c| *c == self).unwrap_or(0)]
@@ -72,6 +75,7 @@ impl Col {
             Col::Artist => "ARTIST",
             Col::Album => "ALBUM",
             Col::Format => "FORMAT",
+            Col::Bitrate => "KBPS",
             Col::Bpm => "BPM",
             Col::Key => "KEY",
             Col::Time => "TIME",
@@ -86,6 +90,7 @@ impl Col {
             Col::Artist => "Artist",
             Col::Album => "Album",
             Col::Format => "Format",
+            Col::Bitrate => "Bitrate",
             Col::Bpm => "BPM",
             Col::Key => "Key",
             Col::Time => "Time",
@@ -93,7 +98,7 @@ impl Col {
     }
 
     fn align(self) -> Align2 {
-        if matches!(self, Col::Num | Col::Bpm | Col::Time) { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER }
+        if matches!(self, Col::Num | Col::Bitrate | Col::Bpm | Col::Time) { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER }
     }
 }
 
@@ -105,20 +110,21 @@ pub fn parse_columns(ids: &[String]) -> Vec<Col> {
             out.push(c);
         }
     }
-    if out.is_empty() { Col::ALL.to_vec() } else { out }
+    if out.is_empty() { Col::DEFAULT.to_vec() } else { out }
 }
 
 fn row_height(order: &[Col]) -> f32 {
     if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
 }
 
-/// Cell rects for the visible columns, left to right. Number, artwork, format, BPM, key and time are
+/// Cell rects for the visible columns, left to right. Number, artwork, format, bitrate, BPM, key and time are
 /// fixed; title, artist and album share the rest by weight.
 fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
     let fixed = |c: Col| match c {
         Col::Num => Some(46.0 + GAP),
         Col::Art => Some(ROW_HEIGHT_ART + GAP),
         Col::Format => Some(44.0 + GAP),
+        Col::Bitrate => Some(40.0 + GAP),
         Col::Bpm => Some(46.0 + GAP),
         Col::Key => Some(36.0 + GAP),
         Col::Time => Some(62.0 + GAP),
@@ -314,6 +320,11 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 app.player.edit_list(list, |p| p.sort_by(|a, b| a.path.cmp(&b.path)));
                 ui.close();
             }
+            if ui.button("By bitrate").clicked() {
+                let kbps = |e: &PlaylistEntry| e.info.bitrate.unwrap_or(u32::MAX);
+                app.player.edit_list(list, |p| p.sort_by(|a, b| kbps(a).cmp(&kbps(b)).then(key(a).cmp(&key(b)))));
+                ui.close();
+            }
             if ui.button("By BPM").clicked() {
                 let bpm = |e: &PlaylistEntry| e.info.bpm.unwrap_or(f32::MAX);
                 app.player.edit_list(list, |p| p.sort_by(|a, b| bpm(a).total_cmp(&bpm(b)).then(key(a).cmp(&key(b)))));
@@ -458,7 +469,7 @@ fn column_menu(ui: &mut Ui, order: &[Col]) -> Option<Vec<Col>> {
     }
     ui.separator();
     if ui.button("Reset columns").clicked() {
-        next = Some(Col::ALL.to_vec());
+        next = Some(Col::DEFAULT.to_vec());
         ui.close();
     }
     next
@@ -668,6 +679,10 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
             Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), fg, col.align()),
             Col::Album => cell(ui, r, e.info.album.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
             Col::Format => cell(ui, r, &format_label(&e.path), theme::mono(10.5), if current { dim } else { theme::text_faint() }, col.align()),
+            Col::Bitrate => {
+                let text = e.info.bitrate.map(|b| b.to_string()).unwrap_or_default();
+                cell(ui, r, &text, theme::mono(11.5), dim, col.align());
+            }
             Col::Bpm => {
                 // A "~" marks a tempo found by listening rather than read from the tags.
                 let text = e.info.bpm.map(|b| format!("{}{}", if e.info.bpm_detected { "~" } else { "" }, super::format_bpm(b))).unwrap_or_default();
