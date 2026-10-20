@@ -246,6 +246,9 @@ fn visuals(base: Visuals, p: &Palette) -> Visuals {
     visuals
 }
 
+/// Width reserved beside content for a floating scroll bar, where the bar must not cover buttons or fields.
+pub const SCROLL_GUTTER: f32 = 10.0;
+
 /// Install fonts, both themes' visuals and the chosen appearance. Both themes get
 /// full visuals so that following the OS never falls back to egui's stock look.
 pub fn apply(ctx: &egui::Context, appearance: Appearance) {
@@ -259,6 +262,10 @@ pub fn apply(ctx: &egui::Context, appearance: Appearance) {
         style.spacing.interact_size.y = 20.0;
         style.spacing.scroll.bar_width = 8.0;
         style.spacing.scroll.floating = true;
+        // The handle is drawn in the text colour, which glares unless it stays translucent.
+        style.spacing.scroll.dormant_handle_opacity = 0.15;
+        style.spacing.scroll.active_handle_opacity = 0.25;
+        style.spacing.scroll.interact_handle_opacity = 0.45;
         style.text_styles.insert(TextStyle::Body, prop(13.0));
         style.text_styles.insert(TextStyle::Button, prop(13.0));
         style.text_styles.insert(TextStyle::Small, prop(11.0));
@@ -266,11 +273,6 @@ pub fn apply(ctx: &egui::Context, appearance: Appearance) {
         style.text_styles.insert(TextStyle::Heading, prop(15.0));
         // Decorative animation off: state changes show immediately.
         style.animation_time = 0.06;
-    });
-    // The floating handle is drawn in the text colour, which glares on the dark deck.
-    ctx.style_mut_of(egui::Theme::Dark, |style: &mut Style| {
-        style.spacing.scroll.active_handle_opacity = 0.3;
-        style.spacing.scroll.interact_handle_opacity = 0.5;
     });
 }
 

@@ -362,8 +362,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         return;
     }
 
-    // A solid bar takes its own gutter; the floating one would cover right-aligned buttons and fields.
-    ui.spacing_mut().scroll.floating = false;
+    // The bar gets its own gutter so it does not cover right-aligned buttons and fields.
+    ui.spacing_mut().scroll.floating_allocated_width = theme::SCROLL_GUTTER;
     let panel_height = ui.available_height();
     egui::ScrollArea::vertical().id_salt("inspector").auto_shrink([false, false]).show(ui, |ui| {
         let viewport = Viewport { content_top: ui.cursor().top(), height: panel_height };
