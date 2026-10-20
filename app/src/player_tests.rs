@@ -308,3 +308,17 @@ fn playing_list_cannot_be_removed() {
     assert!(p.remove_list(0).is_some());
     assert!(p.current.is_none());
 }
+
+#[test]
+fn copy_entries_appends_independent_copies_in_source_order() {
+    let (mut p, ids) = player(3);
+    p.add_list(PlaylistDoc { key: "b".into(), playlist: Playlist::new("b") });
+    let wanted: HashSet<EntryId> = [ids[2], ids[0]].into();
+    assert_eq!(p.copy_entries(0, &wanted, 1), 2);
+    let copies = p.playlist(1).entries();
+    assert_eq!(copies.iter().map(|e| e.path.display().to_string()).collect::<Vec<_>>(), ["0.mp3", "2.mp3"]);
+    assert!(copies.iter().all(|c| !ids.contains(&c.id)));
+    assert_eq!(p.playlist(0).len(), 3);
+    assert_eq!(p.copy_entries(0, &wanted, 0), 0);
+    assert!(p.drain_notes().contains(&Note::PlaylistsChanged));
+}

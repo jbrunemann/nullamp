@@ -522,6 +522,26 @@ impl<E: Engine> Player<E> {
         n
     }
 
+    /// Append copies of entries of `from` to the end of `to`, in the order they have in `from`.
+    /// The copies get their own ids, so either list can be edited or played on its own.
+    pub fn copy_entries(&mut self, from: usize, ids: &HashSet<EntryId>, to: usize) -> usize {
+        if from == to || from >= self.lists.len() || to >= self.lists.len() {
+            return 0;
+        }
+        let copies: Vec<PlaylistEntry> = self.lists[from]
+            .playlist
+            .entries()
+            .iter()
+            .filter(|e| ids.contains(&e.id))
+            .map(|e| PlaylistEntry { id: EntryId::new(), ..e.clone() })
+            .collect();
+        let n = copies.len();
+        self.edit_list(to, |p| {
+            p.insert(p.len(), copies);
+        });
+        n
+    }
+
     pub fn add_list(&mut self, doc: PlaylistDoc) -> usize {
         self.lists.push(doc);
         self.notes.push(Note::PlaylistsChanged);

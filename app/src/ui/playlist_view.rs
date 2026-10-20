@@ -23,6 +23,8 @@ pub struct ViewState {
     pub rows: Vec<(usize, Rect)>,
     pub list_rect: Option<Rect>,
     pub drag: Option<Drag>,
+    /// The playlist tab a row drag is currently over, set by the tab bar each frame.
+    drop_tab: Option<usize>,
     /// The column whose header is being dragged to a new position.
     header_drag: Option<Col>,
     pub art: ArtCache,
@@ -237,12 +239,24 @@ fn playlist_tabs(app: &mut App, ui: &mut Ui) {
     egui::ScrollArea::horizontal().id_salt("pl-tabs").max_height(26.0).show(ui, |ui| {
         ui.horizontal(|ui| {
             let mut switch_to = None;
+            let mut dropped = None;
+            let pointer = ui.input(|i| i.pointer.interact_pos());
+            let released = ui.input(|i| i.pointer.any_released());
+            app.pl_view.drop_tab = None;
             for i in 0..app.player.lists.len() {
                 let doc = &app.player.lists[i];
                 let playing = app.player.current.as_ref().is_some_and(|c| c.list == i) && app.player.status != Status::Stopped;
                 let label = if playing { format!("▶ {}", doc.playlist.name) } else { doc.playlist.name.clone() };
                 let resp = widgets::tab(ui, i == app.player.viewing, &label)
                     .on_hover_text(format!("{} tracks · double-click to rename", doc.playlist.len()));
+                // A row drag over another playlist's tab copies the rows into it.
+                if app.pl_view.drag.is_some() && i != app.player.viewing && pointer.is_some_and(|p| resp.rect.contains(p)) {
+                    app.pl_view.drop_tab = Some(i);
+                    ui.painter().rect_stroke(resp.rect, 3.0, Stroke::new(2.0, theme::ok()), egui::StrokeKind::Inside);
+                    if released && let Some(drag) = app.pl_view.drag.take() {
+                        dropped = Some((drag.ids, i));
+                    }
+                }
                 if resp.clicked() {
                     switch_to = Some(i);
                 }
@@ -267,6 +281,9 @@ fn playlist_tabs(app: &mut App, ui: &mut Ui) {
             }
             if ui.add(egui::Button::new("+").min_size(vec2(24.0, 22.0))).on_hover_text("New playlist").clicked() {
                 app.dialogs.new_playlist = Some(String::new());
+            }
+            if let Some((ids, to)) = dropped {
+                copy_ids(app, ids, to);
             }
             if let Some(i) = switch_to
                 && i != app.player.viewing
@@ -567,7 +584,7 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
     // Drag-to-reorder: insertion point from the pointer position.
     if let Some(drag) = app.pl_view.drag.as_mut() {
         if let Some(p) = pointer {
-            drag.target = insertion_index(&rows, p.y, n);
+            drag.target = if app.pl_view.drop_tab.is_some() { None } else { insertion_index(&rows, p.y, n) };
             // Auto-scroll near the edges.
             let r = output.inner_rect;
             let edge = 24.0;
@@ -768,6 +785,19 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         }
         ui.close();
     }
+    if app.player.lists.len() > 1 {
+        ui.menu_button("Copy to playlist", |ui| {
+            for i in 0..app.player.lists.len() {
+                if i == app.player.viewing {
+                    continue;
+                }
+                if ui.button(app.player.lists[i].playlist.name.clone()).clicked() {
+                    copy_selected(app, i);
+                    ui.close();
+                }
+            }
+        });
+    }
     ui.separator();
     if ui.button("Move up").clicked() {
         move_selected(app, -1);
@@ -854,6 +884,18 @@ fn remove_selected(app: &mut App) {
         set_single(app, id);
     }
     app.info(format!("Removed {n} track{}", if n == 1 { "" } else { "s" }));
+}
+
+fn copy_selected(app: &mut App, to: usize) {
+    let ids = app.selection.ids.clone();
+    copy_ids(app, ids, to);
+}
+
+fn copy_ids(app: &mut App, ids: HashSet<EntryId>, to: usize) {
+    let from = app.player.viewing;
+    let n = app.player.copy_entries(from, &ids, to);
+    let name = app.player.lists[to].playlist.name.clone();
+    app.info(format!("Copied {n} track{} to {name}", if n == 1 { "" } else { "s" }));
 }
 
 fn move_selected(app: &mut App, delta: isize) {
