@@ -588,6 +588,18 @@ fn render_settings_general() {
     save(&mut h, "06a-settings-general.png");
 }
 
+/// The rekordbox settings page, which takes over the deck.
+#[test]
+#[ignore]
+fn render_settings_rekordbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Rekordbox);
+    settle(&mut h, 300);
+    save(&mut h, "06a2-settings-rekordbox.png");
+}
+
 /// The shortcuts page, which takes over the deck.
 #[test]
 #[ignore]

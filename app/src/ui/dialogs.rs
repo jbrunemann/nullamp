@@ -31,10 +31,11 @@ pub enum SettingsTab {
     Logs,
     Updates,
     Cache,
+    Rekordbox,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 7] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
+    const ALL: [SettingsTab; 8] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -45,6 +46,7 @@ impl SettingsTab {
             SettingsTab::Logs => "Logs",
             SettingsTab::Updates => "Updates",
             SettingsTab::Cache => "Cache",
+            SettingsTab::Rekordbox => "rekordbox",
         }
     }
 }
@@ -439,6 +441,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::Logs => logs_body(ui),
                     SettingsTab::Updates => updates_body(app, ui),
                     SettingsTab::Cache => cache_body(app, ui),
+                    SettingsTab::Rekordbox => rekordbox_body(app, ui),
                 }
             });
         });
@@ -465,34 +468,27 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.add_space(10.0);
-    ui.label(RichText::new("Waveform").small().weak());
-    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's analysis for tracks on its USB sticks and desktop library").on_hover_text("Takes effect when the next track starts").changed() {
+}
+
+/// What Nullamp reads from rekordbox: the analysis behind the waveform, and the desktop library.
+/// Kept to a few lines because the page only has the height of the deck.
+fn rekordbox_body(app: &mut App, ui: &mut egui::Ui) {
+    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's waveform analysis").on_hover_text("For tracks on its USB sticks and in the desktop library. Takes effect when the next track starts").changed() {
         app.mark_settings_dirty();
     }
-    ui.add_space(10.0);
-    ui.label(RichText::new("rekordbox desktop library").small().weak());
     ui.horizontal(|ui| {
         ui.label("master.db key:");
-        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.rekordbox_key).password(true).hint_text("64 hex characters").desired_width(260.0));
+        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.rekordbox_key).password(true).hint_text("64 hex characters").desired_width(240.0));
         if field.changed() {
             app.workers.set_rekordbox_key(&app.settings.rekordbox_key);
             app.mark_settings_dirty();
         }
+        if ui.small_button("Copy key command").on_hover_text("Installs pyrekordbox in a private virtualenv and prints the key").clicked() {
+            ui.ctx().copy_text(REKORDBOX_KEY_COMMAND.to_owned());
+        }
+        ui.hyperlink_to(RichText::new("pyrekordbox docs").small(), "https://pyrekordbox.readthedocs.io");
     });
-    ui.label(RichText::new("Opens your rekordbox collection from the List menu and fills in key and BPM for your files.").small().weak());
-    ui.collapsing("How to get this key", |ui| {
-        ui.label(RichText::new("rekordbox 7 uses the same key on every computer, so this is a one-time step. With rekordbox closed, run this in Terminal and paste the 64-character result above:").small());
-        ui.add_space(4.0);
-        ui.label(RichText::new(REKORDBOX_KEY_COMMAND).monospace().small());
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui.button("Copy command").clicked() {
-                ui.ctx().copy_text(REKORDBOX_KEY_COMMAND.to_owned());
-            }
-            ui.hyperlink_to(RichText::new("pyrekordbox docs").small(), "https://pyrekordbox.readthedocs.io");
-        });
-    });
+    ui.label(RichText::new("The key opens your rekordbox collection from the List menu and fills in key and BPM for your files. rekordbox 7 uses the same key on every computer: with rekordbox closed, copy the command, run it in Terminal and paste the 64-character result here.").small().weak());
 }
 
 /// A one-time, copy-paste recipe that installs pyrekordbox into a private virtualenv and prints the
