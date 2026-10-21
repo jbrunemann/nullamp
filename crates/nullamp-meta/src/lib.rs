@@ -329,19 +329,24 @@ impl FileMetadata {
     }
 }
 
-fn parse_options(cover_art: bool) -> ParseOptions {
-    ParseOptions::new().parsing_mode(ParsingMode::Relaxed).read_cover_art(cover_art)
+fn parse_options(cover_art: bool, mode: ParsingMode) -> ParseOptions {
+    ParseOptions::new().parsing_mode(mode).read_cover_art(cover_art)
 }
 
 fn open_tagged(path: &Path, cover_art: bool) -> Result<TaggedFile, MetaError> {
     if !path.exists() {
         return Err(MetaError::NotFound);
     }
-    let probe = lofty::probe::Probe::open(path)?.options(parse_options(cover_art)).guess_file_type()?;
+    let probe = lofty::probe::Probe::open(path)?.options(parse_options(cover_art, ParsingMode::Relaxed)).guess_file_type()?;
     if probe.file_type().is_none() {
         return Err(MetaError::Unsupported);
     }
-    Ok(probe.read()?)
+    match probe.read() {
+        Ok(tagged) => Ok(tagged),
+        // Relaxed still rejects some malformed frames (Beatport writes a UFID frame with an
+        // empty owner). BestAttempt skips the bad frame and keeps the rest of the tag.
+        Err(_) => Ok(lofty::probe::Probe::open(path)?.options(parse_options(cover_art, ParsingMode::BestAttempt)).guess_file_type()?.read()?),
+    }
 }
 
 /// Read everything the metadata inspector shows.
@@ -651,6 +656,25 @@ mod tests {
         assert_eq!(info.bitrate, read(&fixture("tagged_v24.mp3")).unwrap().track_info().bitrate);
         assert!(matches!(read_track_info(&fixture("nope.mp3")), Err(MetaError::NotFound)));
         assert!(read(&fixture("corrupt.mp3")).is_err());
+    }
+
+    #[test]
+    fn reads_tag_with_empty_owner_ufid_frame() {
+        // Beatport writes UFID frames with an empty owner, which lofty's Relaxed mode rejects.
+        let (_dir, path) = test_support::scratch_copy("tagged_v24.mp3");
+        let mut bytes = std::fs::read(&path).unwrap();
+        let syncsafe = |n: usize| [(n >> 21) as u8 & 0x7f, (n >> 14) as u8 & 0x7f, (n >> 7) as u8 & 0x7f, n as u8 & 0x7f];
+        let old = bytes[6..10].iter().fold(0usize, |acc, b| acc << 7 | *b as usize);
+        let payload = b"\x00\x03track-12696032";
+        let mut frame = b"UFID".to_vec();
+        frame.extend(syncsafe(payload.len()));
+        frame.extend([0, 0]);
+        frame.extend(payload);
+        bytes[6..10].copy_from_slice(&syncsafe(old + frame.len()));
+        bytes.splice(10..10, frame);
+        std::fs::write(&path, bytes).unwrap();
+        let m = read(&path).unwrap();
+        assert_eq!(m.fields.get(&Field::Title).map(String::as_str), Some("V24 Tone"));
     }
 
     #[test]
