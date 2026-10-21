@@ -76,6 +76,9 @@ pub struct Settings {
     /// Read what rekordbox knows about the tracks (waveform, key, BPM, rating, colour) into the cache
     /// right after the chosen part of the desktop library is added.
     pub rekordbox_read_data: bool,
+    /// The Mixxx library has been opened once, so its key and BPM fill in files from then on. Off,
+    /// nothing reads Mixxx's database.
+    pub mixxx: bool,
 }
 
 impl Default for Settings {
@@ -109,6 +112,7 @@ impl Default for Settings {
             online_artwork: true,
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
+            mixxx: false,
             rekordbox_read_data: true,
         }
     }

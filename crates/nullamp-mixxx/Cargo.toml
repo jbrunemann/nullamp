@@ -1,0 +1,15 @@
+[package]
+name = "nullamp-mixxx"
+description = "Nullamp Mixxx reader: tracks, crates, playlists and play history from the library database, read-only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+# The same build as nullamp-rekordbox, so the two share one SQLite. Mixxx's database is not
+# encrypted; SQLCipher opens a plain file when no key is given.
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+[dev-dependencies]
+tempfile.workspace = true

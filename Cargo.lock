@@ -2937,6 +2937,7 @@ dependencies = [
  "nullamp-audio",
  "nullamp-core",
  "nullamp-meta",
+ "nullamp-mixxx",
  "nullamp-rekordbox",
  "nullamp-sysmedia",
  "nullamp-update",
@@ -2994,6 +2995,15 @@ dependencies = [
  "lofty",
  "log",
  "nullamp-core",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nullamp-mixxx"
+version = "1.6.0"
+dependencies = [
+ "rusqlite",
  "tempfile",
  "thiserror 2.0.21",
 ]

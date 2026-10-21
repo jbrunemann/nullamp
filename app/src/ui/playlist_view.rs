@@ -377,6 +377,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 app.workers.submit(Job::ListCollection);
                 ui.close();
             }
+            if ui.button("Open Mixxx library…").on_hover_text("Choose which crates, playlists and history sessions of the Mixxx library to add").clicked() {
+                dialogs::open_mixxx(app);
+                ui.close();
+            }
             if ui.button("Read rekordbox data").on_hover_text("Store the waveform, key, BPM and rating that rekordbox has for the tracks of this list, so they are known before playing").clicked() {
                 let paths = app.player.viewed().entries().iter().map(|e| e.path.clone()).collect();
                 app.read_rekordbox(paths);

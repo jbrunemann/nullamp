@@ -268,6 +268,7 @@ impl App {
 
         let workers = Workers::start(store.paths.clone(), waker);
         workers.set_rekordbox_key(&settings.rekordbox_key);
+        workers.set_mixxx_enabled(settings.mixxx);
         let (system_tx, system_events) = crossbeam_channel::unbounded::<SystemEvent>();
         let sysmedia = {
             let tx = system_tx.clone();
@@ -685,8 +686,17 @@ impl App {
             }
             JobResult::Sticks(sticks) => self.on_sticks(sticks),
             JobResult::CollectionList(result) => match result {
-                Ok(overview) => dialogs::open_rekordbox_import(self, overview),
+                Ok(overview) => dialogs::open_library_import(self, dialogs::ImportSource::Rekordbox, overview),
                 Err(e) => self.error(format!("Cannot read the rekordbox collection: {e}")),
+            },
+            JobResult::MixxxList(result) => match result {
+                Ok(overview) => dialogs::open_library_import(self, dialogs::ImportSource::Mixxx, overview),
+                Err(e) => self.error(format!("Cannot read the Mixxx library: {e}")),
+            },
+            JobResult::Mixxx(result) => match result {
+                Ok(lists) if lists.is_empty() => self.warn("The chosen Mixxx lists have no tracks"),
+                Ok(lists) => self.on_sticks(lists),
+                Err(e) => self.error(format!("Cannot read the Mixxx library: {e}")),
             },
             JobResult::Collection { read_data, result } => match result {
                 Ok(lists) if lists.is_empty() => self.warn("The chosen rekordbox playlists have no tracks"),

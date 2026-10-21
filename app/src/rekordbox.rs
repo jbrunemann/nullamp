@@ -392,7 +392,7 @@ fn log_streaming<'a>(tracks: impl Iterator<Item = &'a Track>) {
 }
 
 /// What the tags say wins; `stick` supplies only what they leave out.
-fn fill_gaps(info: &mut TrackInfo, stick: &TrackInfo) {
+pub(crate) fn fill_gaps(info: &mut TrackInfo, stick: &TrackInfo) {
     info.title = info.title.take().or_else(|| stick.title.clone());
     info.artist = info.artist.take().or_else(|| stick.artist.clone());
     info.album = info.album.take().or_else(|| stick.album.clone());

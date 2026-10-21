@@ -92,6 +92,10 @@ pub enum Job {
     ListCollection,
     /// Make lists of the chosen part of the desktop library: all of it, and the playlists with these ids.
     OpenCollection { all: bool, ids: HashSet<String>, read_data: bool },
+    /// Read the crates, playlists and history of the chosen Mixxx library, for the user to choose from.
+    ListMixxx,
+    /// Make lists of the chosen part of the Mixxx library: all of it, and the lists with these ids.
+    OpenMixxx { all: bool, ids: HashSet<String> },
     /// Store what rekordbox knows about these files in the cache, ahead of their being played.
     /// Dropped when a newer request has replaced `generation`.
     ReadRekordbox { generation: u64, request: u64, paths: Vec<PathBuf> },
@@ -169,6 +173,10 @@ pub enum JobResult {
     Sticks(Vec<crate::rekordbox::Loaded>),
     /// The answer to [`Job::ListCollection`]: the desktop library's playlist tree, or why it could not be read.
     CollectionList(Result<crate::rekordbox::Overview, String>),
+    /// The answer to [`Job::ListMixxx`].
+    MixxxList(Result<crate::rekordbox::Overview, String>),
+    /// The answer to [`Job::OpenMixxx`]: the chosen lists, or why the library could not be read.
+    Mixxx(Result<Vec<crate::rekordbox::Loaded>, String>),
     /// The answer to [`Job::OpenCollection`]: the chosen lists, or why the library could not be read.
     Collection { read_data: bool, result: Result<Vec<crate::rekordbox::Loaded>, String> },
     /// One chunk of a [`Job::ReadRekordbox`] request is done: `done` files looked at, `stored` of them
@@ -209,6 +217,7 @@ pub struct Workers {
     cover_generation: Arc<AtomicU64>,
     read_generation: Arc<AtomicU64>,
     desktop: Arc<crate::rekordbox::Desktop>,
+    mixxx: Arc<crate::mixxx::Mixxx>,
     next_request: AtomicU64,
 }
 
@@ -222,10 +231,11 @@ impl Workers {
         let read_generation = Arc::new(AtomicU64::new(0));
         let sticks = Arc::new(crate::rekordbox::Sticks::default());
         let desktop = Arc::new(crate::rekordbox::Desktop::default());
+        let mixxx = Arc::new(crate::mixxx::Mixxx::default());
 
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 4);
         for i in 0..threads {
-            let (irx, brx, tx, w, gen_, cover_gen, read_gen, p, sticks, desktop) = (
+            let (irx, brx, tx, w, gen_, cover_gen, read_gen, p, sticks, desktop, mixxx) = (
                 interactive_rx.clone(),
                 bulk_rx.clone(),
                 results_tx.clone(),
@@ -236,11 +246,12 @@ impl Workers {
                 paths.clone(),
                 Arc::clone(&sticks),
                 Arc::clone(&desktop),
+                Arc::clone(&mixxx),
             );
             std::thread::Builder::new()
                 .name(format!("nullamp-worker-{i}"))
                 .spawn(move || {
-                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen, read_generation: read_gen, sticks, desktop };
+                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen, read_generation: read_gen, sticks, desktop, mixxx };
                     loop {
                         let job = select_biased! {
                             recv(irx) -> j => j,
@@ -365,6 +376,7 @@ impl Workers {
             cover_generation,
             read_generation,
             desktop,
+            mixxx,
             next_request: AtomicU64::new(1),
         }
     }
@@ -374,6 +386,11 @@ impl Workers {
     pub fn set_rekordbox_key(&self, key: &str) {
         let config = (!key.is_empty()).then(|| crate::rekordbox::DesktopConfig::standard(key.to_owned())).flatten();
         self.desktop.set_config(config);
+    }
+
+    /// Lets the Mixxx reader look at Mixxx's own library, or stops it. Takes effect for the next lookup.
+    pub fn set_mixxx_enabled(&self, on: bool) {
+        self.mixxx.set_enabled(on);
     }
 
     /// Find the cover of one track of a mix: in the cache, else online. Answered with
@@ -585,6 +602,7 @@ struct Ctx {
     read_generation: Arc<AtomicU64>,
     sticks: Arc<crate::rekordbox::Sticks>,
     desktop: Arc<crate::rekordbox::Desktop>,
+    mixxx: Arc<crate::mixxx::Mixxx>,
 }
 
 /// Stores rekordbox's record and waveform of each of `paths` that is on a stick or in the desktop
@@ -619,8 +637,8 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
                 }
                 let mut info = nullamp_meta::read_track_info(&path).map_err(|e| e.to_string());
                 if let Ok(info) = &mut info {
-                    if !ctx.sticks.fill(&path, info) {
-                        ctx.desktop.fill(&path, info);
+                    if !ctx.sticks.fill(&path, info) && !ctx.desktop.fill(&path, info) {
+                        ctx.mixxx.fill(&path, info);
                     }
                 }
                 out.push(JobResult::Info { path, info });
@@ -665,6 +683,8 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::OpenSticks => vec![JobResult::Sticks(crate::rekordbox::load_mounted_sticks())],
         Job::ListCollection => vec![JobResult::CollectionList(ctx.desktop.overview())],
         Job::OpenCollection { all, ids, read_data } => vec![JobResult::Collection { read_data, result: ctx.desktop.open_playlists(all, &ids) }],
+        Job::ListMixxx => vec![JobResult::MixxxList(ctx.mixxx.overview())],
+        Job::OpenMixxx { all, ids } => vec![JobResult::Mixxx(ctx.mixxx.open_lists(all, &ids))],
         Job::ReadRekordbox { generation, request, paths } => {
             if ctx.read_generation.load(Ordering::Relaxed) != generation {
                 return Vec::new();
@@ -834,10 +854,12 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     };
     let track_info = meta.as_ref().ok().map(|m| {
         let mut info = m.track_info();
-        // A file in rekordbox (a stick, or the desktop library) takes its key and BPM from there; the
-        // same file anywhere else from what was cached when it last played from rekordbox.
+        // A file in rekordbox (a stick, or the desktop library) takes its key and BPM from there, one
+        // in the Mixxx library from Mixxx; the same file anywhere else from what was cached when it
+        // last played from rekordbox.
         if !ctx.sticks.fill(&path, &mut info)
             && !ctx.desktop.fill(&path, &mut info)
+            && !ctx.mixxx.fill(&path, &mut info)
             && let Some(data) = fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox_data(&ctx.paths.waveform_cache(), fp))
         {
             crate::rekordbox::fill_from_cache(&mut info, &data);
@@ -1026,6 +1048,7 @@ mod tests {
             read_generation: Arc::new(AtomicU64::new(1)),
             sticks: Arc::new(crate::rekordbox::Sticks::default()),
             desktop: Arc::new(crate::rekordbox::Desktop::default()),
+            mixxx: Arc::new(crate::mixxx::Mixxx::default()),
         };
         // The fixture stick has no audio files, so copy its library and add one.
         let stick = home.path().join("STICK");
@@ -1056,6 +1079,7 @@ mod tests {
             read_generation: Arc::new(AtomicU64::new(2)),
             sticks: Arc::new(crate::rekordbox::Sticks::default()),
             desktop: Arc::new(crate::rekordbox::Desktop::default()),
+            mixxx: Arc::new(crate::mixxx::Mixxx::default()),
         };
         let job = Job::ReadRekordbox { generation: 1, request: 7, paths: vec![fixture("beat_120.mp3")] };
         assert!(run_job(&ctx, job).is_empty());

@@ -743,8 +743,8 @@ fn render_rekordbox_chooser() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
-    crate::ui::dialogs::open_rekordbox_import(h.state_mut(), rekordbox_overview());
-    h.state_mut().dialogs.rekordbox_import.as_mut().unwrap().selected.extend(["c1".to_owned(), "f".to_owned()]);
+    crate::ui::dialogs::open_library_import(h.state_mut(), crate::ui::dialogs::ImportSource::Rekordbox, rekordbox_overview());
+    h.state_mut().dialogs.library_import.as_mut().unwrap().selected.extend(["c1".to_owned(), "f".to_owned()]);
     settle(&mut h, 500);
     save(&mut h, "06h-rekordbox-chooser.png");
 }
@@ -757,12 +757,12 @@ fn rekordbox_chooser_ticks_folders_and_closes() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).build_eframe(|cc| App::new(cc, store));
-    crate::ui::dialogs::open_rekordbox_import(h.state_mut(), rekordbox_overview());
+    crate::ui::dialogs::open_library_import(h.state_mut(), crate::ui::dialogs::ImportSource::Rekordbox, rekordbox_overview());
     settle(&mut h, 200);
     h.get_by_label("Clubs").click();
     settle(&mut h, 200);
     let ticked = |h: &Harness<App>| {
-        let mut ids: Vec<String> = h.state().dialogs.rekordbox_import.as_ref().unwrap().selected.iter().cloned().collect();
+        let mut ids: Vec<String> = h.state().dialogs.library_import.as_ref().unwrap().selected.iter().cloned().collect();
         ids.sort();
         ids
     };
@@ -772,7 +772,59 @@ fn rekordbox_chooser_ticks_folders_and_closes() {
     assert_eq!(ticked(&h), ["c1", "c2"]);
     h.get_by_label("Cancel").click();
     settle(&mut h, 200);
-    assert!(h.state().dialogs.rekordbox_import.is_none());
+    assert!(h.state().dialogs.library_import.is_none());
+}
+
+/// The chooser for a Mixxx library, shaped like a real one: three crates, Auto DJ and dated sessions.
+fn mixxx_overview() -> crate::rekordbox::Overview {
+    use crate::rekordbox::{Item, Overview};
+    let item = |id: &str, name: &str, depth: usize, is_folder: bool, tracks: usize| Item { id: id.into(), name: name.into(), depth, is_folder, tracks };
+    Overview {
+        tracks: 915,
+        items: vec![
+            item("crates", "Crates", 0, true, 0),
+            item("crates/1", "Jan 123", 1, false, 3),
+            item("crates/2", "Juni", 1, false, 3),
+            item("crates/3", "Trance", 1, false, 30),
+            item("playlists", "Playlists", 0, true, 0),
+            item("playlists/1", "Auto DJ", 1, false, 3),
+            item("history", "History", 0, true, 0),
+            item("history/7", "2019-06-28 (2)", 1, false, 4),
+            item("history/15", "2019-07-07", 1, false, 9),
+        ],
+    }
+}
+
+/// The Mixxx chooser.
+#[test]
+#[ignore]
+fn render_mixxx_chooser() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    crate::ui::dialogs::open_library_import(h.state_mut(), crate::ui::dialogs::ImportSource::Mixxx, mixxx_overview());
+    h.state_mut().dialogs.library_import.as_mut().unwrap().selected.extend(["crates/3".to_owned(), "playlists/1".to_owned()]);
+    settle(&mut h, 500);
+    save(&mut h, "06i-mixxx-chooser.png");
+}
+
+/// The Mixxx chooser says Mixxx, has no rekordbox-only option, and ticking a kind ticks its lists.
+#[test]
+fn mixxx_chooser_ticks_a_kind_of_list() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).build_eframe(|cc| App::new(cc, store));
+    crate::ui::dialogs::open_library_import(h.state_mut(), crate::ui::dialogs::ImportSource::Mixxx, mixxx_overview());
+    settle(&mut h, 200);
+    assert!(h.query_by_label("Add from Mixxx").is_some());
+    assert!(h.query_by_label("Entire library (915 tracks)").is_some());
+    assert!(h.query_by_label("Also read waveforms, keys and ratings").is_none());
+    h.get_by_label("Crates").click();
+    settle(&mut h, 200);
+    let mut ids: Vec<String> = h.state().dialogs.library_import.as_ref().unwrap().selected.iter().cloned().collect();
+    ids.sort();
+    assert_eq!(ids, ["crates/1", "crates/2", "crates/3"]);
 }
 
 /// The Cache page counts what the cache folder holds, and "Clear all" empties it.

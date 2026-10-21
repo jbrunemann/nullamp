@@ -74,8 +74,16 @@ pub enum PythonState {
     Missing,
 }
 
-/// The choice of what to add from the rekordbox desktop library, while its dialog is open.
-pub struct RekordboxImport {
+/// Which library the chooser lists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ImportSource {
+    Rekordbox,
+    Mixxx,
+}
+
+/// The choice of what to add from the rekordbox desktop library or the Mixxx library, while its dialog is open.
+pub struct LibraryImport {
+    pub source: ImportSource,
     pub overview: Overview,
     /// The whole collection as one list.
     pub all: bool,
@@ -106,13 +114,13 @@ pub struct Dialogs {
     pub update: UpdateState,
     pub cache: CacheState,
     pub python: PythonState,
-    pub rekordbox_import: Option<RekordboxImport>,
+    pub library_import: Option<LibraryImport>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, rekordbox_import: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None }
     }
 }
 
@@ -158,10 +166,21 @@ fn check_python(app: &mut App) {
     });
 }
 
-/// Shows the playlists of the desktop library for the user to choose from.
-pub fn open_rekordbox_import(app: &mut App, overview: Overview) {
+/// Shows the playlists of a library for the user to choose from.
+pub fn open_library_import(app: &mut App, source: ImportSource, overview: Overview) {
     app.playlist_open = true;
-    app.dialogs.rekordbox_import = Some(RekordboxImport { overview, all: false, selected: HashSet::new() });
+    app.dialogs.library_import = Some(LibraryImport { source, overview, all: false, selected: HashSet::new() });
+}
+
+/// "Open Mixxx library…": turns the Mixxx reader on, which from then on also fills in the key and
+/// BPM of files in the library, and lists what the library holds to choose from.
+pub fn open_mixxx(app: &mut App) {
+    if !app.settings.mixxx {
+        app.settings.mixxx = true;
+        app.mark_settings_dirty();
+    }
+    app.workers.set_mixxx_enabled(true);
+    app.workers.submit(Job::ListMixxx);
 }
 
 /// Read the cache folder, after removing the files of `clear`, on a helper thread (it walks the
@@ -392,7 +411,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         }
     }
 
-    rekordbox_import_modal(app, ctx, escape);
+    library_import_modal(app, ctx, escape);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
@@ -448,31 +467,32 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// The list of rekordbox playlists to tick before anything is added, so a big library is not
+/// The list of a library's playlists to tick before anything is added, so a big library is not
 /// copied whole when only a few playlists are wanted.
-fn rekordbox_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
-    let Some(mut choice) = app.dialogs.rekordbox_import.take() else { return };
+fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
+    let Some(mut choice) = app.dialogs.library_import.take() else { return };
+    let mixxx = choice.source == ImportSource::Mixxx;
     let (mut keep, mut import) = (true, false);
     let mut read_data = app.settings.rekordbox_read_data;
     let height = (ctx.content_rect().height() - 230.0).clamp(80.0, 380.0);
     egui::Modal::new(egui::Id::unique("rekordbox-import")).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.heading("Add from rekordbox");
-        ui.checkbox(&mut choice.all, format!("Entire collection ({} tracks)", choice.overview.tracks)).on_hover_text("One list with every track of the library");
+        ui.heading(if mixxx { "Add from Mixxx" } else { "Add from rekordbox" });
+        ui.checkbox(&mut choice.all, format!("Entire {} ({} tracks)", if mixxx { "library" } else { "collection" }, choice.overview.tracks)).on_hover_text("One list with every track of the library");
         ui.separator();
         if choice.overview.items.is_empty() {
             ui.label(RichText::new("The library has no playlists.").weak());
         }
         let all_ids: Vec<String> = choice.overview.items.iter().filter(|i| !i.is_folder).map(|i| i.id.clone()).collect();
         ui.horizontal(|ui| {
-            if ui.small_button("Select all playlists").clicked() {
+            if ui.small_button(if mixxx { "Select all lists" } else { "Select all playlists" }).clicked() {
                 choice.selected.extend(all_ids.iter().cloned());
             }
             if ui.small_button("None").clicked() {
                 choice.selected.clear();
                 choice.all = false;
             }
-            ui.label(RichText::new(format!("{} of {} playlists", choice.selected.len(), all_ids.len())).small().weak());
+            ui.label(RichText::new(format!("{} of {} {}", choice.selected.len(), all_ids.len(), if mixxx { "lists" } else { "playlists" })).small().weak());
         });
         egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
             for index in 0..choice.overview.items.len() {
@@ -506,7 +526,9 @@ fn rekordbox_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
             }
         });
         ui.separator();
-        ui.checkbox(&mut read_data, "Also read waveforms, keys and ratings").on_hover_text("Stores what rekordbox knows about each track in the cache in the background, so it does not have to be looked up while playing");
+        if !mixxx {
+            ui.checkbox(&mut read_data, "Also read waveforms, keys and ratings").on_hover_text("Stores what rekordbox knows about each track in the cache in the background, so it does not have to be looked up while playing");
+        }
         ui.horizontal(|ui| {
             let nothing = !choice.all && choice.selected.is_empty();
             if ui.add_enabled(!nothing, egui::Button::new("Add")).clicked() {
@@ -523,9 +545,9 @@ fn rekordbox_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
         app.mark_settings_dirty();
     }
     if import {
-        app.workers.submit(Job::OpenCollection { all: choice.all, ids: choice.selected, read_data });
+        app.workers.submit(if mixxx { Job::OpenMixxx { all: choice.all, ids: choice.selected } } else { Job::OpenCollection { all: choice.all, ids: choice.selected, read_data } });
     } else if keep {
-        app.dialogs.rekordbox_import = Some(choice);
+        app.dialogs.library_import = Some(choice);
     }
 }
 

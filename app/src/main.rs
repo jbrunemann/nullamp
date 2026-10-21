@@ -6,6 +6,7 @@
 mod cache;
 mod entry_art;
 mod logbuf;
+mod mixxx;
 mod paths;
 mod placeholder_art;
 mod player;
