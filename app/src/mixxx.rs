@@ -1,6 +1,7 @@
-//! The Mixxx library: its crates, playlists and play history as playlists, and the key and BPM it
-//! stores for any file the user plays. Parallels the desktop half of `rekordbox.rs`, without a key:
-//! Mixxx's database is a plain file. Everything here runs on worker threads.
+//! The Mixxx library: its crates, playlists and play history as playlists, and the key, BPM and
+//! rating, colour and waveform it stores for any file the user plays. Parallels the desktop half of
+//! `rekordbox.rs` (`fill`, `data` and `waveform`, so the same cache and the same bulk read serve
+//! both), without a key: Mixxx's database is a plain file. Everything here runs on worker threads.
 
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
@@ -12,7 +13,7 @@ use std::time::SystemTime;
 use nullamp_core::{Key, TrackInfo};
 use nullamp_mixxx::{Kind, Library, Track};
 
-use crate::rekordbox::{Item, Loaded, Overview, fill_gaps};
+use crate::rekordbox::{Analysed, Data, Item, Loaded, Overview, fill_gaps};
 
 fn info(t: &Track) -> TrackInfo {
     let text = |s: &str| Some(s.to_owned()).filter(|s| !s.is_empty());
@@ -120,6 +121,9 @@ pub struct Mixxx {
     enabled: AtomicBool,
     /// The library as read when its file had this modification time, or why it could not be.
     loaded: Mutex<Option<(Option<SystemTime>, Result<Arc<Index>, String>)>>,
+    /// The last "cannot find or reach the library" that was logged, so a scan that asks for every
+    /// file does not repeat it.
+    reported: Mutex<Option<String>>,
 }
 
 impl Default for Mixxx {
@@ -130,7 +134,7 @@ impl Default for Mixxx {
 
 impl Mixxx {
     fn at(locations: Vec<PathBuf>) -> Mixxx {
-        Mixxx { locations, enabled: AtomicBool::new(false), loaded: Mutex::new(None) }
+        Mixxx { locations, enabled: AtomicBool::new(false), loaded: Mutex::new(None), reported: Mutex::new(None) }
     }
 
     /// Turns the reader on (the user has opened the Mixxx library) or off.
@@ -161,16 +165,33 @@ impl Mixxx {
         if !self.enabled.load(Ordering::Relaxed) {
             return Err("The Mixxx library has not been opened".into());
         }
-        let (db, modified) = self.locate()?;
+        let (db, modified) = match self.locate() {
+            Ok(found) => found,
+            Err(e) => {
+                let mut reported = self.reported.lock().unwrap();
+                if reported.as_ref() != Some(&e) {
+                    log::warn!("Mixxx: {e}");
+                    *reported = Some(e.clone());
+                }
+                return Err(e);
+            }
+        };
+        self.reported.lock().unwrap().take();
         let mut loaded = self.loaded.lock().unwrap();
         if let Some((at, result)) = loaded.as_ref()
             && *at == modified
         {
             return result.clone();
         }
+        let started = std::time::Instant::now();
         let result = Library::open(db).map(|lib| Arc::new(Index::new(lib))).map_err(|e| format!("{}: {e}", db.display()));
-        if let Err(e) = &result {
-            log::debug!("Mixxx library {e}");
+        match &result {
+            Ok(index) => {
+                let tracks = &index.library.tracks;
+                let (waveforms, colors) = (tracks.iter().filter(|t| t.analysis.is_some()).count(), tracks.iter().filter(|t| t.color.is_some()).count());
+                log::info!("Mixxx: read {} from {} in {:?}: {} tracks ({waveforms} with a waveform, {colors} with a colour), {} lists", db.file_name().unwrap_or_default().to_string_lossy(), db.parent().unwrap_or(db).display(), started.elapsed(), tracks.len(), index.library.lists.len());
+            }
+            Err(e) => log::warn!("Mixxx: cannot read the library {e}"),
         }
         *loaded = Some((modified, result.clone()));
         result
@@ -189,21 +210,50 @@ impl Mixxx {
         Ok(lists_of(&index, all, ids))
     }
 
+    /// The library's track for a file, `None` when the file is not in it.
+    fn track(&self, file: &Path) -> Option<Track> {
+        let index = self.index().ok()?;
+        index.by_path.get(&nullamp_rekordbox::path_key(file)).map(|&i| index.library.tracks[i].clone())
+    }
+
     /// Fills what the file's own tags leave out from the library. `false` when the file is not in it.
     pub fn fill(&self, file: &Path, tags: &mut TrackInfo) -> bool {
-        let Ok(index) = self.index() else { return false };
-        let Some(&i) = index.by_path.get(&nullamp_rekordbox::path_key(file)) else { return false };
-        fill_gaps(tags, &info(&index.library.tracks[i]));
+        let Some(track) = self.track(file) else { return false };
+        fill_gaps(tags, &info(&track));
         true
+    }
+
+    /// The cacheable record of a file in the library, `None` for any other file. Mixxx's colour
+    /// labels are any colour, so it is kept as "#rrggbb" rather than as one of rekordbox's names.
+    pub fn data(&self, file: &Path) -> Option<Data> {
+        let t = self.track(file)?;
+        Some(Data { key: t.key, bpm: t.bpm, rating: t.rating.min(5), color: t.color.map(|c| format!("#{c:06x}")) })
+    }
+
+    /// The waveform Mixxx analysed for a file in the library, in the timeline's form, with a colour
+    /// per bucket from its low, mid and high bands. `None` for any other file or one Mixxx never analysed.
+    pub fn waveform(&self, file: &Path) -> Option<Analysed> {
+        match self.track(file)?.waveform() {
+            Ok(Some(wave)) => {
+                let (peak, rms) = wave.buckets(nullamp_audio::WAVEFORM_BUCKETS);
+                log::info!("waveform of {} from the Mixxx analysis ({} columns{})", file.display(), wave.heights.len(), if wave.bands.is_some() { ", coloured" } else { "" });
+                Some(Analysed { wave: nullamp_audio::Waveform { peak, rms }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
+            }
+            Ok(None) => None,
+            Err(e) => {
+                log::warn!("Mixxx waveform of {}: {e}", file.display());
+                None
+            }
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use nullamp_mixxx::List;
 
-    fn track(id: i64, file: &str) -> Track {
+    pub(crate) fn track(id: i64, file: &str) -> Track {
         Track {
             id,
             title: format!("Title {id}"),
@@ -217,7 +267,9 @@ mod tests {
             track_number: 0,
             bitrate: 320,
             sample_rate: 44100,
-            rating: 0,
+            rating: 4,
+            color: Some(0x00ff80),
+            analysis: None,
             play_count: 0,
             comment: String::new(),
             date_added: String::new(),
@@ -272,13 +324,18 @@ mod tests {
         assert_eq!(lists[0].tracks.as_ref().unwrap().len(), 2);
     }
 
-    /// A reader whose "library file" is a dummy and whose parse is the test index, as if read from it.
-    fn mixxx_with_index(dir: &Path) -> Mixxx {
+    /// A reader, turned on, whose "library file" is a dummy and whose parse is `library`, as if read from it.
+    pub(crate) fn mixxx_with_library(dir: &Path, library: Library) -> Mixxx {
         let db = dir.join("mixxxdb.sqlite");
         std::fs::write(&db, b"not read, the index below stands in for it").unwrap();
         let mixxx = Mixxx::at(vec![dir.join("elsewhere/mixxxdb.sqlite"), db.clone()]);
-        *mixxx.loaded.lock().unwrap() = Some((std::fs::metadata(&db).unwrap().modified().ok(), Ok(Arc::new(index()))));
+        *mixxx.loaded.lock().unwrap() = Some((std::fs::metadata(&db).unwrap().modified().ok(), Ok(Arc::new(Index::new(library)))));
         mixxx
+    }
+
+    /// The same, with the test library, not yet turned on.
+    fn mixxx_with_index(dir: &Path) -> Mixxx {
+        mixxx_with_library(dir, index().library)
     }
 
     #[test]
@@ -293,6 +350,17 @@ mod tests {
     }
 
     #[test]
+    fn the_record_of_a_file_in_the_library_is_what_the_cache_keeps() {
+        let dir = tempfile::tempdir().unwrap();
+        let mixxx = mixxx_with_index(dir.path());
+        assert!(mixxx.data(Path::new("/m/a.mp3")).is_none(), "not opened yet");
+        mixxx.set_enabled(true);
+        let data = mixxx.data(Path::new("/m/a.mp3")).unwrap();
+        assert_eq!((data.key.as_deref(), data.bpm, data.rating, data.color), (Some("B♭m"), Some(126.5), 4, Some("#00ff80".to_owned())));
+        assert!(mixxx.data(Path::new("/m/other.mp3")).is_none());
+    }
+
+    #[test]
     fn nothing_is_read_until_the_library_is_opened_and_only_where_mixxx_keeps_it() {
         let dir = tempfile::tempdir().unwrap();
         let mixxx = mixxx_with_index(dir.path());
@@ -304,5 +372,7 @@ mod tests {
         nowhere.set_enabled(true);
         let e = nowhere.overview().unwrap_err();
         assert!(e.starts_with("No Mixxx library found") && e.contains("none"), "{e}");
+        assert_eq!(nowhere.reported.lock().unwrap().as_deref(), Some(e.as_str()), "remembered, so it is logged once");
+        assert!(mixxx.overview().is_ok() && mixxx.reported.lock().unwrap().is_none(), "found again, so a later problem is logged again");
     }
 }

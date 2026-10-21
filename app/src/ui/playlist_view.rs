@@ -381,9 +381,9 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 dialogs::open_mixxx(app);
                 ui.close();
             }
-            if ui.button("Read rekordbox data").on_hover_text("Store the waveform, key, BPM and rating that rekordbox has for the tracks of this list, so they are known before playing").clicked() {
+            if ui.button("Read metadata from DJ software").on_hover_text("Store the waveform, key, BPM, rating and colour that rekordbox and Mixxx have for the tracks of this list, so they are known before playing").clicked() {
                 let paths = app.player.viewed().entries().iter().map(|e| e.path.clone()).collect();
-                app.read_rekordbox(paths);
+                app.read_dj_data(paths);
                 ui.close();
             }
             if ui.button("Import M3U / M3U8…").clicked() {

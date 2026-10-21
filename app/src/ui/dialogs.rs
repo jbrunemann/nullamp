@@ -473,7 +473,7 @@ fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
     let Some(mut choice) = app.dialogs.library_import.take() else { return };
     let mixxx = choice.source == ImportSource::Mixxx;
     let (mut keep, mut import) = (true, false);
-    let mut read_data = app.settings.rekordbox_read_data;
+    let mut read_data = app.settings.read_dj_data;
     let height = (ctx.content_rect().height() - 230.0).clamp(80.0, 380.0);
     egui::Modal::new(egui::Id::unique("rekordbox-import")).show(ctx, |ui| {
         ui.set_width(380.0);
@@ -526,9 +526,7 @@ fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
             }
         });
         ui.separator();
-        if !mixxx {
-            ui.checkbox(&mut read_data, "Also read waveforms, keys and ratings").on_hover_text("Stores what rekordbox knows about each track in the cache in the background, so it does not have to be looked up while playing");
-        }
+        ui.checkbox(&mut read_data, "Also read waveforms, keys and ratings").on_hover_text(format!("Stores what {} knows about each track in the cache in the background, so it does not have to be looked up while playing", if mixxx { "Mixxx" } else { "rekordbox" }));
         ui.horizontal(|ui| {
             let nothing = !choice.all && choice.selected.is_empty();
             if ui.add_enabled(!nothing, egui::Button::new("Add")).clicked() {
@@ -540,12 +538,12 @@ fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
             }
         });
     });
-    if read_data != app.settings.rekordbox_read_data {
-        app.settings.rekordbox_read_data = read_data;
+    if read_data != app.settings.read_dj_data {
+        app.settings.read_dj_data = read_data;
         app.mark_settings_dirty();
     }
     if import {
-        app.workers.submit(if mixxx { Job::OpenMixxx { all: choice.all, ids: choice.selected } } else { Job::OpenCollection { all: choice.all, ids: choice.selected, read_data } });
+        app.workers.submit(if mixxx { Job::OpenMixxx { all: choice.all, ids: choice.selected, read_data } } else { Job::OpenCollection { all: choice.all, ids: choice.selected, read_data } });
     } else if keep {
         app.dialogs.library_import = Some(choice);
     }
@@ -621,7 +619,7 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
 /// What Nullamp reads from rekordbox: the analysis behind the waveform, and the desktop library.
 /// Kept to a few lines because the page only has the height of the deck.
 fn rekordbox_body(app: &mut App, ui: &mut egui::Ui) {
-    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's waveform analysis").on_hover_text("For tracks on its USB sticks and in the desktop library. Takes effect when the next track starts").changed() {
+    if ui.checkbox(&mut app.settings.rekordbox_waveform, "Use rekordbox's and Mixxx's waveform analysis").on_hover_text("For tracks on rekordbox USB sticks, in the rekordbox desktop library and in the Mixxx library. Takes effect when the next track starts").changed() {
         app.mark_settings_dirty();
     }
     ui.horizontal(|ui| {

@@ -28,7 +28,7 @@ impl Kind {
         match self {
             Kind::Waveforms => "Waveforms",
             Kind::Tempos => "Tempo (BPM)",
-            Kind::Rekordbox => "rekordbox data",
+            Kind::Rekordbox => "DJ software data",
             Kind::TrackCovers => "Mix track covers",
             Kind::NowPlaying => "Now Playing covers",
             Kind::Leftovers => "Leftovers",
@@ -40,7 +40,7 @@ impl Kind {
         match self {
             Kind::Waveforms => "Waveform overviews of decoded files. Made again the next time a track plays.",
             Kind::Tempos => "Detected tempos, including \"no clear beat\". Detected again when a track plays. Tempos already saved in a playlist stay.",
-            Kind::Rekordbox => "Waveforms, key and BPM copied from rekordbox USB sticks. Read again when a file plays from its stick, so files whose stick is away lose them.",
+            Kind::Rekordbox => "Waveforms, key, BPM, rating and colour copied from rekordbox and Mixxx. Read again when a file plays from its library or stick, so files whose stick is away lose them.",
             Kind::TrackCovers => "Covers found online for the tracks inside mixes, and the tracks nothing was found for. Looked up again when a track becomes active.",
             Kind::NowPlaying => "Cover images handed to the macOS Now Playing overlay. Written again when a track plays.",
             Kind::Leftovers => "Files nothing reads any more, such as those of removed features.",

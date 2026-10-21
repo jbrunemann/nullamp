@@ -74,3 +74,109 @@ fn a_missing_or_foreign_file_is_an_error_and_nothing_is_written() {
     Library::open(&db).unwrap();
     assert_eq!(std::fs::read(&db).unwrap(), before);
 }
+
+fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push((v & 0x7f) as u8 | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+fn put_bytes(out: &mut Vec<u8>, field: u64, body: &[u8]) {
+    put_varint(out, field << 3 | 2);
+    put_varint(out, body.len() as u64);
+    out.extend_from_slice(body);
+}
+
+fn put_signal(out: &mut Vec<u8>, field: u64, data: &[u8]) {
+    let mut signal = Vec::new();
+    for &d in data {
+        put_varint(&mut signal, 1 << 3);
+        put_varint(&mut signal, u64::from(d));
+    }
+    // Mixxx also writes two more varint fields in each signal; they are skipped.
+    put_varint(&mut signal, 2 << 3);
+    put_varint(&mut signal, 2);
+    put_bytes(out, field, &signal);
+}
+
+/// A waveform file as Mixxx writes it: `qCompress` of a protobuf `Waveform`. Left and right are
+/// interleaved, so these four values are two visual samples.
+fn analysis_file(all: &[u8], low: &[u8], mid: &[u8], high: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.push(1 << 3 | 1);
+    msg.extend_from_slice(&441.0f64.to_le_bytes());
+    put_signal(&mut msg, 3, all);
+    let mut filtered = Vec::new();
+    for (i, band) in [low, mid, high].into_iter().enumerate() {
+        put_signal(&mut filtered, i as u64 + 1, band);
+    }
+    filtered.push(4 << 3 | 1);
+    filtered.extend_from_slice(&600.0f64.to_le_bytes());
+    put_bytes(&mut msg, 4, &filtered);
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut z, &msg).unwrap();
+    let mut out = (msg.len() as u32).to_be_bytes().to_vec();
+    out.extend(z.finish().unwrap());
+    out
+}
+
+#[test]
+fn a_track_points_at_its_overview_waveform_and_has_its_colour() {
+    let (dir, db) = synthetic_library();
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE track_analysis(id INTEGER primary key AUTOINCREMENT, track_id INTEGER NOT NULL, type varchar(512), description varchar(1024), version varchar(512), created DEFAULT CURRENT_TIMESTAMP, data_checksum varchar(512));
+         INSERT INTO track_analysis(id, track_id, type) VALUES (10, 1, '1'), (11, 1, '2'), (12, 2, '1'), (13, 9, '2'), (14, 1, '3');
+         ALTER TABLE library ADD COLUMN color INTEGER;
+         UPDATE library SET color = 16711680 WHERE id = 1;",
+    )
+    .unwrap();
+    drop(conn);
+    let lib = Library::open(&db).unwrap();
+    assert_eq!(lib.tracks[0].analysis, Some(dir.path().join("analysis/11")), "the overview wins over the detail");
+    assert_eq!(lib.tracks[1].analysis, Some(dir.path().join("analysis/12")), "the detail when there is no overview");
+    assert_eq!((lib.tracks[0].color, lib.tracks[1].color), (Some(0xff0000), None));
+    assert_eq!(lib.tracks[0].waveform().unwrap(), None, "the file is not there");
+    // An older Mixxx has neither table nor column.
+    let (_old, old_db) = synthetic_library();
+    let old = Library::open(&old_db).unwrap();
+    assert!(old.tracks.iter().all(|t| t.analysis.is_none() && t.color.is_none()));
+}
+
+#[test]
+fn a_waveform_file_is_unpacked_into_heights_and_colours() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("11");
+    // Two visual samples, then two more that are louder in the right channel.
+    std::fs::write(&file, analysis_file(&[10, 20, 30, 255], &[100, 0, 0, 0], &[0, 50, 0, 200], &[0, 0, 40, 0])).unwrap();
+    let wave = analysis::read(&file).unwrap().unwrap();
+    assert_eq!(wave.heights, [20, 255], "the louder of left and right");
+    let [low, mid, high] = wave.bands.clone().unwrap();
+    assert_eq!((low, mid, high), (vec![100, 0], vec![50, 200], vec![0, 40]));
+    assert_eq!(wave.buckets(2048), (vec![20, 255], vec![20, 255]), "fewer samples than buckets keeps them all");
+    let (peak, rms) = wave.buckets(1);
+    assert_eq!((peak, rms), (vec![255], vec![181]));
+    let quiet = Waveform { heights: vec![10, 20], bands: None };
+    assert_eq!(quiet.buckets(2), (vec![128, 255], vec![128, 255]), "the loudest sample is scaled to full, as Mixxx's overview does");
+    assert!(quiet.bucket_colors(2).is_none());
+    let colors = wave.bucket_colors(2).unwrap();
+    assert_eq!(colors, [[255, 128, 0], [0, 255, 51]], "the bass of the quiet sample is red, the mids of the loud one green");
+}
+
+#[test]
+fn a_damaged_waveform_file_is_an_error_and_a_missing_one_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(analysis::read(&dir.path().join("none")).unwrap(), None);
+    let good = analysis_file(&[1, 2], &[1, 2], &[1, 2], &[1, 2]);
+    let cut = dir.path().join("cut");
+    std::fs::write(&cut, &good[..good.len() / 2]).unwrap();
+    assert!(analysis::read(&cut).is_err());
+    let junk = dir.path().join("junk");
+    std::fs::write(&junk, b"not a waveform at all").unwrap();
+    assert!(analysis::read(&junk).is_err());
+    let tiny = dir.path().join("tiny");
+    std::fs::write(&tiny, b"abc").unwrap();
+    assert!(analysis::read(&tiny).is_err());
+}

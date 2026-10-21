@@ -808,7 +808,7 @@ fn render_mixxx_chooser() {
     save(&mut h, "06i-mixxx-chooser.png");
 }
 
-/// The Mixxx chooser says Mixxx, has no rekordbox-only option, and ticking a kind ticks its lists.
+/// The Mixxx chooser says Mixxx, offers the same bulk read as rekordbox's, and ticking a kind ticks its lists.
 #[test]
 fn mixxx_chooser_ticks_a_kind_of_list() {
     use egui_kittest::kittest::Queryable;
@@ -819,7 +819,7 @@ fn mixxx_chooser_ticks_a_kind_of_list() {
     settle(&mut h, 200);
     assert!(h.query_by_label("Add from Mixxx").is_some());
     assert!(h.query_by_label("Entire library (915 tracks)").is_some());
-    assert!(h.query_by_label("Also read waveforms, keys and ratings").is_none());
+    assert!(h.query_by_label("Also read waveforms, keys and ratings").is_some());
     h.get_by_label("Crates").click();
     settle(&mut h, 200);
     let mut ids: Vec<String> = h.state().dialogs.library_import.as_ref().unwrap().selected.iter().cloned().collect();

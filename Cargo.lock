@@ -3003,6 +3003,7 @@ dependencies = [
 name = "nullamp-mixxx"
 version = "1.6.0"
 dependencies = [
+ "flate2",
  "rusqlite",
  "tempfile",
  "thiserror 2.0.21",

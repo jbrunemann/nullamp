@@ -65,17 +65,18 @@ pub struct Settings {
     /// Look up the covers of the tracks inside a mix on Deezer and iTunes as each one starts
     /// playing. Only set in settings.json.
     pub online_artwork: bool,
-    /// Tracks on a rekordbox USB stick show the waveform rekordbox analysed instead of one
-    /// decoded from the file.
+    /// Tracks on a rekordbox USB stick or in the rekordbox or Mixxx library show the waveform that
+    /// software analysed instead of one decoded from the file.
     pub rekordbox_waveform: bool,
     /// The SQLCipher key (64 hex characters) for the rekordbox **desktop** library (`master.db`),
     /// which the user supplies once. Empty turns the desktop library off. Only set in settings.json
     /// or the field on the Settings General tab.
     #[serde(default)]
     pub rekordbox_key: String,
-    /// Read what rekordbox knows about the tracks (waveform, key, BPM, rating, colour) into the cache
-    /// right after the chosen part of the desktop library is added.
-    pub rekordbox_read_data: bool,
+    /// Read what the DJ software (rekordbox or Mixxx) knows about the tracks (waveform, key, BPM,
+    /// rating, colour) into the cache right after the chosen part of its library is added.
+    #[serde(alias = "rekordbox_read_data")]
+    pub read_dj_data: bool,
     /// The Mixxx library has been opened once, so its key and BPM fill in files from then on. Off,
     /// nothing reads Mixxx's database.
     pub mixxx: bool,
@@ -113,7 +114,7 @@ impl Default for Settings {
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
             mixxx: false,
-            rekordbox_read_data: true,
+            read_dj_data: true,
         }
     }
 }

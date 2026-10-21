@@ -219,7 +219,7 @@ pub struct App {
     full_height: f32,
     pub message: Option<Message>,
     /// The bulk read of rekordbox data that is running, if any.
-    rekordbox_read: Option<ReadProgress>,
+    dj_data_read: Option<ReadProgress>,
     pub dialogs: dialogs::Dialogs,
     pub show_remaining: bool,
     /// `None` while no output device is open.
@@ -304,7 +304,7 @@ impl App {
             mix: Default::default(),
             inspector: Default::default(),
             message: None,
-            rekordbox_read: None,
+            dj_data_read: None,
             dialogs: dialogs::Dialogs::new(),
             show_remaining: false,
             output: None,
@@ -693,9 +693,16 @@ impl App {
                 Ok(overview) => dialogs::open_library_import(self, dialogs::ImportSource::Mixxx, overview),
                 Err(e) => self.error(format!("Cannot read the Mixxx library: {e}")),
             },
-            JobResult::Mixxx(result) => match result {
+            JobResult::Mixxx { read_data, result } => match result {
                 Ok(lists) if lists.is_empty() => self.warn("The chosen Mixxx lists have no tracks"),
-                Ok(lists) => self.on_sticks(lists),
+                Ok(lists) => {
+                    let paths: Vec<PathBuf> = lists.iter().filter_map(|l| l.tracks.as_ref().ok()).flatten().map(|(p, _)| p.clone()).collect();
+                    log::info!("Mixxx: added {} lists with {} tracks{}", lists.len(), paths.len(), if read_data { ", reading their data" } else { "" });
+                    self.on_sticks(lists);
+                    if read_data {
+                        self.read_dj_data(paths);
+                    }
+                }
                 Err(e) => self.error(format!("Cannot read the Mixxx library: {e}")),
             },
             JobResult::Collection { read_data, result } => match result {
@@ -704,12 +711,12 @@ impl App {
                     let paths = lists.iter().filter_map(|l| l.tracks.as_ref().ok()).flatten().map(|(p, _)| p.clone()).collect();
                     self.on_sticks(lists);
                     if read_data {
-                        self.read_rekordbox(paths);
+                        self.read_dj_data(paths);
                     }
                 }
                 Err(e) => self.error(format!("Cannot read the rekordbox collection: {e}")),
             },
-            JobResult::RekordboxRead { request, done, stored, waveforms } => self.on_rekordbox_read(request, done, stored, waveforms),
+            JobResult::DjDataRead { request, done, stored, waveforms } => self.on_dj_data_read(request, done, stored, waveforms),
             JobResult::Exported { path, result } => match result {
                 Ok(()) => self.info(format!("Exported {}", path.display())),
                 Err(e) => self.error(format!("Export failed: {e}")),
@@ -762,28 +769,31 @@ impl App {
         }
     }
 
-    /// Reads what rekordbox knows about `paths` (waveform, key, BPM, rating, colour) into the cache,
-    /// so it is there however those files are played later. Files that are not in rekordbox are skipped.
-    pub fn read_rekordbox(&mut self, paths: Vec<PathBuf>) {
+    /// Reads what rekordbox and Mixxx know about `paths` (waveform, key, BPM, rating, colour) into the
+    /// cache, so it is there however those files are played later. Files that are in neither are skipped.
+    pub fn read_dj_data(&mut self, paths: Vec<PathBuf>) {
         let mut seen = HashSet::new();
         let paths: Vec<PathBuf> = paths.into_iter().filter(|p| seen.insert(p.clone())).collect();
         if paths.is_empty() {
             return;
         }
         let total = paths.len();
-        let request = self.workers.read_rekordbox(paths);
-        self.rekordbox_read = Some(ReadProgress { request, total, done: 0, stored: 0, waveforms: 0 });
+        log::info!("DJ software data: reading {total} files");
+        let request = self.workers.read_dj_data(paths);
+        self.dj_data_read = Some(ReadProgress { request, total, done: 0, stored: 0, waveforms: 0 });
     }
 
-    fn on_rekordbox_read(&mut self, request: u64, done: usize, stored: usize, waveforms: usize) {
-        let Some(progress) = self.rekordbox_read.as_mut().filter(|p| p.request == request) else { return };
+    fn on_dj_data_read(&mut self, request: u64, done: usize, stored: usize, waveforms: usize) {
+        let Some(progress) = self.dj_data_read.as_mut().filter(|p| p.request == request) else { return };
         progress.done += done;
         progress.stored += stored;
         progress.waveforms += waveforms;
         if progress.done >= progress.total {
             let (total, stored, waveforms) = (progress.total, progress.stored, progress.waveforms);
-            self.rekordbox_read = None;
-            self.info(format!("Read rekordbox data for {stored} of {total} tracks ({waveforms} with a waveform)"));
+            self.dj_data_read = None;
+            let message = format!("Read DJ software data for {stored} of {total} tracks ({waveforms} with a waveform)");
+            log::info!("{message}");
+            self.info(message);
         }
     }
 
@@ -1293,8 +1303,8 @@ impl App {
             if missing > 0 {
                 ui.label(egui::RichText::new(format!("· {missing} unavailable")).color(theme::warn()).size(11.5));
             }
-            if let Some(r) = &self.rekordbox_read {
-                ui.label(egui::RichText::new(format!("· reading rekordbox {}/{}", r.done, r.total)).color(theme::text_dim()).size(11.5));
+            if let Some(r) = &self.dj_data_read {
+                ui.label(egui::RichText::new(format!("· reading DJ software data {}/{}", r.done, r.total)).color(theme::text_dim()).size(11.5));
             }
             if let Some(m) = &self.message {
                 let ttl = if m.kind == MessageKind::Error { 12.0 } else { 6.0 };

@@ -659,7 +659,7 @@ fn technical(app: &mut App, ui: &mut Ui) {
             row("Chapters", m.chapters.len().to_string());
         });
         if let Some(rows) = app.inspector.targets.first().and_then(|p| app.inspector.rekordbox.get(p)).filter(|r| !r.is_empty()) {
-            egui::CollapsingHeader::new(RichText::new("From rekordbox").small()).id_salt("rekordbox-data").default_open(true).show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new("From DJ software").small()).id_salt("rekordbox-data").default_open(true).show(ui, |ui| {
                 egui::Grid::new("rekordbox-grid").num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
                     for (k, v) in rows {
                         ui.label(RichText::new(k).small().color(theme::text_dim()));

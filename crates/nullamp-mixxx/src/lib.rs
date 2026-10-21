@@ -4,16 +4,24 @@
 //!
 //! Read-only on purpose: Mixxx owns the database and may be running while we read it.
 
+mod analysis;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags, Row};
 
+pub use analysis::Waveform;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Mixxx database: {0}")]
     Sql(String),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("unreadable Mixxx data: {0}")]
+    Format(&'static str),
 }
 
 impl From<rusqlite::Error> for Error {
@@ -45,6 +53,21 @@ pub struct Track {
     pub date_added: String,
     /// The audio file. It is not checked to exist.
     pub file: PathBuf,
+    /// The colour label as 0xRRGGBB, `None` when unset or when the database predates colours.
+    pub color: Option<u32>,
+    /// The file of the analysed waveform (the overview if Mixxx has one, else the detail), in the
+    /// `analysis` folder beside the database. It is not checked to exist.
+    pub analysis: Option<PathBuf>,
+}
+
+impl Track {
+    /// The waveform Mixxx analysed for this track. `Ok(None)` when it has none.
+    pub fn waveform(&self) -> Result<Option<Waveform>, Error> {
+        match &self.analysis {
+            Some(file) => analysis::read(file),
+            None => Ok(None),
+        }
+    }
 }
 
 /// What a list of the library is.
@@ -150,12 +173,50 @@ impl Library {
                     rating: number(r, 14)?.clamp(0.0, 5.0) as u8,
                     play_count: number(r, 15)?.max(0.0) as u32,
                     date_added: text(r, 16)?,
+                    color: None,
+                    analysis: None,
                 });
             }
         }
+        // Both come from tables and columns that older Mixxx versions lack, so a failure is not fatal.
+        let folder = db.parent().unwrap_or(Path::new(".")).join("analysis");
+        read_colors(&conn, &index_of, &mut tracks);
+        read_analysis(&conn, &index_of, &folder, &mut tracks);
         let mut lists = Vec::new();
         read_lists(&conn, &index_of, &mut lists)?;
         Ok(Library { tracks, lists })
+    }
+}
+
+/// The colour labels of the tracks that have one.
+fn read_colors(conn: &Connection, index_of: &HashMap<i64, usize>, tracks: &mut [Track]) {
+    let Ok(mut stmt) = conn.prepare("SELECT id, color FROM library WHERE color IS NOT NULL") else { return };
+    let Ok(mut rows) = stmt.query([]) else { return };
+    while let Ok(Some(r)) = rows.next() {
+        if let (Ok(id), Ok(color)) = (r.get::<_, i64>(0), number(r, 1))
+            && let Some(&i) = index_of.get(&id)
+        {
+            tracks[i].color = u32::try_from(color as i64).ok().filter(|&c| c <= 0xff_ffff);
+        }
+    }
+}
+
+/// Where the analysed waveform of each track is: `track_analysis` lists them by type, 1 for the
+/// detail and 2 for the overview, and the data lives in a file named by the row's id.
+fn read_analysis(conn: &Connection, index_of: &HashMap<i64, usize>, folder: &Path, tracks: &mut [Track]) {
+    let Ok(mut stmt) = conn.prepare("SELECT track_id, id, CAST(type AS INTEGER) FROM track_analysis WHERE CAST(type AS INTEGER) IN (1, 2) ORDER BY id") else { return };
+    let Ok(mut rows) = stmt.query([]) else { return };
+    // The newest row of each type wins; the overview is preferred, being small and as wide as the timeline.
+    let mut best: HashMap<usize, [Option<i64>; 2]> = HashMap::new();
+    while let Ok(Some(r)) = rows.next() {
+        if let (Ok(track), Ok(id), Ok(kind)) = (r.get::<_, i64>(0), r.get::<_, i64>(1), r.get::<_, i64>(2))
+            && let Some(&i) = index_of.get(&track)
+        {
+            best.entry(i).or_default()[kind as usize - 1] = Some(id);
+        }
+    }
+    for (i, [detail, overview]) in best {
+        tracks[i].analysis = overview.or(detail).map(|id| folder.join(id.to_string()));
     }
 }
 

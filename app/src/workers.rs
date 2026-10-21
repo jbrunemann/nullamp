@@ -95,10 +95,10 @@ pub enum Job {
     /// Read the crates, playlists and history of the chosen Mixxx library, for the user to choose from.
     ListMixxx,
     /// Make lists of the chosen part of the Mixxx library: all of it, and the lists with these ids.
-    OpenMixxx { all: bool, ids: HashSet<String> },
-    /// Store what rekordbox knows about these files in the cache, ahead of their being played.
+    OpenMixxx { all: bool, ids: HashSet<String>, read_data: bool },
+    /// Store what rekordbox and Mixxx know about these files in the cache, ahead of their being played.
     /// Dropped when a newer request has replaced `generation`.
-    ReadRekordbox { generation: u64, request: u64, paths: Vec<PathBuf> },
+    ReadDjData { generation: u64, request: u64, paths: Vec<PathBuf> },
     ExportPlaylist { path: PathBuf, items: Vec<(PathBuf, TrackInfo)> },
     NowPlaying { token: u64, path: PathBuf },
     Inspect { request: u64, path: PathBuf },
@@ -176,12 +176,12 @@ pub enum JobResult {
     /// The answer to [`Job::ListMixxx`].
     MixxxList(Result<crate::rekordbox::Overview, String>),
     /// The answer to [`Job::OpenMixxx`]: the chosen lists, or why the library could not be read.
-    Mixxx(Result<Vec<crate::rekordbox::Loaded>, String>),
+    Mixxx { read_data: bool, result: Result<Vec<crate::rekordbox::Loaded>, String> },
     /// The answer to [`Job::OpenCollection`]: the chosen lists, or why the library could not be read.
     Collection { read_data: bool, result: Result<Vec<crate::rekordbox::Loaded>, String> },
-    /// One chunk of a [`Job::ReadRekordbox`] request is done: `done` files looked at, `stored` of them
-    /// known to rekordbox and cached, `waveforms` of those with an analysed waveform.
-    RekordboxRead { request: u64, done: usize, stored: usize, waveforms: usize },
+    /// One chunk of a [`Job::ReadDjData`] request is done: `done` files looked at, `stored` of them
+    /// known to rekordbox or Mixxx and cached, `waveforms` of those with an analysed waveform.
+    DjDataRead { request: u64, done: usize, stored: usize, waveforms: usize },
     Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
     Exported { path: PathBuf, result: Result<(), String> },
     NowPlaying(Box<NowPlayingInfo>),
@@ -272,7 +272,7 @@ impl Workers {
         let waveform_generation = Arc::new(AtomicU64::new(0));
         let (waveform, waveform_rx) = crossbeam_channel::unbounded::<WaveformRequest>();
         {
-            let (tx, w, generation, dir, sticks, desktop) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache(), Arc::clone(&sticks), Arc::clone(&desktop));
+            let (tx, w, generation, dir, sticks, desktop, mixxx) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&waveform_generation), paths.waveform_cache(), Arc::clone(&sticks), Arc::clone(&desktop), Arc::clone(&mixxx));
             std::thread::Builder::new()
                 .name("nullamp-waveform".into())
                 .spawn(move || {
@@ -287,7 +287,7 @@ impl Workers {
                         }
                         // On a rekordbox stick the analysis is shown first and what rekordbox knows is cached
                         // afterwards (for the same file played from elsewhere later), so the cache never delays the waveform.
-                        let found = request.rekordbox.then(|| sticks.waveform(&request.path).or_else(|| desktop.waveform(&request.path))).flatten();
+                        let found = request.rekordbox.then(|| sticks.waveform(&request.path).or_else(|| desktop.waveform(&request.path)).or_else(|| mixxx.waveform(&request.path))).flatten();
                         if let Some(found) = &found {
                             let result = JobResult::Waveform { token: request.token, result: Ok(found.wave.clone()), colors: found.colors.clone() };
                             if tx.send(result).is_err() {
@@ -295,7 +295,7 @@ impl Workers {
                             }
                             w();
                         }
-                        if let Some(data) = sticks.data(&request.path).or_else(|| desktop.data(&request.path))
+                        if let Some(data) = sticks.data(&request.path).or_else(|| desktop.data(&request.path)).or_else(|| mixxx.data(&request.path))
                             && let Ok(fingerprint) = store::fingerprint(&request.path)
                         {
                             waveform_cache::store_rekordbox_data(&dir, &fingerprint, &data);
@@ -406,14 +406,14 @@ impl Workers {
         let _ = self.online.send(OnlineRequest::TrackCover { request, artist, title });
     }
 
-    /// Store what rekordbox knows about these files in the cache, a chunk at a time so the progress
-    /// shows and a newer request can take over. Answered with [`JobResult::RekordboxRead`] under the
+    /// Store what rekordbox and Mixxx know about these files in the cache, a chunk at a time so the progress
+    /// shows and a newer request can take over. Answered with [`JobResult::DjDataRead`] under the
     /// returned request id.
-    pub fn read_rekordbox(&self, paths: Vec<PathBuf>) -> u64 {
+    pub fn read_dj_data(&self, paths: Vec<PathBuf>) -> u64 {
         let request = self.request_id();
         let generation = self.read_generation.fetch_add(1, Ordering::Relaxed) + 1;
         for chunk in paths.chunks(32) {
-            self.submit(Job::ReadRekordbox { generation, request, paths: chunk.to_vec() });
+            self.submit(Job::ReadDjData { generation, request, paths: chunk.to_vec() });
         }
         request
     }
@@ -424,7 +424,7 @@ impl Workers {
 
     pub fn submit(&self, job: Job) {
         let lane = match job {
-            Job::ScanInfo { .. } | Job::CheckExists { .. } | Job::ExpandPaths { .. } | Job::ReadRekordbox { .. } => &self.bulk,
+            Job::ScanInfo { .. } | Job::CheckExists { .. } | Job::ExpandPaths { .. } | Job::ReadDjData { .. } => &self.bulk,
             _ => &self.interactive,
         };
         let _ = lane.send(job);
@@ -605,18 +605,20 @@ struct Ctx {
     mixxx: Arc<crate::mixxx::Mixxx>,
 }
 
-/// Stores rekordbox's record and waveform of each of `paths` that is on a stick or in the desktop
-/// library in the cache, by the file's fingerprint (what playing it would store). Returns how many
-/// files that was and how many of them had an analysed waveform. A file that cannot be read is skipped.
-fn read_rekordbox(ctx: &Ctx, paths: Vec<PathBuf>) -> (usize, usize) {
+/// Stores what the DJ software knows about each of `paths` in the cache, by the file's fingerprint
+/// (what playing it would store): rekordbox's record and waveform for a file on a stick or in the
+/// desktop library, else Mixxx's for a file in its library. Returns how many files that was and how
+/// many of them had an analysed waveform. A file that cannot be read is skipped.
+fn read_dj_data(ctx: &Ctx, paths: Vec<PathBuf>) -> (usize, usize) {
     let dir = ctx.paths.waveform_cache();
     let (mut stored, mut waveforms) = (0, 0);
     for path in paths {
-        let Some(track) = ctx.sticks.track(&path).or_else(|| ctx.desktop.track(&path)) else { continue };
+        let track = ctx.sticks.track(&path).or_else(|| ctx.desktop.track(&path));
+        let Some(data) = track.as_ref().map(crate::rekordbox::Data::of).or_else(|| ctx.mixxx.data(&path)) else { continue };
         let Ok(fingerprint) = store::fingerprint(&path) else { continue };
-        waveform_cache::store_rekordbox_data(&dir, &fingerprint, &crate::rekordbox::Data::of(&track));
+        waveform_cache::store_rekordbox_data(&dir, &fingerprint, &data);
         stored += 1;
-        if let Some(found) = crate::rekordbox::analysed(&path, &track) {
+        if let Some(found) = track.and_then(|t| crate::rekordbox::analysed(&path, &t)).or_else(|| ctx.mixxx.waveform(&path)) {
             waveform_cache::store_rekordbox(&dir, &fingerprint, &found);
             waveforms += 1;
         }
@@ -684,14 +686,14 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::ListCollection => vec![JobResult::CollectionList(ctx.desktop.overview())],
         Job::OpenCollection { all, ids, read_data } => vec![JobResult::Collection { read_data, result: ctx.desktop.open_playlists(all, &ids) }],
         Job::ListMixxx => vec![JobResult::MixxxList(ctx.mixxx.overview())],
-        Job::OpenMixxx { all, ids } => vec![JobResult::Mixxx(ctx.mixxx.open_lists(all, &ids))],
-        Job::ReadRekordbox { generation, request, paths } => {
+        Job::OpenMixxx { all, ids, read_data } => vec![JobResult::Mixxx { read_data, result: ctx.mixxx.open_lists(all, &ids) }],
+        Job::ReadDjData { generation, request, paths } => {
             if ctx.read_generation.load(Ordering::Relaxed) != generation {
                 return Vec::new();
             }
             let done = paths.len();
-            let (stored, waveforms) = read_rekordbox(ctx, paths);
-            vec![JobResult::RekordboxRead { request, done, stored, waveforms }]
+            let (stored, waveforms) = read_dj_data(ctx, paths);
+            vec![JobResult::DjDataRead { request, done, stored, waveforms }]
         }
         Job::ExportPlaylist { path, items } => {
             let base = path.parent().map(Path::to_path_buf);
@@ -702,9 +704,9 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::NowPlaying { token, path } => vec![JobResult::NowPlaying(Box::new(now_playing(ctx, token, path)))],
         Job::Inspect { request, path } => {
             let meta = nullamp_meta::read(&path).map_err(|e| e.to_string());
-            // From the stick's library or the desktop collection when the file is in one, else what was
-            // cached when it last played from one.
-            let record = ctx.sticks.data(&path).or_else(|| ctx.desktop.data(&path)).or_else(|| {
+            // From the stick's library, the desktop collection or Mixxx when the file is in one, else
+            // what was cached when it last played from one.
+            let record = ctx.sticks.data(&path).or_else(|| ctx.desktop.data(&path)).or_else(|| ctx.mixxx.data(&path)).or_else(|| {
                 let fingerprint = store::fingerprint(&path).ok()?;
                 waveform_cache::load_rekordbox_data(&ctx.paths.waveform_cache(), &fingerprint)
             });
@@ -856,7 +858,7 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
         let mut info = m.track_info();
         // A file in rekordbox (a stick, or the desktop library) takes its key and BPM from there, one
         // in the Mixxx library from Mixxx; the same file anywhere else from what was cached when it
-        // last played from rekordbox.
+        // last played from one of them.
         if !ctx.sticks.fill(&path, &mut info)
             && !ctx.desktop.fill(&path, &mut info)
             && !ctx.mixxx.fill(&path, &mut info)
@@ -1060,13 +1062,44 @@ mod tests {
         std::fs::create_dir_all(on_stick.parent().unwrap()).unwrap();
         std::fs::write(&on_stick, vec![7u8; 4096]).unwrap();
         let elsewhere = fixture("beat_120.mp3");
-        let (stored, waveforms) = read_rekordbox(&ctx, vec![on_stick.clone(), elsewhere.clone(), home.path().join("gone.mp3")]);
+        let (stored, waveforms) = read_dj_data(&ctx, vec![on_stick.clone(), elsewhere.clone(), home.path().join("gone.mp3")]);
         assert_eq!((stored, waveforms), (1, 1));
         let (dir, fingerprint) = (ctx.paths.waveform_cache(), store::fingerprint(&on_stick).unwrap());
         let data = waveform_cache::load_rekordbox_data(&dir, &fingerprint).expect("record cached");
         assert_eq!((data.key.as_deref(), data.bpm), (Some("Bbm"), Some(140.02)));
         assert!(waveform_cache::load_rekordbox(&dir, &fingerprint).is_some(), "waveform cached");
         assert!(waveform_cache::load_rekordbox_data(&dir, &store::fingerprint(&elsewhere).unwrap()).is_none());
+    }
+
+    #[test]
+    fn reading_ahead_caches_the_record_and_waveform_of_a_file_in_mixxx() {
+        let home = tempfile::tempdir().unwrap();
+        let file = fixture("beat_120.mp3");
+        let mut track = crate::mixxx::tests::track(1, file.to_str().unwrap());
+        (track.key, track.bpm, track.rating, track.analysis) = (Some("Am".into()), Some(120.0), 3, Some(fixture("mixxx/analysis/11")));
+        let library = nullamp_mixxx::Library { tracks: vec![track], lists: Vec::new() };
+        let mixxx = crate::mixxx::tests::mixxx_with_library(home.path(), library);
+        mixxx.set_enabled(true);
+        let ctx = Ctx {
+            paths: AppPaths { config: home.path().join("config"), data: home.path().join("data"), cache: home.path().join("cache") },
+            scan_generation: Arc::new(AtomicU64::new(1)),
+            cover_generation: Arc::new(AtomicU64::new(1)),
+            read_generation: Arc::new(AtomicU64::new(1)),
+            sticks: Arc::new(crate::rekordbox::Sticks::default()),
+            desktop: Arc::new(crate::rekordbox::Desktop::default()),
+            mixxx: Arc::new(mixxx),
+        };
+        let other = fixture("tone_mono_22k.wav");
+        let (stored, waveforms) = read_dj_data(&ctx, vec![file.clone(), other.clone()]);
+        assert_eq!((stored, waveforms), (1, 1));
+        let (dir, fingerprint) = (ctx.paths.waveform_cache(), store::fingerprint(&file).unwrap());
+        let data = waveform_cache::load_rekordbox_data(&dir, &fingerprint).expect("record cached");
+        assert_eq!((data.key.as_deref(), data.bpm, data.rating, data.color.as_deref()), (Some("Am"), Some(120.0), 3, Some("#00ff80")));
+        let found = waveform_cache::load_rekordbox(&dir, &fingerprint).expect("waveform cached");
+        assert_eq!(found.wave.peak.len(), 8, "one bucket per sample of the Mixxx overview");
+        assert_eq!(found.wave.peak.iter().max(), Some(&255), "scaled to full");
+        assert_eq!(found.colors.map(|c| c.len()), Some(8));
+        assert!(waveform_cache::load_rekordbox_data(&dir, &store::fingerprint(&other).unwrap()).is_none());
     }
 
     #[test]
@@ -1081,7 +1114,7 @@ mod tests {
             desktop: Arc::new(crate::rekordbox::Desktop::default()),
             mixxx: Arc::new(crate::mixxx::Mixxx::default()),
         };
-        let job = Job::ReadRekordbox { generation: 1, request: 7, paths: vec![fixture("beat_120.mp3")] };
+        let job = Job::ReadDjData { generation: 1, request: 7, paths: vec![fixture("beat_120.mp3")] };
         assert!(run_job(&ctx, job).is_empty());
     }
 
