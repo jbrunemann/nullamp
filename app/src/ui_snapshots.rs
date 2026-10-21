@@ -936,6 +936,31 @@ fn a_failed_cover_lookup_is_not_asked_again_every_frame() {
     assert!(h.state().deck_art().is_some_and(|a| a.source == crate::ui::ArtSource::File), "the deck keeps the file's cover");
 }
 
+/// The deck's cover dissolves into the next file's, also when neither is part of a mix.
+#[test]
+fn the_deck_cover_changes_between_files_with_a_transition() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().settings.visualizer = "off".into();
+    play_file(&mut h, fixtures().join("tone.flac"));
+    let first = h.state().deck_art().and_then(|a| a.art).map(|t| t.id());
+    assert!(first.is_some() && h.state().now.art_transition.is_none(), "the first file shows its placeholder");
+
+    let app = h.state_mut();
+    let id = app.player.lists[0].playlist.add_paths([fixtures().join("tagged_v24.mp3")])[0];
+    app.player.play_entry(0, id, 0.0);
+    let mut started = false;
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_millis(50));
+        h.step();
+        started |= h.state().now.art_transition.is_some();
+    }
+    assert!(started, "the next file's cover is changed to with a transition");
+    assert_ne!(h.state().deck_art().and_then(|a| a.art).map(|t| t.id()), first);
+    h.state_mut().player.stop();
+}
+
 /// The deck's cover turning from the mix's to a track's, frame by frame, side by side in one strip.
 #[test]
 #[ignore]

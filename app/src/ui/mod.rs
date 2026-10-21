@@ -92,19 +92,19 @@ pub struct NowState {
 }
 
 impl NowState {
-    /// Put `next` on the deck. A change between a mix's cover (or the placeholder) and a
-    /// track's cover, or from one track's to another's, is animated; flipping between the
-    /// retro and the original picture of the same cover is not.
+    /// Put `next` on the deck. Any change to another cover (a file's, a mix track's, the
+    /// placeholder) is animated; flipping between the retro and the original picture of the
+    /// same cover is not.
     fn show_art(&mut self, next: ShownArt, time: f64) {
         let Some(prev) = self.art_shown.take() else {
             self.art_shown = Some(next);
             return;
         };
-        let animate = prev.source != next.source && (prev.source.is_entry() || next.source.is_entry()) && next.art.is_some();
-        if animate {
+        let changed = prev.source != next.source || prev.art.as_ref().map(|t| t.id()) != next.art.as_ref().map(|t| t.id());
+        if changed && next.art.is_some() {
             self.art_transition = Some(ArtTransition { from: prev, started: time });
             self.art_shown = Some(next);
-        } else if prev.source != next.source || prev.art.as_ref().map(|t| t.id()) != next.art.as_ref().map(|t| t.id()) {
+        } else if changed {
             self.art_shown = Some(next);
         } else {
             self.art_shown = Some(prev);
@@ -139,12 +139,6 @@ pub enum ArtSource {
     File,
     /// A track of the mix, by `entry_art::key`.
     Entry(String),
-}
-
-impl ArtSource {
-    fn is_entry(&self) -> bool {
-        matches!(self, ArtSource::Entry(_))
-    }
 }
 
 pub struct ShownArt {
@@ -799,7 +793,9 @@ impl App {
     fn on_track_changed(&mut self) {
         let Some(c) = self.player.current.clone() else { return };
         self.mark_settings_dirty();
-        self.now = NowState::default();
+        // The deck keeps its picture until the new file's cover arrives, to change from it.
+        let (art_shown, art_transition) = (self.now.art_shown.take(), self.now.art_transition.take());
+        self.now = NowState { art_shown, art_transition, ..NowState::default() };
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
         self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform);
@@ -918,8 +914,8 @@ impl App {
     }
 
     /// The deck's cover: the active track's while a mix plays and its cover has arrived, else the
-    /// file's. `None` for a moment while the active track's cover is being looked up: the deck
-    /// keeps what it shows.
+    /// file's. `None` for a moment while the active track's cover is being looked up or the new
+    /// file's is being read: the deck keeps what it shows.
     pub fn deck_art(&self) -> Option<ShownArt> {
         match self.active_entry_cover() {
             Some((key, EntryCover::Found(found))) => {
@@ -927,6 +923,9 @@ impl App {
             }
             Some((_, EntryCover::Looking(since))) if since.elapsed() < COVER_HOLD && self.now.art_shown.is_some() => return None,
             _ => {}
+        }
+        if self.now.art.is_none() && self.now.art_shown.is_some() {
+            return None;
         }
         Some(ShownArt { source: ArtSource::File, art: self.now.art.clone(), retro_art: self.now.retro_art.clone() })
     }
