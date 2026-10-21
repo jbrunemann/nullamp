@@ -74,6 +74,8 @@ pub struct NowState {
     pub waveform: Option<nullamp_audio::Waveform>,
     /// rekordbox's colour for each bucket of `waveform`, when the waveform came from there.
     pub wave_colors: Option<Vec<[u8; 3]>>,
+    /// When `waveform` arrived, while it is still being revealed from left to right.
+    pub wave_arrived: Option<Instant>,
     /// Tempo found by analysing the audio; arrives after the track starts, and not at all
     /// for files whose tags state a BPM.
     pub tempo: Option<nullamp_audio::Tempo>,
@@ -704,6 +706,7 @@ impl App {
                         Ok(wave) => {
                             self.now.waveform = Some(wave);
                             self.now.wave_colors = colors;
+                            self.now.wave_arrived = Some(Instant::now());
                         }
                         Err(e) => log::debug!("waveform: {e}"),
                     }
@@ -815,7 +818,7 @@ impl App {
             }
         } else if self.player.status == Status::Stopped {
             let n = &mut self.now;
-            (n.waveform, n.wave_colors, n.art, n.retro_art, n.art_file, n.art_shown, n.art_transition) = Default::default();
+            (n.waveform, n.wave_colors, n.wave_arrived, n.art, n.retro_art, n.art_file, n.art_shown, n.art_transition) = Default::default();
         }
     }
 

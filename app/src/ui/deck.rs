@@ -628,7 +628,18 @@ fn timeline(app: &mut App, ui: &mut Ui) {
         p.rect_filled(*r, 0.0, fill);
     }
     if let Some(wave) = &app.now.waveform {
-        draw_waveform(&p, bar, wave, app.now.wave_colors.as_deref(), ui.ctx().pixels_per_point());
+        let revealed = match app.now.wave_arrived.map(|at| at.elapsed().as_secs_f32() / WAVE_REVEAL_SECS) {
+            Some(t) if t < 1.0 => {
+                ui.ctx().request_repaint();
+                // Ease out: the sweep starts quickly and settles on the right end.
+                1.0 - (1.0 - t).powi(2)
+            }
+            _ => {
+                app.now.wave_arrived = None;
+                1.0
+            }
+        };
+        draw_waveform(&p, bar, wave, app.now.wave_colors.as_deref(), ui.ctx().pixels_per_point(), revealed);
     }
     for (r, active, timing) in &spans {
         let edge = if *timing == Timing::Exact { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.45) };
@@ -705,11 +716,18 @@ fn timeline(app: &mut App, ui: &mut Ui) {
 /// How far in from each end of the timeline rekordbox's colours fade in, in points: past the time labels.
 const WAVE_FADE: f32 = 90.0;
 
+/// How long the waveform takes to appear from left to right once it has been loaded.
+const WAVE_REVEAL_SECS: f32 = 0.4;
+
+/// Width of the soft leading edge of the reveal, in points.
+const WAVE_REVEAL_EDGE: f32 = 40.0;
+
 /// The file's loudness envelope inside `bar`, mirrored around the middle: peaks dim, RMS brighter.
 /// One column per point; each takes the loudest of the buckets it covers, so a long mix stays
 /// readable and a short track does not turn into a staircase. With rekordbox's `colors` (one per bucket) each column
 /// takes the colour of its loudest bucket and is drawn much brighter than the faint LCD tint of a decoded waveform.
-fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, colors: Option<&[[u8; 3]]>, pixels_per_point: f32) {
+/// Only the left `revealed` (0 to 1) of the bar is drawn, with a soft edge.
+fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, colors: Option<&[[u8; 3]]>, pixels_per_point: f32, revealed: f32) {
     let inner = bar.shrink(1.0);
     let columns = inner.width().floor() as usize;
     let n = wave.peak.len().min(wave.rms.len());
@@ -727,6 +745,8 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
     let (peak_color, rms_color) = (theme::LCD_FG.gamma_multiply(0.05), theme::LCD_FG.gamma_multiply(0.10));
     let colors = colors.filter(|c| c.len() >= n);
     let mut mesh = egui::Mesh::default();
+    // The edge starts off the left end and finishes off the right end, so the first and last columns fade in and out too.
+    let edge_x = inner.left() - WAVE_REVEAL_EDGE + revealed * (inner.width() + WAVE_REVEAL_EDGE);
     for c in 0..columns {
         let lo = (c * n / columns).min(n - 1);
         let hi = ((c + 1) * n / columns).clamp(lo + 1, n);
@@ -746,7 +766,11 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
             }
             None => (peak_color, rms_color),
         };
-        for (values, color) in [(&wave.peak, peak_color), (&wave.rms, rms_color)] {
+        let shown = ((edge_x - x0) / WAVE_REVEAL_EDGE).clamp(0.0, 1.0);
+        if shown <= 0.0 {
+            break;
+        }
+        for (values, color) in [(&wave.peak, peak_color.gamma_multiply(shown)), (&wave.rms, rms_color.gamma_multiply(shown))] {
             let h = height(loudest(values, lo, hi)).max(0.5);
             mesh.add_colored_rect(Rect::from_min_max(pos2(x0, mid - h), pos2(x1, mid + h)), color);
         }
