@@ -675,6 +675,79 @@ fn render_updates() {
     save(&mut h, "06e-updates.png");
 }
 
+/// A library with a folder holding a folder, and loose playlists.
+fn rekordbox_overview() -> crate::rekordbox::Overview {
+    let item = |id: &str, name: &str, depth, is_folder, tracks| crate::rekordbox::Item { id: id.into(), name: name.into(), depth, is_folder, tracks };
+    crate::rekordbox::Overview {
+        tracks: 4210,
+        items: vec![
+            item("c", "Clubs", 0, true, 0),
+            item("c1", "Peak time", 1, false, 112),
+            item("c2", "Warm up", 1, false, 64),
+            item("s", "Summer", 1, true, 0),
+            item("s1", "Beach", 2, false, 38),
+            item("f", "Favourites", 0, false, 240),
+            item("e", "Empty", 0, false, 0),
+        ],
+    }
+}
+
+/// The rekordbox page with and without a Python 3 on the machine.
+#[test]
+#[ignore]
+fn render_rekordbox_tab() {
+    use crate::ui::dialogs::PythonState;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Rekordbox);
+    h.state_mut().dialogs.python = PythonState::Found("3.12.4".into());
+    settle(&mut h, 500);
+    save(&mut h, "06f-rekordbox-python.png");
+    h.state_mut().dialogs.python = PythonState::Missing;
+    settle(&mut h, 500);
+    save(&mut h, "06g-rekordbox-no-python.png");
+}
+
+/// The chooser for the desktop library.
+#[test]
+#[ignore]
+fn render_rekordbox_chooser() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    crate::ui::dialogs::open_rekordbox_import(h.state_mut(), rekordbox_overview());
+    h.state_mut().dialogs.rekordbox_import.as_mut().unwrap().selected.extend(["c1".to_owned(), "f".to_owned()]);
+    settle(&mut h, 500);
+    save(&mut h, "06h-rekordbox-chooser.png");
+}
+
+/// Ticking a folder ticks what is inside it; "Add" with nothing ticked is not possible and the
+/// dialog closes on Cancel.
+#[test]
+fn rekordbox_chooser_ticks_folders_and_closes() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(800.0, 620.0)).build_eframe(|cc| App::new(cc, store));
+    crate::ui::dialogs::open_rekordbox_import(h.state_mut(), rekordbox_overview());
+    settle(&mut h, 200);
+    h.get_by_label("Clubs").click();
+    settle(&mut h, 200);
+    let ticked = |h: &Harness<App>| {
+        let mut ids: Vec<String> = h.state().dialogs.rekordbox_import.as_ref().unwrap().selected.iter().cloned().collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ticked(&h), ["c1", "c2", "s1"]);
+    h.get_by_label("Beach").click();
+    settle(&mut h, 200);
+    assert_eq!(ticked(&h), ["c1", "c2"]);
+    h.get_by_label("Cancel").click();
+    settle(&mut h, 200);
+    assert!(h.state().dialogs.rekordbox_import.is_none());
+}
+
 /// The Cache page counts what the cache folder holds, and "Clear all" empties it.
 #[test]
 fn cache_tab_counts_and_clears() {

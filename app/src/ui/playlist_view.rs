@@ -368,9 +368,14 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 app.workers.submit(Job::OpenSticks);
                 ui.close();
             }
-            let collection = ui.add_enabled(!app.settings.rekordbox_key.is_empty(), egui::Button::new("Open rekordbox collection"));
-            if collection.on_hover_text("Add the desktop rekordbox library and its playlists. Needs the key set on the Settings General tab").clicked() {
-                app.workers.submit(Job::OpenCollection);
+            let collection = ui.add_enabled(!app.settings.rekordbox_key.is_empty(), egui::Button::new("Open rekordbox collection…"));
+            if collection.on_hover_text("Choose which playlists of the desktop rekordbox library to add. Needs the key set on the Settings rekordbox tab").clicked() {
+                app.workers.submit(Job::ListCollection);
+                ui.close();
+            }
+            if ui.button("Read rekordbox data").on_hover_text("Store the waveform, key, BPM and rating that rekordbox has for the tracks of this list, so they are known before playing").clicked() {
+                let paths = app.player.viewed().entries().iter().map(|e| e.path.clone()).collect();
+                app.read_rekordbox(paths);
                 ui.close();
             }
             if ui.button("Import M3U / M3U8…").clicked() {

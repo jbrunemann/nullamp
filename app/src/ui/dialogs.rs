@@ -1,5 +1,6 @@
 //! Native file dialogs (run off the UI thread) and in-app modal dialogs.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -7,6 +8,7 @@ use egui::{Key, RichText};
 
 use super::{App, list_index, playlist_view, setlist_view, theme, widgets};
 use crate::cache::{self, Kind, Usage};
+use crate::rekordbox::Overview;
 use crate::workers::{AUDIO_EXTENSIONS, Job};
 
 pub enum DialogResult {
@@ -19,6 +21,8 @@ pub enum DialogResult {
     UpdateChecked(Result<nullamp_update::Status, nullamp_update::Error>),
     /// What the cache folder holds, after a scan or a clear.
     CacheUsage(Vec<(Kind, Usage)>),
+    /// The version of the Python 3 found on this machine, `None` when there is none.
+    Python(Option<String>),
 }
 
 /// The pages of the settings screen.
@@ -59,6 +63,26 @@ pub enum UpdateState {
     Done(Result<nullamp_update::Status, nullamp_update::Error>),
 }
 
+/// Whether a Python 3 is installed, for the rekordbox key recipe. Looked for once when the rekordbox
+/// tab is first shown (it starts a process), again on request.
+#[derive(Debug, Default, PartialEq)]
+pub enum PythonState {
+    #[default]
+    Unknown,
+    Checking,
+    Found(String),
+    Missing,
+}
+
+/// The choice of what to add from the rekordbox desktop library, while its dialog is open.
+pub struct RekordboxImport {
+    pub overview: Overview,
+    /// The whole collection as one list.
+    pub all: bool,
+    /// Ids of the playlists ticked.
+    pub selected: HashSet<String>,
+}
+
 /// What the Cache tab shows. The folder changes while tracks play, so it is read again on each visit.
 #[derive(Default)]
 pub struct CacheState {
@@ -81,12 +105,14 @@ pub struct Dialogs {
     about_icon: Option<egui::TextureHandle>,
     pub update: UpdateState,
     pub cache: CacheState,
+    pub python: PythonState,
+    pub rekordbox_import: Option<RekordboxImport>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default() }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, rekordbox_import: None }
     }
 }
 
@@ -120,6 +146,22 @@ pub fn check_for_updates(app: &mut App) {
         let _ = tx.send(DialogResult::UpdateChecked(nullamp_update::check(&source, version, &format!("nullamp/{version}"))));
         ctx.request_repaint();
     });
+}
+
+/// Look for a Python 3 on a helper thread (it starts a process). The answer is `DialogResult::Python`.
+fn check_python(app: &mut App) {
+    app.dialogs.python = PythonState::Checking;
+    let (tx, ctx) = (app.dialogs.tx.clone(), app.ctx.clone());
+    std::thread::spawn(move || {
+        let _ = tx.send(DialogResult::Python(crate::python::detect()));
+        ctx.request_repaint();
+    });
+}
+
+/// Shows the playlists of the desktop library for the user to choose from.
+pub fn open_rekordbox_import(app: &mut App, overview: Overview) {
+    app.playlist_open = true;
+    app.dialogs.rekordbox_import = Some(RekordboxImport { overview, all: false, selected: HashSet::new() });
 }
 
 /// Read the cache folder, after removing the files of `clear`, on a helper thread (it walks the
@@ -280,6 +322,7 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
             app.dialogs.cache.usage = Some(usage);
             app.dialogs.cache.busy = false;
         }
+        DialogResult::Python(found) => app.dialogs.python = found.map_or(PythonState::Missing, PythonState::Found),
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
@@ -349,6 +392,8 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         }
     }
 
+    rekordbox_import_modal(app, ctx, escape);
+
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
         egui::Modal::new(egui::Id::unique("confirm-clear")).show(ctx, |ui| {
@@ -400,6 +445,87 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         if keep {
             app.dialogs.confirm_delete = Some(index);
         }
+    }
+}
+
+/// The list of rekordbox playlists to tick before anything is added, so a big library is not
+/// copied whole when only a few playlists are wanted.
+fn rekordbox_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
+    let Some(mut choice) = app.dialogs.rekordbox_import.take() else { return };
+    let (mut keep, mut import) = (true, false);
+    let mut read_data = app.settings.rekordbox_read_data;
+    let height = (ctx.content_rect().height() - 230.0).clamp(80.0, 380.0);
+    egui::Modal::new(egui::Id::unique("rekordbox-import")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        ui.heading("Add from rekordbox");
+        ui.checkbox(&mut choice.all, format!("Entire collection ({} tracks)", choice.overview.tracks)).on_hover_text("One list with every track of the library");
+        ui.separator();
+        if choice.overview.items.is_empty() {
+            ui.label(RichText::new("The library has no playlists.").weak());
+        }
+        let all_ids: Vec<String> = choice.overview.items.iter().filter(|i| !i.is_folder).map(|i| i.id.clone()).collect();
+        ui.horizontal(|ui| {
+            if ui.small_button("Select all playlists").clicked() {
+                choice.selected.extend(all_ids.iter().cloned());
+            }
+            if ui.small_button("None").clicked() {
+                choice.selected.clear();
+                choice.all = false;
+            }
+            ui.label(RichText::new(format!("{} of {} playlists", choice.selected.len(), all_ids.len())).small().weak());
+        });
+        egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
+            for index in 0..choice.overview.items.len() {
+                let item = choice.overview.items[index].clone();
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0 * item.depth as f32);
+                    if item.is_folder {
+                        let below: Vec<String> = choice.overview.below(index).filter(|&i| !choice.overview.items[i].is_folder).map(|i| choice.overview.items[i].id.clone()).collect();
+                        let mut ticked = !below.is_empty() && below.iter().all(|id| choice.selected.contains(id));
+                        if ui.add_enabled(!below.is_empty(), egui::Checkbox::new(&mut ticked, RichText::new(&item.name).strong())).clicked() {
+                            if ticked {
+                                choice.selected.extend(below);
+                            } else {
+                                for id in &below {
+                                    choice.selected.remove(id);
+                                }
+                            }
+                        }
+                    } else {
+                        let mut ticked = choice.selected.contains(&item.id);
+                        if ui.checkbox(&mut ticked, &item.name).clicked() {
+                            if ticked {
+                                choice.selected.insert(item.id.clone());
+                            } else {
+                                choice.selected.remove(&item.id);
+                            }
+                        }
+                        ui.label(RichText::new(item.tracks.to_string()).small().weak());
+                    }
+                });
+            }
+        });
+        ui.separator();
+        ui.checkbox(&mut read_data, "Also read waveforms, keys and ratings").on_hover_text("Stores what rekordbox knows about each track in the cache in the background, so it does not have to be looked up while playing");
+        ui.horizontal(|ui| {
+            let nothing = !choice.all && choice.selected.is_empty();
+            if ui.add_enabled(!nothing, egui::Button::new("Add")).clicked() {
+                import = true;
+                keep = false;
+            }
+            if ui.button("Cancel").clicked() || escape {
+                keep = false;
+            }
+        });
+    });
+    if read_data != app.settings.rekordbox_read_data {
+        app.settings.rekordbox_read_data = read_data;
+        app.mark_settings_dirty();
+    }
+    if import {
+        app.workers.submit(Job::OpenCollection { all: choice.all, ids: choice.selected, read_data });
+    } else if keep {
+        app.dialogs.rekordbox_import = Some(choice);
     }
 }
 
@@ -488,17 +614,39 @@ fn rekordbox_body(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.hyperlink_to(RichText::new("pyrekordbox docs").small(), "https://pyrekordbox.readthedocs.io");
     });
+    if app.dialogs.python == PythonState::Unknown {
+        check_python(app);
+    }
+    ui.horizontal(|ui| {
+        match &app.dialogs.python {
+            PythonState::Unknown | PythonState::Checking => ui.label(RichText::new("Looking for Python 3…").small().weak()),
+            PythonState::Found(version) => ui.label(RichText::new(format!("Python {version} found, the key command can run")).small().color(theme::ok())),
+            PythonState::Missing => ui.label(RichText::new(format!("No Python 3 found, the key command needs one ({})", INSTALL_PYTHON)).small().color(theme::warn())),
+        };
+        if !matches!(app.dialogs.python, PythonState::Unknown | PythonState::Checking) && ui.small_button("Check again").clicked() {
+            app.dialogs.python = PythonState::Unknown;
+        }
+    });
     ui.label(RichText::new(format!("The key opens your rekordbox collection from the List menu and fills in key and BPM for your files. rekordbox 7 uses the same key on every computer: with rekordbox closed, copy the command, run it in {SHELL} and paste the 64-character result here.")).small().weak());
 }
 
 /// A one-time, copy-paste recipe that installs pyrekordbox into a private virtualenv and prints the
-/// rekordbox desktop key. Kept out of the UI code so it stays easy to update.
+/// rekordbox desktop key. Kept out of the UI code so it stays easy to update. The database class is
+/// looked up on the package itself because its module and name differ between pyrekordbox releases
+/// (older ones, which an old system Python gets, only have `Rekordbox6Database`).
 #[cfg(not(windows))]
-const REKORDBOX_KEY_COMMAND: &str = "python3 -m venv ~/.rekordbox-key && ~/.rekordbox-key/bin/pip install -q pyrekordbox && ~/.rekordbox-key/bin/python -c \"import warnings;warnings.filterwarnings('ignore');from pyrekordbox.masterdb import MasterDatabase;print(MasterDatabase().engine.url.password)\"";
+const REKORDBOX_KEY_COMMAND: &str = "python3 -m venv ~/.rekordbox-key && ~/.rekordbox-key/bin/pip install -q pyrekordbox && ~/.rekordbox-key/bin/python -c \"import warnings;warnings.filterwarnings('ignore');import pyrekordbox as p;print((getattr(p,'MasterDatabase',None) or p.Rekordbox6Database)().engine.url.password)\"";
 
 /// The same recipe for PowerShell, where the virtualenv's tools live in `Scripts`.
 #[cfg(windows)]
-const REKORDBOX_KEY_COMMAND: &str = "python -m venv $HOME\\.rekordbox-key; & $HOME\\.rekordbox-key\\Scripts\\pip install -q pyrekordbox; & $HOME\\.rekordbox-key\\Scripts\\python -c \"import warnings;warnings.filterwarnings('ignore');from pyrekordbox.masterdb import MasterDatabase;print(MasterDatabase().engine.url.password)\"";
+const REKORDBOX_KEY_COMMAND: &str = "python -m venv $HOME\\.rekordbox-key; & $HOME\\.rekordbox-key\\Scripts\\pip install -q pyrekordbox; & $HOME\\.rekordbox-key\\Scripts\\python -c \"import warnings;warnings.filterwarnings('ignore');import pyrekordbox as p;print((getattr(p,'MasterDatabase',None) or p.Rekordbox6Database)().engine.url.password)\"";
+
+#[cfg(target_os = "macos")]
+const INSTALL_PYTHON: &str = "run xcode-select --install in Terminal or install it from python.org";
+#[cfg(windows)]
+const INSTALL_PYTHON: &str = "install it from python.org";
+#[cfg(not(any(target_os = "macos", windows)))]
+const INSTALL_PYTHON: &str = "install python3 with your package manager";
 
 #[cfg(windows)]
 const SHELL: &str = "PowerShell";

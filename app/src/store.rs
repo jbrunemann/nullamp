@@ -73,6 +73,9 @@ pub struct Settings {
     /// or the field on the Settings General tab.
     #[serde(default)]
     pub rekordbox_key: String,
+    /// Read what rekordbox knows about the tracks (waveform, key, BPM, rating, colour) into the cache
+    /// right after the chosen part of the desktop library is added.
+    pub rekordbox_read_data: bool,
 }
 
 impl Default for Settings {
@@ -106,6 +109,7 @@ impl Default for Settings {
             online_artwork: true,
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
+            rekordbox_read_data: true,
         }
     }
 }

@@ -9,6 +9,7 @@ mod logbuf;
 mod paths;
 mod placeholder_art;
 mod player;
+mod python;
 mod rekordbox;
 mod retro_art;
 mod store;

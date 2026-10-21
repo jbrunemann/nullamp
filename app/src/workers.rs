@@ -16,6 +16,7 @@
 //! ignores results for anything it has moved on from. Bulk scans also check a
 //! generation counter so they stop early once superseded.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,8 +87,14 @@ pub enum Job {
     ImportPlaylist { request: u64, path: PathBuf },
     /// Read the library of every rekordbox USB stick that is mounted.
     OpenSticks,
-    /// Read the rekordbox desktop library (`master.db`) with the configured key.
-    OpenCollection,
+    /// Read the playlist tree of the rekordbox desktop library (`master.db`) with the configured key,
+    /// for the user to choose from.
+    ListCollection,
+    /// Make lists of the chosen part of the desktop library: all of it, and the playlists with these ids.
+    OpenCollection { all: bool, ids: HashSet<String>, read_data: bool },
+    /// Store what rekordbox knows about these files in the cache, ahead of their being played.
+    /// Dropped when a newer request has replaced `generation`.
+    ReadRekordbox { generation: u64, request: u64, paths: Vec<PathBuf> },
     ExportPlaylist { path: PathBuf, items: Vec<(PathBuf, TrackInfo)> },
     NowPlaying { token: u64, path: PathBuf },
     Inspect { request: u64, path: PathBuf },
@@ -160,8 +167,13 @@ pub enum JobResult {
     Expanded { request: u64, paths: Vec<PathBuf>, skipped: usize },
     /// The answer to [`Job::OpenSticks`], one entry per stick found.
     Sticks(Vec<crate::rekordbox::Loaded>),
-    /// The answer to [`Job::OpenCollection`]: the desktop library's playlists, or why it could not be read.
-    Collection(Result<Vec<crate::rekordbox::Loaded>, String>),
+    /// The answer to [`Job::ListCollection`]: the desktop library's playlist tree, or why it could not be read.
+    CollectionList(Result<crate::rekordbox::Overview, String>),
+    /// The answer to [`Job::OpenCollection`]: the chosen lists, or why the library could not be read.
+    Collection { read_data: bool, result: Result<Vec<crate::rekordbox::Loaded>, String> },
+    /// One chunk of a [`Job::ReadRekordbox`] request is done: `done` files looked at, `stored` of them
+    /// known to rekordbox and cached, `waveforms` of those with an analysed waveform.
+    RekordboxRead { request: u64, done: usize, stored: usize, waveforms: usize },
     Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
     Exported { path: PathBuf, result: Result<(), String> },
     NowPlaying(Box<NowPlayingInfo>),
@@ -195,6 +207,7 @@ pub struct Workers {
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
+    read_generation: Arc<AtomicU64>,
     desktop: Arc<crate::rekordbox::Desktop>,
     next_request: AtomicU64,
 }
@@ -206,18 +219,20 @@ impl Workers {
         let (results_tx, results) = crossbeam_channel::unbounded();
         let scan_generation = Arc::new(AtomicU64::new(1));
         let cover_generation = Arc::new(AtomicU64::new(1));
+        let read_generation = Arc::new(AtomicU64::new(0));
         let sticks = Arc::new(crate::rekordbox::Sticks::default());
         let desktop = Arc::new(crate::rekordbox::Desktop::default());
 
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 4);
         for i in 0..threads {
-            let (irx, brx, tx, w, gen_, cover_gen, p, sticks, desktop) = (
+            let (irx, brx, tx, w, gen_, cover_gen, read_gen, p, sticks, desktop) = (
                 interactive_rx.clone(),
                 bulk_rx.clone(),
                 results_tx.clone(),
                 Arc::clone(&waker),
                 Arc::clone(&scan_generation),
                 Arc::clone(&cover_generation),
+                Arc::clone(&read_generation),
                 paths.clone(),
                 Arc::clone(&sticks),
                 Arc::clone(&desktop),
@@ -225,7 +240,7 @@ impl Workers {
             std::thread::Builder::new()
                 .name(format!("nullamp-worker-{i}"))
                 .spawn(move || {
-                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen, sticks, desktop };
+                    let ctx = Ctx { paths: p, scan_generation: gen_, cover_generation: cover_gen, read_generation: read_gen, sticks, desktop };
                     loop {
                         let job = select_biased! {
                             recv(irx) -> j => j,
@@ -348,6 +363,7 @@ impl Workers {
             results,
             scan_generation,
             cover_generation,
+            read_generation,
             desktop,
             next_request: AtomicU64::new(1),
         }
@@ -373,13 +389,25 @@ impl Workers {
         let _ = self.online.send(OnlineRequest::TrackCover { request, artist, title });
     }
 
+    /// Store what rekordbox knows about these files in the cache, a chunk at a time so the progress
+    /// shows and a newer request can take over. Answered with [`JobResult::RekordboxRead`] under the
+    /// returned request id.
+    pub fn read_rekordbox(&self, paths: Vec<PathBuf>) -> u64 {
+        let request = self.request_id();
+        let generation = self.read_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        for chunk in paths.chunks(32) {
+            self.submit(Job::ReadRekordbox { generation, request, paths: chunk.to_vec() });
+        }
+        request
+    }
+
     pub fn request_id(&self) -> u64 {
         self.next_request.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn submit(&self, job: Job) {
         let lane = match job {
-            Job::ScanInfo { .. } | Job::CheckExists { .. } | Job::ExpandPaths { .. } => &self.bulk,
+            Job::ScanInfo { .. } | Job::CheckExists { .. } | Job::ExpandPaths { .. } | Job::ReadRekordbox { .. } => &self.bulk,
             _ => &self.interactive,
         };
         let _ = lane.send(job);
@@ -541,8 +569,28 @@ struct Ctx {
     paths: AppPaths,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
+    read_generation: Arc<AtomicU64>,
     sticks: Arc<crate::rekordbox::Sticks>,
     desktop: Arc<crate::rekordbox::Desktop>,
+}
+
+/// Stores rekordbox's record and waveform of each of `paths` that is on a stick or in the desktop
+/// library in the cache, by the file's fingerprint (what playing it would store). Returns how many
+/// files that was and how many of them had an analysed waveform. A file that cannot be read is skipped.
+fn read_rekordbox(ctx: &Ctx, paths: Vec<PathBuf>) -> (usize, usize) {
+    let dir = ctx.paths.waveform_cache();
+    let (mut stored, mut waveforms) = (0, 0);
+    for path in paths {
+        let Some(track) = ctx.sticks.track(&path).or_else(|| ctx.desktop.track(&path)) else { continue };
+        let Ok(fingerprint) = store::fingerprint(&path) else { continue };
+        waveform_cache::store_rekordbox_data(&dir, &fingerprint, &crate::rekordbox::Data::of(&track));
+        stored += 1;
+        if let Some(found) = crate::rekordbox::analysed(&path, &track) {
+            waveform_cache::store_rekordbox(&dir, &fingerprint, &found);
+            waveforms += 1;
+        }
+    }
+    (stored, waveforms)
 }
 
 /// Longest side of playlist cover thumbnails: the hover preview at full size, the row thumbnail mipmapped down.
@@ -602,7 +650,16 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
             vec![JobResult::Imported { request, result }]
         }
         Job::OpenSticks => vec![JobResult::Sticks(crate::rekordbox::load_mounted_sticks())],
-        Job::OpenCollection => vec![JobResult::Collection(ctx.desktop.open_playlists())],
+        Job::ListCollection => vec![JobResult::CollectionList(ctx.desktop.overview())],
+        Job::OpenCollection { all, ids, read_data } => vec![JobResult::Collection { read_data, result: ctx.desktop.open_playlists(all, &ids) }],
+        Job::ReadRekordbox { generation, request, paths } => {
+            if ctx.read_generation.load(Ordering::Relaxed) != generation {
+                return Vec::new();
+            }
+            let done = paths.len();
+            let (stored, waveforms) = read_rekordbox(ctx, paths);
+            vec![JobResult::RekordboxRead { request, done, stored, waveforms }]
+        }
         Job::ExportPlaylist { path, items } => {
             let base = path.parent().map(Path::to_path_buf);
             let text = m3u::write(items.iter().map(|(p, i)| (p.as_path(), i)), &m3u::WriteOptions { relative_to: base });
@@ -935,6 +992,51 @@ mod tests {
 
         assert_eq!(choose_setlist(None, Some(&found)).unwrap().1, SetlistOrigin::Discovered);
         assert!(choose_setlist(None, None).is_none());
+    }
+
+    #[test]
+    fn reading_rekordbox_ahead_caches_the_record_and_waveform_of_stick_files_only() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            paths: AppPaths { config: home.path().join("config"), data: home.path().join("data"), cache: home.path().join("cache") },
+            scan_generation: Arc::new(AtomicU64::new(1)),
+            cover_generation: Arc::new(AtomicU64::new(1)),
+            read_generation: Arc::new(AtomicU64::new(1)),
+            sticks: Arc::new(crate::rekordbox::Sticks::default()),
+            desktop: Arc::new(crate::rekordbox::Desktop::default()),
+        };
+        // The fixture stick has no audio files, so copy its library and add one.
+        let stick = home.path().join("STICK");
+        for file in ["PIONEER/rekordbox/export.pdb", "PIONEER/USBANLZ/P011/00020633/ANLZ0000.DAT", "PIONEER/USBANLZ/P011/00020633/ANLZ0000.EXT"] {
+            std::fs::create_dir_all(stick.join(file).parent().unwrap()).unwrap();
+            std::fs::copy(fixture("rekordbox").join(file), stick.join(file)).unwrap();
+        }
+        let on_stick = stick.join("Contents/Veracocha/Carte Blanche/Veracocha - Carte Blanche (Original Mix).mp3");
+        std::fs::create_dir_all(on_stick.parent().unwrap()).unwrap();
+        std::fs::write(&on_stick, vec![7u8; 4096]).unwrap();
+        let elsewhere = fixture("beat_120.mp3");
+        let (stored, waveforms) = read_rekordbox(&ctx, vec![on_stick.clone(), elsewhere.clone(), home.path().join("gone.mp3")]);
+        assert_eq!((stored, waveforms), (1, 1));
+        let (dir, fingerprint) = (ctx.paths.waveform_cache(), store::fingerprint(&on_stick).unwrap());
+        let data = waveform_cache::load_rekordbox_data(&dir, &fingerprint).expect("record cached");
+        assert_eq!((data.key.as_deref(), data.bpm), (Some("Bbm"), Some(140.02)));
+        assert!(waveform_cache::load_rekordbox(&dir, &fingerprint).is_some(), "waveform cached");
+        assert!(waveform_cache::load_rekordbox_data(&dir, &store::fingerprint(&elsewhere).unwrap()).is_none());
+    }
+
+    #[test]
+    fn a_superseded_read_does_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            paths: AppPaths { config: home.path().into(), data: home.path().into(), cache: home.path().into() },
+            scan_generation: Arc::new(AtomicU64::new(1)),
+            cover_generation: Arc::new(AtomicU64::new(1)),
+            read_generation: Arc::new(AtomicU64::new(2)),
+            sticks: Arc::new(crate::rekordbox::Sticks::default()),
+            desktop: Arc::new(crate::rekordbox::Desktop::default()),
+        };
+        let job = Job::ReadRekordbox { generation: 1, request: 7, paths: vec![fixture("beat_120.mp3")] };
+        assert!(run_job(&ctx, job).is_empty());
     }
 
     #[test]

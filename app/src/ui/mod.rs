@@ -184,6 +184,15 @@ pub struct OutputState {
     pub fell_back: bool,
 }
 
+/// How far a bulk read of rekordbox data has come, summed over the answers to its chunks.
+struct ReadProgress {
+    request: u64,
+    total: usize,
+    done: usize,
+    stored: usize,
+    waveforms: usize,
+}
+
 pub struct App {
     pub player: Player<AudioEngine>,
     engine_events: Receiver<EngineEvent>,
@@ -206,6 +215,8 @@ pub struct App {
     compact: Option<bool>,
     full_height: f32,
     pub message: Option<Message>,
+    /// The bulk read of rekordbox data that is running, if any.
+    rekordbox_read: Option<ReadProgress>,
     pub dialogs: dialogs::Dialogs,
     pub show_remaining: bool,
     /// `None` while no output device is open.
@@ -288,6 +299,7 @@ impl App {
             mix: Default::default(),
             inspector: Default::default(),
             message: None,
+            rekordbox_read: None,
             dialogs: dialogs::Dialogs::new(),
             show_remaining: false,
             output: None,
@@ -661,10 +673,22 @@ impl App {
                 }
             }
             JobResult::Sticks(sticks) => self.on_sticks(sticks),
-            JobResult::Collection(result) => match result {
-                Ok(lists) => self.on_sticks(lists),
+            JobResult::CollectionList(result) => match result {
+                Ok(overview) => dialogs::open_rekordbox_import(self, overview),
                 Err(e) => self.error(format!("Cannot read the rekordbox collection: {e}")),
             },
+            JobResult::Collection { read_data, result } => match result {
+                Ok(lists) if lists.is_empty() => self.warn("The chosen rekordbox playlists have no tracks"),
+                Ok(lists) => {
+                    let paths = lists.iter().filter_map(|l| l.tracks.as_ref().ok()).flatten().map(|(p, _)| p.clone()).collect();
+                    self.on_sticks(lists);
+                    if read_data {
+                        self.read_rekordbox(paths);
+                    }
+                }
+                Err(e) => self.error(format!("Cannot read the rekordbox collection: {e}")),
+            },
+            JobResult::RekordboxRead { request, done, stored, waveforms } => self.on_rekordbox_read(request, done, stored, waveforms),
             JobResult::Exported { path, result } => match result {
                 Ok(()) => self.info(format!("Exported {}", path.display())),
                 Err(e) => self.error(format!("Export failed: {e}")),
@@ -713,6 +737,31 @@ impl App {
             | JobResult::Written { .. }
             | JobResult::TrackCover { .. }
             | JobResult::Restored { .. } => inspector::on_result(self, r),
+        }
+    }
+
+    /// Reads what rekordbox knows about `paths` (waveform, key, BPM, rating, colour) into the cache,
+    /// so it is there however those files are played later. Files that are not in rekordbox are skipped.
+    pub fn read_rekordbox(&mut self, paths: Vec<PathBuf>) {
+        let mut seen = HashSet::new();
+        let paths: Vec<PathBuf> = paths.into_iter().filter(|p| seen.insert(p.clone())).collect();
+        if paths.is_empty() {
+            return;
+        }
+        let total = paths.len();
+        let request = self.workers.read_rekordbox(paths);
+        self.rekordbox_read = Some(ReadProgress { request, total, done: 0, stored: 0, waveforms: 0 });
+    }
+
+    fn on_rekordbox_read(&mut self, request: u64, done: usize, stored: usize, waveforms: usize) {
+        let Some(progress) = self.rekordbox_read.as_mut().filter(|p| p.request == request) else { return };
+        progress.done += done;
+        progress.stored += stored;
+        progress.waveforms += waveforms;
+        if progress.done >= progress.total {
+            let (total, stored, waveforms) = (progress.total, progress.stored, progress.waveforms);
+            self.rekordbox_read = None;
+            self.info(format!("Read rekordbox data for {stored} of {total} tracks ({waveforms} with a waveform)"));
         }
     }
 
@@ -1199,6 +1248,9 @@ impl App {
             }
             if missing > 0 {
                 ui.label(egui::RichText::new(format!("· {missing} unavailable")).color(theme::warn()).size(11.5));
+            }
+            if let Some(r) = &self.rekordbox_read {
+                ui.label(egui::RichText::new(format!("· reading rekordbox {}/{}", r.done, r.total)).color(theme::text_dim()).size(11.5));
             }
             if let Some(m) = &self.message {
                 let ttl = if m.kind == MessageKind::Error { 12.0 } else { 6.0 };
