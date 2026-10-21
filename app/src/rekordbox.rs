@@ -23,6 +23,7 @@ fn info(t: &Track) -> TrackInfo {
         title: text(&t.title),
         artist: text(&t.artist),
         album: text(&t.album),
+        year: t.year,
         duration: (t.duration_secs > 0).then_some(f64::from(t.duration_secs)),
         bitrate: (t.bitrate > 0).then_some(t.bitrate),
         bpm: t.bpm,
@@ -395,6 +396,7 @@ fn fill_gaps(info: &mut TrackInfo, stick: &TrackInfo) {
     info.title = info.title.take().or_else(|| stick.title.clone());
     info.artist = info.artist.take().or_else(|| stick.artist.clone());
     info.album = info.album.take().or_else(|| stick.album.clone());
+    info.year = info.year.or(stick.year);
     info.duration = info.duration.or(stick.duration);
     info.bitrate = info.bitrate.or(stick.bitrate);
     info.key = info.key.or(stick.key);

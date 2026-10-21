@@ -125,7 +125,7 @@ impl Field {
             Field::Title => &[ItemKey::TrackTitle],
             Field::Artist => &[ItemKey::TrackArtist],
             Field::Album => &[ItemKey::AlbumTitle],
-            Field::Date => &[ItemKey::RecordingDate],
+            Field::Date => &[ItemKey::RecordingDate, ItemKey::Year],
             Field::Genre => &[ItemKey::Genre],
             Field::Key => &[ItemKey::InitialKey],
             Field::TrackNumber => &[ItemKey::TrackNumber],
@@ -315,6 +315,7 @@ impl FileMetadata {
             title: self.fields.get(&Field::Title).cloned(),
             artist: self.fields.get(&Field::Artist).cloned(),
             album: self.fields.get(&Field::Album).cloned(),
+            year: self.fields.get(&Field::Date).and_then(|v| parse_year(v)),
             duration: self.technical.duration,
             bitrate: self.technical.audio_bitrate_kbps.or(self.technical.bitrate_kbps),
             bpm: self.fields.get(&Field::Bpm).and_then(|v| parse_bpm(v)),
@@ -455,6 +456,7 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         title: get(ItemKey::TrackTitle),
         artist: get(ItemKey::TrackArtist),
         album: get(ItemKey::AlbumTitle),
+        year: tag.and_then(|t| Field::Date.get(t)).and_then(parse_year),
         duration: (duration > 0.0).then_some(duration),
         bitrate: tagged.properties().audio_bitrate().or(tagged.properties().overall_bitrate()),
         bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
@@ -462,6 +464,12 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         bpm_off: tag.and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off),
         key: tag.and_then(|t| Field::Key.get(t)).and_then(Key::parse),
     })
+}
+
+/// The year at the start of a date tag value (`2021`, `2021-05`, `2021-05-14T12:00`).
+fn parse_year(text: &str) -> Option<u16> {
+    let year = text.trim().get(..4)?;
+    year.bytes().all(|b| b.is_ascii_digit()).then(|| year.parse().ok()).flatten().filter(|&y| y > 0)
 }
 
 /// A BPM tag value, if it is a sensible number.
@@ -646,6 +654,19 @@ mod tests {
         let wav = read(&fixture("tone_mono_22k.wav")).unwrap();
         assert_eq!(wav.technical.channels, Some(1));
         assert_eq!(wav.technical.sample_rate, Some(22050));
+    }
+
+    #[test]
+    fn year_comes_from_the_date_tag() {
+        for (text, year) in [("2021", Some(2021)), ("2021-05", Some(2021)), ("2021-05-14T12:00", Some(2021)), (" 1999 ", Some(1999)), ("0000", None), ("20", None), ("abcd", None), ("", None)] {
+            assert_eq!(parse_year(text), year, "{text:?}");
+        }
+        for name in ["tagged_v23.mp3", "tagged_v24.mp3", "tone.flac", "tone.ogg", "tone.m4a"] {
+            let path = fixture(name);
+            let (quick, full) = (read_track_info(&path).unwrap().year, read(&path).unwrap().track_info().year);
+            assert_eq!(quick, full, "{name}");
+        }
+        assert_eq!(read_track_info(&fixture("tagged_v23.mp3")).unwrap().year, Some(2024));
     }
 
     #[test]

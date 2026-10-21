@@ -16,6 +16,9 @@ pub struct TrackInfo {
     pub artist: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub album: Option<String>,
+    /// The year of the date tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u16>,
     /// Duration in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,

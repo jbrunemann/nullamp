@@ -9,7 +9,7 @@ use std::time::Duration;
 use egui_kittest::Harness;
 
 use crate::paths::AppPaths;
-use crate::store::{PlaylistDoc, Store};
+use crate::store::{ArtworkMode, PlaylistDoc, Store};
 use crate::ui::App;
 
 fn fixtures() -> PathBuf {
@@ -144,7 +144,7 @@ fn render_playlist_columns() {
     h.state_mut().settings.playlist_columns = ["num", "art", "artist", "title", "time"].map(String::from).to_vec();
     settle(&mut h, 200);
     save(&mut h, "04b-columns-reordered.png");
-    h.state_mut().settings.playlist_columns = ["title", "artist", "album", "time"].map(String::from).to_vec();
+    h.state_mut().settings.playlist_columns = ["title", "artist", "album", "year", "time"].map(String::from).to_vec();
     settle(&mut h, 200);
     save(&mut h, "04c-columns-no-art.png");
 }
@@ -892,7 +892,7 @@ fn render_tempo() {
     h.state_mut().player.stop();
 }
 
-/// The deck artwork: retro by default, the original after a click, and the setting turns it off.
+/// The deck artwork: dithered by default, then the original, then off, as a click cycles them.
 #[test]
 #[ignore]
 fn render_deck_retro_artwork() {
@@ -908,13 +908,12 @@ fn render_deck_retro_artwork() {
     settle(&mut h, 1500);
     assert!(h.state().now.art.is_some() && h.state().now.retro_art.is_some(), "the fixture has a cover");
     save(&mut h, "05-deck-art-retro.png");
-    h.state_mut().settings.original_artwork = true;
+    h.state_mut().settings.artwork = ArtworkMode::Original;
     settle(&mut h, 200);
     save(&mut h, "05b-deck-art-original.png");
-    h.state_mut().settings.retro_artwork = false;
-    h.state_mut().settings.original_artwork = false;
+    h.state_mut().settings.artwork = ArtworkMode::Off;
     settle(&mut h, 200);
-    save(&mut h, "05c-deck-art-setting-off.png");
+    save(&mut h, "05c-deck-art-off.png");
     h.state_mut().player.stop();
 }
 

@@ -52,11 +52,9 @@ pub struct Settings {
     pub playlist_columns: Vec<String>,
     /// Audio output chosen by the user (an engine device id). `None` follows the system default.
     pub output_device: Option<String>,
-    /// Show covers as green dithered pixel art.
-    pub retro_artwork: bool,
-    /// A click on the deck artwork flips to the original covers and back; the choice is kept
-    /// across tracks and restarts.
-    pub original_artwork: bool,
+    /// How the deck shows covers. A click on the deck artwork cycles through the modes; the
+    /// choice is kept across tracks and restarts.
+    pub artwork: ArtworkMode,
     /// The inspector shows the playing track instead of the playlist selection.
     pub inspector_follows_playing: bool,
     /// Keys shown as Camelot codes (8A) rather than musical names (Am). Only set in settings.json.
@@ -104,8 +102,7 @@ impl Default for Settings {
             dim: 0,
             playlist_columns: Vec::new(),
             output_device: None,
-            retro_artwork: true,
-            original_artwork: false,
+            artwork: ArtworkMode::Dithered,
             inspector_follows_playing: false,
             camelot: true,
             update_url: DEFAULT_UPDATE_URL.into(),
@@ -113,6 +110,28 @@ impl Default for Settings {
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
             rekordbox_read_data: true,
+        }
+    }
+}
+
+/// How the deck draws a cover.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtworkMode {
+    /// Green dithered pixel art.
+    #[default]
+    Dithered,
+    Original,
+    /// The placeholder, as for a file without a cover.
+    Off,
+}
+
+impl ArtworkMode {
+    pub fn next(self) -> Self {
+        match self {
+            ArtworkMode::Dithered => ArtworkMode::Original,
+            ArtworkMode::Original => ArtworkMode::Off,
+            ArtworkMode::Off => ArtworkMode::Dithered,
         }
     }
 }

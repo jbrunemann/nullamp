@@ -10,6 +10,7 @@ use nullamp_core::RepeatMode;
 
 use super::widgets::{self, Icon};
 use super::{App, SideTab, theme};
+use crate::store::ArtworkMode;
 use crate::player::Status;
 
 const LCD_HEIGHT: f32 = 106.0;
@@ -25,15 +26,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
         app.deck_bright = [lcd, art_rect];
-        let retro = app.settings.retro_artwork && app.now.art_shown.as_ref().is_some_and(|a| a.retro_art.is_some());
-        let hint = match (retro, app.settings.original_artwork) {
-            (true, false) => "Retro artwork · click to see the original",
-            (true, true) => "Original artwork · click to go back to retro",
+        let has_art = app.now.art_shown.as_ref().is_some_and(|a| a.art.is_some());
+        let hint = match (has_art, app.settings.artwork) {
             (false, _) => "Artwork · click to open the inspector",
+            (true, ArtworkMode::Dithered) => "Dithered artwork · click to see the original",
+            (true, ArtworkMode::Original) => "Original artwork · click to turn the artwork off",
+            (true, ArtworkMode::Off) => "Artwork off · click to show it dithered",
         };
         if art_resp.on_hover_text(hint).clicked() {
-            if retro {
-                app.settings.original_artwork = !app.settings.original_artwork;
+            if has_art {
+                app.settings.artwork = app.settings.artwork.next();
                 app.mark_settings_dirty();
             } else {
                 app.toggle_side(SideTab::Inspector);
@@ -497,11 +499,13 @@ fn artwork(app: &mut App, ui: &Ui, rect: Rect) {
     app.refresh_deck_art(time);
     let p = ui.painter_at(rect);
     p.rect_filled(rect, ART_RADIUS, theme::LCD_BG);
-    let retro = app.settings.retro_artwork && !app.settings.original_artwork;
-    let shown = app.now.art_shown.as_ref().and_then(|a| a.pick(retro));
+    let mode = app.settings.artwork;
+    let shown = app.now.art_shown.as_ref().and_then(|a| a.pick(mode));
     match &app.now.art_transition {
+        // Nothing to turn over between two placeholders.
+        Some(_) if mode == ArtworkMode::Off => picture(ui, &p, rect, None),
         Some(t) => {
-            picture(ui, &p, rect, t.from.pick(retro));
+            picture(ui, &p, rect, t.from.pick(mode));
             if let Some(tex) = shown {
                 dissolve(&p, rect, tex, time - t.started);
             }

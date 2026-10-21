@@ -24,7 +24,7 @@ use nullamp_meta::FileMetadata;
 use nullamp_sysmedia::{NowPlaying, PlaybackState, SystemEvent, SystemMedia};
 
 use crate::player::{Note, Player, Status};
-use crate::store::{PlaylistDoc, Settings, Store};
+use crate::store::{ArtworkMode, PlaylistDoc, Settings, Store};
 use crate::workers::{Job, JobResult, Workers};
 
 /// How often the resume position is written while a track plays.
@@ -150,9 +150,14 @@ pub struct ShownArt {
 }
 
 impl ShownArt {
-    /// The picture to draw: the retro one when `retro` is wanted and there is one.
-    pub fn pick(&self, retro: bool) -> Option<&TextureHandle> {
-        retro.then_some(self.retro_art.as_ref()).flatten().or(self.art.as_ref())
+    /// The picture to draw in `mode`: the dithered one when wanted and there is one, and none
+    /// at all when the artwork is off.
+    pub fn pick(&self, mode: ArtworkMode) -> Option<&TextureHandle> {
+        match mode {
+            ArtworkMode::Dithered => self.retro_art.as_ref().or(self.art.as_ref()),
+            ArtworkMode::Original => self.art.as_ref(),
+            ArtworkMode::Off => None,
+        }
     }
 }
 
@@ -600,12 +605,12 @@ impl App {
                 Note::Info(i) => self.info(i),
             }
         }
+        self.clear_now_if_unloaded();
         setlist_view::update_active(self);
         self.update_segment_tempo();
         self.update_entry_art();
         self.publish_now_playing();
         self.flush_saves(false);
-        self.clear_now_if_unloaded();
     }
 
     fn on_output_event(&mut self, ev: &EngineEvent) {
@@ -803,11 +808,6 @@ impl App {
         }
     }
 
-    fn on_track_changed(&mut self) {
-        let Some(c) = self.player.current.clone() else { return };
-        self.mark_settings_dirty();
-        // The deck keeps its picture until the new file's cover arrives, to change from it.
-        let (art_shown, art_transition) = (self.now.art_shown.take(), self.now.art_transition.take());
     /// With no file loaded (its list was cleared or removed) the deck falls back to the empty
     /// state, and once playback is stopped it drops the waveform and cover of the file, which
     /// load again when it plays. Either way the last file's picture does not linger.
@@ -822,6 +822,11 @@ impl App {
         }
     }
 
+    fn on_track_changed(&mut self) {
+        let Some(c) = self.player.current.clone() else { return };
+        self.mark_settings_dirty();
+        // The deck keeps its picture until the new file's cover arrives, to change from it.
+        let (art_shown, art_transition) = (self.now.art_shown.take(), self.now.art_transition.take());
         self.now = NowState { art_shown, art_transition, ..NowState::default() };
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });

@@ -42,6 +42,7 @@ pub enum Col {
     Title,
     Artist,
     Album,
+    Year,
     Format,
     Bitrate,
     Bpm,
@@ -49,7 +50,7 @@ pub enum Col {
     Time,
 }
 
-const COLUMN_IDS: [&str; 10] = ["num", "art", "title", "artist", "album", "format", "bitrate", "bpm", "key", "time"];
+const COLUMN_IDS: [&str; 11] = ["num", "art", "title", "artist", "album", "year", "format", "bitrate", "bpm", "key", "time"];
 
 /// Space between columns, taken from the right of each one.
 const GAP: f32 = 8.0;
@@ -57,7 +58,7 @@ const GAP: f32 = 8.0;
 const ROW_HEIGHT_ART: f32 = 24.0;
 
 impl Col {
-    const ALL: [Col; 10] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bitrate, Col::Bpm, Col::Key, Col::Time];
+    const ALL: [Col; 11] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Year, Col::Format, Col::Bitrate, Col::Bpm, Col::Key, Col::Time];
     /// What a fresh install shows; the bitrate is there to be switched on.
     const DEFAULT: [Col; 9] = [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Bpm, Col::Key, Col::Time];
 
@@ -76,6 +77,7 @@ impl Col {
             Col::Title => "TITLE",
             Col::Artist => "ARTIST",
             Col::Album => "ALBUM",
+            Col::Year => "YEAR",
             Col::Format => "FORMAT",
             Col::Bitrate => "KBPS",
             Col::Bpm => "BPM",
@@ -91,6 +93,7 @@ impl Col {
             Col::Title => "Title",
             Col::Artist => "Artist",
             Col::Album => "Album",
+            Col::Year => "Year",
             Col::Format => "Format",
             Col::Bitrate => "Bitrate",
             Col::Bpm => "BPM",
@@ -119,12 +122,13 @@ fn row_height(order: &[Col]) -> f32 {
     if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
 }
 
-/// Cell rects for the visible columns, left to right. Number, artwork, format, bitrate, BPM, key and time are
+/// Cell rects for the visible columns, left to right. Number, artwork, year, format, bitrate, BPM, key and time are
 /// fixed; title, artist and album share the rest by weight.
 fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
     let fixed = |c: Col| match c {
         Col::Num => Some(46.0 + GAP),
         Col::Art => Some(ROW_HEIGHT_ART + GAP),
+        Col::Year => Some(40.0 + GAP),
         Col::Format => Some(44.0 + GAP),
         Col::Bitrate => Some(40.0 + GAP),
         Col::Bpm => Some(46.0 + GAP),
@@ -709,6 +713,7 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
             Col::Title => cell(ui, r, &e.info.display_title(&e.path), font.clone(), fg, col.align()),
             Col::Artist => cell(ui, r, e.info.artist.as_deref().unwrap_or(""), font.clone(), fg, col.align()),
             Col::Album => cell(ui, r, e.info.album.as_deref().unwrap_or(""), font.clone(), dim, col.align()),
+            Col::Year => cell(ui, r, &e.info.year.map(|y| y.to_string()).unwrap_or_default(), theme::mono(11.5), dim, col.align()),
             Col::Format => cell(ui, r, &format_label(&e.path), theme::mono(10.5), if current { dim } else { theme::text_faint() }, col.align()),
             Col::Bitrate => {
                 let text = e.info.bitrate.map(|b| b.to_string()).unwrap_or_default();
