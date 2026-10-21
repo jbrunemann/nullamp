@@ -280,6 +280,9 @@ fn list_names(playlists: &[Playlist], picked: &[usize]) -> Vec<String> {
         .collect()
 }
 
+/// A library as read when its file had this modification time, or why it could not be.
+pub type ReadAt<T> = Option<(Option<SystemTime>, Result<Arc<T>, String>)>;
+
 /// The **desktop** library: the tracks of `master.db`, indexed by file path so what rekordbox
 /// knows fills any file the user plays, wherever it came from. Parallels [`Sticks`] but for the
 /// local collection, which needs a key the user supplies once. Empty until a key is set.
@@ -287,7 +290,7 @@ fn list_names(playlists: &[Playlist], picked: &[usize]) -> Vec<String> {
 pub struct Desktop {
     config: Mutex<Option<DesktopConfig>>,
     /// The library as read when `master.db` had this modification time, or why it could not be.
-    loaded: Mutex<Option<(Option<SystemTime>, Result<Arc<Library>, String>)>>,
+    loaded: Mutex<ReadAt<Library>>,
 }
 
 impl Desktop {

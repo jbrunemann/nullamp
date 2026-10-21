@@ -1438,6 +1438,16 @@ pub fn inspect_selection(app: &mut App) {
     inspector::load_from_selection(app);
 }
 
+/// Shared by views: playlist doc lookup by key.
+pub fn list_index(app: &App, key: &str) -> Option<usize> {
+    app.player.lists.iter().position(|d: &PlaylistDoc| d.key == key)
+}
+
+/// "128", or "127.5" for a fractional tempo.
+pub fn format_bpm(bpm: f32) -> String {
+    if (bpm - bpm.round()).abs() < 0.05 { format!("{}", bpm.round()) } else { format!("{bpm:.1}") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1449,14 +1459,4 @@ mod tests {
         assert!(retry_due(ENTRY_ART_RETRY, false));
         assert!(retry_due(Duration::ZERO, true));
     }
-}
-
-/// Shared by views: playlist doc lookup by key.
-pub fn list_index(app: &App, key: &str) -> Option<usize> {
-    app.player.lists.iter().position(|d: &PlaylistDoc| d.key == key)
-}
-
-/// "128", or "127.5" for a fractional tempo.
-pub fn format_bpm(bpm: f32) -> String {
-    if (bpm - bpm.round()).abs() < 0.05 { format!("{}", bpm.round()) } else { format!("{bpm:.1}") }
 }

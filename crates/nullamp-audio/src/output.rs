@@ -240,12 +240,12 @@ impl Output {
             primed: false,
         }));
 
-        let stream = match build_any(format, &device, config.clone(), &playhead, &shared, &events) {
+        let stream = match build_any(format, &device, config, &playhead, &shared, &events) {
             // A device that rejects the requested period still plays with its own default.
             Err(e) if config.buffer_size != cpal::BufferSize::Default => {
                 log::warn!("audio output: {:?} frame periods rejected ({e}); using the device default", config.buffer_size);
                 config.buffer_size = cpal::BufferSize::Default;
-                build_any(format, &device, config.clone(), &playhead, &shared, &events)
+                build_any(format, &device, config, &playhead, &shared, &events)
             }
             r => r,
         }?;

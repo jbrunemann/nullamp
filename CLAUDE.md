@@ -49,4 +49,4 @@ Screen capture of the live window is not permitted on this machine, so use the `
 - Every engine load carries a token; the controller ignores events and positions for other tokens. Keep that invariant.
 - Tag writes go through `nullamp_meta::write` only (temp copy, verify, atomic rename, optional backup).
 - Every non-ASCII character used in UI text must exist in the bundled fonts; the `ui_glyphs_exist_in_bundled_fonts` test enforces it. To add a symbol, regenerate `app/assets/fonts/NullampSymbols.ttf` (see `docs/HANDOFF.md`).
-- Nothing has been committed to git yet. Ask before committing.
+- Ask before committing.

@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(loaded.iter().map(|d| d.key.as_str()).collect::<Vec<_>>(), [ka.as_str(), kb.as_str()]);
         let names: Vec<_> = loaded[0].playlist.entries().iter().map(|e| e.path.clone()).collect();
         assert_eq!(names, [PathBuf::from("/m/1.mp3"), PathBuf::from("/m/2.mp3")]);
-        let reordered = s.load_playlists(&[kb.clone()]);
+        let reordered = s.load_playlists(std::slice::from_ref(&kb));
         assert_eq!(reordered[0].key, kb);
         s.delete_playlist(&ka).unwrap();
         assert_eq!(s.load_playlists(&[]).len(), 1);

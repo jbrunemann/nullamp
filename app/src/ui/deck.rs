@@ -709,11 +709,11 @@ fn timeline(app: &mut App, ui: &mut Ui) {
                 });
             });
     }
-    if resp.drag_stopped() || resp.clicked() {
-        if let (Some(d), Some(p)) = (dur, resp.interact_pointer_pos().or(resp.hover_pos())) {
-            // Land on the tenth of a second the tooltip shows.
-            app.player.command(Command::SeekTo((t_of(p.x, d) * 10.0).round() / 10.0), CommandSource::Ui);
-        }
+    if (resp.drag_stopped() || resp.clicked())
+        && let (Some(d), Some(p)) = (dur, resp.interact_pointer_pos().or(resp.hover_pos()))
+    {
+        // Land on the tenth of a second the tooltip shows.
+        app.player.command(Command::SeekTo((t_of(p.x, d) * 10.0).round() / 10.0), CommandSource::Ui);
     }
 }
 

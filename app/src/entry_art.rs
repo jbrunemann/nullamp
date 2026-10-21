@@ -117,7 +117,7 @@ mod tests {
         let path = store_image(dir.path(), "a", b"\x89PNG....").unwrap();
         assert_eq!(path.extension().unwrap(), "png");
         assert!(matches!(load(dir.path(), "a"), Some(Cached::Image(p)) if p == path), "a cover replaces the miss");
-        assert!(matches!(load(dir.path(), "b"), None));
+        assert!(load(dir.path(), "b").is_none());
     }
 
     #[test]

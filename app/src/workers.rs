@@ -158,6 +158,10 @@ pub struct EntryArt {
     pub file: Option<PathBuf>,
 }
 
+/// A playlist file read for import: its title, each entry's path and what the file says about it,
+/// and how many lines were skipped.
+pub type ImportedList = (Option<String>, Vec<(PathBuf, TrackInfo)>, usize);
+
 pub enum JobResult {
     /// The answer to [`Workers::request_track_cover`]: `Ok(None)` when the services had nothing close enough.
     TrackCover { request: u64, result: Result<Option<OnlineCover>, String> },
@@ -182,7 +186,7 @@ pub enum JobResult {
     /// One chunk of a [`Job::ReadDjData`] request is done: `done` files looked at, `stored` of them
     /// known to rekordbox or Mixxx and cached, `waveforms` of those with an analysed waveform.
     DjDataRead { request: u64, done: usize, stored: usize, waveforms: usize },
-    Imported { request: u64, result: Result<(Option<String>, Vec<(PathBuf, TrackInfo)>, usize), String> },
+    Imported { request: u64, result: Result<ImportedList, String> },
     Exported { path: PathBuf, result: Result<(), String> },
     NowPlaying(Box<NowPlayingInfo>),
     Inspected { request: u64, path: PathBuf, meta: Result<FileMetadata, String>, rekordbox: Vec<(String, String)> },
@@ -638,10 +642,11 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
                     break;
                 }
                 let mut info = nullamp_meta::read_track_info(&path).map_err(|e| e.to_string());
-                if let Ok(info) = &mut info {
-                    if !ctx.sticks.fill(&path, info) && !ctx.desktop.fill(&path, info) {
-                        ctx.mixxx.fill(&path, info);
-                    }
+                if let Ok(info) = &mut info
+                    && !ctx.sticks.fill(&path, info)
+                    && !ctx.desktop.fill(&path, info)
+                {
+                    ctx.mixxx.fill(&path, info);
                 }
                 out.push(JobResult::Info { path, info });
             }

@@ -28,5 +28,9 @@ tempfile = "3"
 lto = "thin"
 codegen-units = 4
 
+[profile.dev]
+# Full debug info made target/debug tens of gigabytes; line tables still give backtraces.
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2

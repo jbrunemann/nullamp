@@ -153,10 +153,9 @@ Online tracklist search was removed from the app at the user's request because i
 
 1. **Hands-on macOS review with the user**: visualiser (does it feel in sync with real music, does the spectrum look lively, CPU use at full refresh; cap repaints at 60 Hz if needed), media keys in the background, file dialogs, drag-and-drop from Finder, window resizing, a large playlist (thousands of entries), switching audio devices (headphones, Bluetooth), sleep and wake. Collect UI feedback.
 2. Paste import against real pages the user copies (mixid.fm, YouTube descriptions, 1001Tracklists) and adjust `tracklist_text` to their formats.
-3. README with build instructions and limitations; clippy pass; commit to git (ask first).
-4. Polish ideas not yet built: column sorting by clicking headers, playlist search/filter, a settings dialog (backups, resume-on-start; these exist in `settings.json` but have no UI), opening files from Finder ("Open with" is declared in Info.plist but file-open events are not handled yet).
-5. Release work on macOS: universal binary (`bundle.sh --universal`), Developer ID signing and notarisation.
-6. Later, when the user says so: Linux (Dockerfile and .desktop are in `packaging/linux`; AppImage not written), Windows (done as a build: `packaging/windows/package.sh` cross-builds with `cargo xwin` and zips; `app/build.rs` embeds the icon through a hand-written .res from `mkres.py`; release builds use the GUI subsystem; CI has a native `windows-x86_64` job; still to do on a real PC: run it, check audio devices, SMTC media keys, file dialogs and the tag-write-while-playing error; no code signing), the YouTube provider, audio recognition.
+3. Polish ideas not yet built: column sorting by clicking headers, playlist search/filter, controls on the Settings screen for tag-write backups and resume-on-start (both exist in `settings.json` but have no UI), opening files from Finder ("Open with" is declared in Info.plist but file-open events are not handled yet).
+4. Release work on macOS: universal binary (`bundle.sh --universal`), Developer ID signing and notarisation.
+5. Later, when the user says so: Linux (Dockerfile and .desktop are in `packaging/linux`; AppImage not written), Windows (done as a build: `packaging/windows/package.sh` cross-builds with `cargo xwin` and zips; `app/build.rs` embeds the icon through a hand-written .res from `mkres.py`; release builds use the GUI subsystem; CI has a native `windows-x86_64` job; still to do on a real PC: run it, check audio devices, SMTC media keys, file dialogs and the tag-write-while-playing error; no code signing), the YouTube provider, audio recognition.
 
 ## 9. Known limitations
 

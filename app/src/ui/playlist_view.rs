@@ -178,7 +178,7 @@ impl ArtCache {
     }
 
     /// The wanted paths to request now, when any of them is neither known nor on its way.
-    fn to_request<'a>(&mut self, wanted: impl Iterator<Item = &'a Path>) -> Option<Vec<PathBuf>> {
+    fn next_request<'a>(&mut self, wanted: impl Iterator<Item = &'a Path>) -> Option<Vec<PathBuf>> {
         let missing: Vec<PathBuf> = wanted.filter(|p| !self.by_path.contains_key(*p)).map(Path::to_path_buf).collect();
         if missing.iter().all(|p| self.inflight.contains(p)) {
             return None;
@@ -553,7 +553,7 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
             let ahead = range.start..(range.end + 12).min(n);
             let list = app.player.viewed().entries();
             let wanted = list[ahead].iter().filter(|e| e.status.is_playable()).map(|e| e.path.as_path());
-            if let Some(paths) = app.pl_view.art.to_request(wanted) {
+            if let Some(paths) = app.pl_view.art.next_request(wanted) {
                 app.workers.request_covers(paths);
             }
         }

@@ -556,8 +556,7 @@ mod tests {
 
     #[test]
     fn sort_keeps_untimed_entries_near_predecessor() {
-        let mut s = Setlist::default();
-        s.entries = vec![entry("B", "b", Some(100.0)), entry("X", "x", None), entry("A", "a", Some(0.0))];
+        let mut s = Setlist { entries: vec![entry("B", "b", Some(100.0)), entry("X", "x", None), entry("A", "a", Some(0.0))], ..Setlist::default() };
         s.sort_by_start();
         let names: Vec<_> = s.entries.iter().map(|e| e.artist.as_str()).collect();
         assert_eq!(names, ["A", "B", "X"]);

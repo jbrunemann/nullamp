@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use nullamp_core::{Key, TrackInfo};
 use nullamp_mixxx::{Kind, Library, Track};
 
-use crate::rekordbox::{Analysed, Data, Item, Loaded, Overview, fill_gaps};
+use crate::rekordbox::{Analysed, Data, Item, Loaded, Overview, ReadAt, fill_gaps};
 
 fn info(t: &Track) -> TrackInfo {
     let text = |s: &str| Some(s.to_owned()).filter(|s| !s.is_empty());
@@ -120,7 +120,7 @@ pub struct Mixxx {
     locations: Vec<PathBuf>,
     enabled: AtomicBool,
     /// The library as read when its file had this modification time, or why it could not be.
-    loaded: Mutex<Option<(Option<SystemTime>, Result<Arc<Index>, String>)>>,
+    loaded: Mutex<ReadAt<Index>>,
     /// The last "cannot find or reach the library" that was logged, so a scan that asks for every
     /// file does not repeat it.
     reported: Mutex<Option<String>>,
