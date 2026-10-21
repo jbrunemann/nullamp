@@ -113,6 +113,27 @@ fn render_main_window_as(appearance: &str, suffix: &str) {
 
 #[test]
 #[ignore]
+fn render_dim_stages() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 800);
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    for level in 0..=crate::ui::theme::DIM_LEVELS {
+        h.state_mut().settings.dim = level;
+        settle(&mut h, 200);
+        save(&mut h, &format!("04-dim-{level}.png"));
+    }
+    h.state_mut().player.stop();
+}
+
+#[test]
+#[ignore]
 fn render_playlist_columns() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");

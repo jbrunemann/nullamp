@@ -665,6 +665,7 @@ fn shortcuts_body(ui: &mut egui::Ui) {
         ("⇧← / ⇧→".into(), "Prev / next setlist entry"),
         ("+ / − / M".into(), "Volume / mute"),
         ("S / R".into(), "Shuffle / repeat"),
+        ("D".into(), "Dim everything but the display and artwork"),
         ("↑ ↓ Home End".into(), "Select (⇧ extends)"),
         ("Enter".into(), "Play selected"),
         ("Del / Backspace".into(), "Remove selected"),

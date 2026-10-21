@@ -204,6 +204,8 @@ pub struct App {
     pub side_open: bool,
     pub side_tab: SideTab,
     pub playlist_open: bool,
+    /// The LCD and the artwork as last drawn: the parts of the window that dimming leaves bright.
+    deck_bright: [egui::Rect; 2],
     /// Whether the window is currently shrunk to just the player (`None` before the
     /// first frame) and the height to return to when it grows back.
     compact: Option<bool>,
@@ -282,6 +284,7 @@ impl App {
             side_open: settings.side_panel_open,
             side_tab,
             playlist_open: settings.playlist_open,
+            deck_bright: [egui::Rect::NOTHING; 2],
             compact: None,
             full_height: DEFAULT_HEIGHT,
             settings,
@@ -379,6 +382,12 @@ impl App {
             self.dirty_lists.insert(doc.key.clone());
         }
         self.playlists_dirty_at.get_or_insert_with(Instant::now);
+    }
+
+    /// Off, then each dim stage in turn.
+    pub fn cycle_dim(&mut self) {
+        self.settings.dim = (self.settings.dim + 1) % (theme::DIM_LEVELS + 1);
+        self.mark_settings_dirty();
     }
 
     pub fn mark_settings_dirty(&mut self) {
@@ -1120,6 +1129,9 @@ impl App {
             self.player.set_shuffle(on);
             self.mark_settings_dirty();
         }
+        if pressed(Key::D) {
+            self.cycle_dim();
+        }
         if pressed(Key::R) {
             let m = self.player.nav.repeat.cycle();
             self.player.set_repeat(m);
@@ -1324,6 +1336,23 @@ impl eframe::App for App {
             central
                 .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(0)))
                 .show(ui, |ui| playlist_view::show(self, ui));
+        }
+
+        // A veil painted last on the root layer, so dialogs and popups (higher layers) stay bright.
+        if let Some(veil) = theme::dim_veil(self.settings.dim) {
+            let [lcd, art] = self.deck_bright;
+            let all = ctx.content_rect();
+            let p = ui.painter();
+            // The LCD and the artwork share a row; the veil is everything around them.
+            for r in [
+                egui::Rect::from_min_max(all.min, egui::pos2(all.right(), lcd.top())),
+                egui::Rect::from_min_max(egui::pos2(all.left(), lcd.bottom()), all.max),
+                egui::Rect::from_min_max(egui::pos2(all.left(), lcd.top()), egui::pos2(lcd.left(), lcd.bottom())),
+                egui::Rect::from_min_max(egui::pos2(lcd.right(), lcd.top()), egui::pos2(art.left(), lcd.bottom())),
+                egui::Rect::from_min_max(egui::pos2(art.right(), lcd.top()), egui::pos2(all.right(), lcd.bottom())),
+            ] {
+                p.rect_filled(r, 0.0, veil);
+            }
         }
 
         dialogs::show_modals(self, &ctx);

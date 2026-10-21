@@ -18,6 +18,17 @@ pub const LCD_TEXT_DIM: Color32 = Color32::from_rgb(0x8C, 0x95, 0xA0);
 pub const LCD_ACCENT: Color32 = Color32::from_rgb(0xFF, 0x8A, 0x2B);
 pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x6B, 0x3C, 0x16);
 
+/// Dim stages besides off. Each is the opacity of a background-colored veil over everything but the LCD and the artwork.
+const DIM_VEIL: [u8; 3] = [95, 155, 210];
+pub const DIM_LEVELS: u8 = DIM_VEIL.len() as u8;
+
+/// The veil that dims the window at `level` (1 to [`DIM_LEVELS`]) into the app background.
+pub fn dim_veil(level: u8) -> Option<Color32> {
+    let a = *DIM_VEIL.get(usize::from(level).checked_sub(1)?)?;
+    let bg = bg();
+    Some(Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), a))
+}
+
 /// The chrome colors that differ between the dark and the light theme.
 pub struct Palette {
     /// The recessed level: deck and status bar, table header, pressed buttons.

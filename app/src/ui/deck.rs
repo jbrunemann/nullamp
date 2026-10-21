@@ -24,6 +24,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         settings_menu(app, ui, &lcd_resp);
         let (art_rect, art_resp) = ui.allocate_exact_size(vec2(art_size, art_size), Sense::click());
         artwork(app, ui, art_rect);
+        app.deck_bright = [lcd, art_rect];
         let retro = app.settings.retro_artwork && app.now.art_shown.as_ref().is_some_and(|a| a.retro_art.is_some());
         let hint = match (retro, app.settings.original_artwork) {
             (true, false) => "Retro artwork · click to see the original",
@@ -816,6 +817,10 @@ fn transport(app: &mut App, ui: &mut Ui) {
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::dim_button(ui, app.settings.dim, "Dim everything but the display and artwork (D)").clicked() {
+                app.cycle_dim();
+            }
+            ui.add_space(6.0);
             let ins = app.side_open && app.shown_tab() == SideTab::Inspector;
             if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
                 app.toggle_side(SideTab::Inspector);

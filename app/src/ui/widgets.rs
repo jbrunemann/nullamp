@@ -253,6 +253,26 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str
     resp.on_hover_text(tooltip)
 }
 
+/// The DIM key: a raised button with one LED per dim stage, lit up to `level`.
+pub fn dim_button(ui: &mut Ui, level: u8, tooltip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(62.0, 22.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let pressed = resp.is_pointer_button_down_on();
+        let fill = if pressed { theme::bg() } else if resp.hovered() { theme::raised_hover() } else { theme::raised() };
+        let p = ui.painter();
+        p.rect_filled(rect, 3.0, fill);
+        p.rect_stroke(rect, 3.0, Stroke::new(1.0, if resp.has_focus() { theme::select_stroke() } else { theme::border() }), StrokeKind::Inside);
+        let nudge = if pressed { vec2(0.0, 1.0) } else { Vec2::ZERO };
+        let color = if level > 0 { theme::text() } else { theme::text_dim() };
+        p.text(pos2(rect.left() + 9.0, rect.center().y) + nudge, egui::Align2::LEFT_CENTER, "DIM", theme::prop(11.0), color);
+        for i in 0..theme::DIM_LEVELS {
+            let led = Rect::from_min_size(pos2(rect.right() - 8.0 - f32::from(theme::DIM_LEVELS - i) * 6.0, rect.center().y - 5.0), vec2(4.0, 10.0)) .translate(nudge);
+            p.rect_filled(led, 1.0, if i < level { theme::accent() } else { theme::border() });
+        }
+    }
+    resp.on_hover_text(tooltip)
+}
+
 /// Text that scrolls horizontally when it does not fit, like a hardware display.
 /// While `paused` it rests at its beginning. Returns true when the user clicked text
 /// that does not fit, which is the request to pause or resume.

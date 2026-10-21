@@ -46,6 +46,8 @@ pub struct Settings {
     pub playlist_open: bool,
     /// "dark", "light" or "system" (follow the OS).
     pub appearance: String,
+    /// How far everything below the deck is dimmed into the background, 0 (off) to `theme::DIM_LEVELS`.
+    pub dim: u8,
     /// Playlist columns shown, left to right (ids from `playlist_view::Col`). Empty means all, in the default order.
     pub playlist_columns: Vec<String>,
     /// Audio output chosen by the user (an engine device id). `None` follows the system default.
@@ -99,6 +101,7 @@ impl Default for Settings {
             marquee_paused: false,
             playlist_open: true,
             appearance: "dark".into(),
+            dim: 0,
             playlist_columns: Vec::new(),
             output_device: None,
             retro_artwork: true,
