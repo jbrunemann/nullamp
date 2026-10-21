@@ -565,6 +565,19 @@ fn placeholder_entry_art(key: &str) -> EntryArt {
     EntryArt { art, retro_art, file: None }
 }
 
+/// The placeholder for a file without a cover, drawn from its artist and title (its file name
+/// when the tags have neither) so the same song always gets the same picture.
+fn placeholder_file_art(path: &Path, meta: Option<&FileMetadata>) -> Thumb {
+    let field = |f| meta.and_then(|m| m.fields.get(&f)).map(|v| v.trim()).unwrap_or_default();
+    let (artist, title) = (field(nullamp_meta::Field::Artist), field(nullamp_meta::Field::Title));
+    let key = if artist.is_empty() && title.is_empty() {
+        crate::entry_art::key("", &path.file_stem().unwrap_or_default().to_string_lossy())
+    } else {
+        crate::entry_art::key(artist, title)
+    };
+    crate::placeholder_art::generate(&key)
+}
+
 struct Ctx {
     paths: AppPaths,
     scan_generation: Arc<AtomicU64>,
@@ -809,7 +822,16 @@ fn now_playing(ctx: &Ctx, token: u64, path: PathBuf) -> NowPlayingInfo {
     let discovered = discover_local_setlist(&path, meta.as_ref().ok());
     let setlist = choose_setlist(saved.map(|s| s.setlist), discovered.as_ref());
     let tracklist_urls = meta.as_ref().map(tracklist_urls).unwrap_or_default();
-    let retro_art = art.as_ref().and_then(crate::retro_art::retro_thumb);
+    let retro_art = match &art {
+        Some(art) => crate::retro_art::retro_thumb(art),
+        None => {
+            // The same generated cover a mix track gets, so a file without one is not a bare record.
+            let placeholder = placeholder_file_art(&path, meta.as_ref().ok());
+            let retro = crate::retro_art::retro_thumb(&placeholder);
+            art = Some(placeholder);
+            retro
+        }
+    };
     let track_info = meta.as_ref().ok().map(|m| {
         let mut info = m.track_info();
         // A file in rekordbox (a stick, or the desktop library) takes its key and BPM from there; the
@@ -1122,6 +1144,19 @@ mod tests {
         meta.other_items.push(("WXXX:".into(), "https://www.mixcloud.com/u/m/".into()));
         let urls = tracklist_urls(&meta);
         assert_eq!(urls, ["https://www.1001tracklists.com/tracklist/abc/x.html", "https://www.mixcloud.com/u/m/"]);
+    }
+
+    #[test]
+    fn a_file_without_a_cover_gets_the_placeholder_of_its_artist_and_title() {
+        let path = fixture("tagged_v24.mp3");
+        let mut meta = nullamp_meta::read(&path).unwrap();
+        meta.fields.insert(nullamp_meta::Field::Artist, "Some Artist".into());
+        meta.fields.insert(nullamp_meta::Field::Title, "Some Title".into());
+        let art = placeholder_file_art(&path, Some(&meta));
+        assert_eq!(art.rgba, crate::placeholder_art::generate(&crate::entry_art::key("Some Artist", "Some Title")).rgba);
+        // Without tags the file name stands in, and differs from another file's.
+        let other = placeholder_file_art(&fixture("tone.flac"), None);
+        assert_ne!(placeholder_file_art(&path, None).rgba, other.rgba);
     }
 
     /// Needs the network.
