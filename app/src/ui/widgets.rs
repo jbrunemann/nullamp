@@ -265,9 +265,11 @@ pub fn dim_button(ui: &mut Ui, level: u8, tooltip: &str) -> Response {
         let nudge = if pressed { vec2(0.0, 1.0) } else { Vec2::ZERO };
         let color = if level > 0 { theme::text() } else { theme::text_dim() };
         p.text(pos2(rect.left() + 9.0, rect.center().y) + nudge, egui::Align2::LEFT_CENTER, "DIM", theme::prop(11.0), color);
+        // Unlit LEDs are derived from the button fill: the border color is nearly the hover fill and made them vanish.
+        let unlit = fill.lerp_to_gamma(theme::text_faint(), 0.5);
         for i in 0..theme::DIM_LEVELS {
             let led = Rect::from_min_size(pos2(rect.right() - 8.0 - f32::from(theme::DIM_LEVELS - i) * 6.0, rect.center().y - 5.0), vec2(4.0, 10.0)) .translate(nudge);
-            p.rect_filled(led, 1.0, if i < level { theme::accent() } else { theme::border() });
+            p.rect_filled(led, 1.0, if i < level { theme::accent() } else { unlit });
         }
     }
     resp.on_hover_text(tooltip)

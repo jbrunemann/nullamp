@@ -152,9 +152,15 @@ fn render_playlist_columns() {
 #[test]
 #[ignore]
 fn render_player_only() {
+    for (width, name) in [(1100.0, "04-player-only.png"), (640.0, "04-player-narrow.png")] {
+        render_player_only_at(width, name);
+    }
+}
+
+fn render_player_only_at(width: f32, name: &str) {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
-    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 260.0)).with_pixels_per_point(2.0).wgpu().build_eframe(|cc| App::new(cc, store));
+    let mut h = Harness::builder().with_size(egui::vec2(width, 260.0)).with_pixels_per_point(2.0).wgpu().build_eframe(|cc| App::new(cc, store));
     {
         let app = h.state_mut();
         app.playlist_open = false;
@@ -166,7 +172,7 @@ fn render_player_only() {
     settle(&mut h, 1500);
     h.state_mut().player.seek_to(2.6);
     settle(&mut h, 400);
-    save(&mut h, "04-player-only.png");
+    save(&mut h, name);
     h.state_mut().player.stop();
 }
 

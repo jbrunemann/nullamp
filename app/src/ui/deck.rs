@@ -811,16 +811,14 @@ fn transport(app: &mut App, ui: &mut Ui) {
             app.mark_settings_dirty();
         }
         let mut v = app.player.volume;
-        if widgets::level_slider(ui, &mut v, 120.0, muted).changed() {
+        let volume = widgets::level_slider(ui, &mut v, 120.0, muted);
+        if volume.changed() {
             app.player.command(Command::SetVolume(v), CommandSource::Ui);
             app.mark_settings_dirty();
         }
 
+        let mut tabs_left = f32::INFINITY;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::dim_button(ui, app.settings.dim, "Dim everything but the display and artwork (D)").clicked() {
-                app.cycle_dim();
-            }
-            ui.add_space(6.0);
             let ins = app.side_open && app.shown_tab() == SideTab::Inspector;
             if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
                 app.toggle_side(SideTab::Inspector);
@@ -836,10 +834,23 @@ fn transport(app: &mut App, ui: &mut Ui) {
                     app.toggle_side(SideTab::Setlist);
                 }
             }
-            if widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false))).clicked() {
+            let playlist = widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false)));
+            tabs_left = playlist.rect.left();
+            if playlist.clicked() {
                 app.toggle_playlist();
             }
         });
+
+        // Right of the volume meter, but only while it clears the tabs; the D key still works when the window is too narrow.
+        let dim = Rect::from_min_size(pos2(volume.rect.right() + 10.0, volume.rect.center().y - 11.0), vec2(62.0, 22.0));
+        if dim.right() + 10.0 <= tabs_left {
+            let clicked = ui.scope_builder(egui::UiBuilder::new().max_rect(dim), |ui| {
+                widgets::dim_button(ui, app.settings.dim, "Dim everything but the display and artwork (D)").clicked()
+            });
+            if clicked.inner {
+                app.cycle_dim();
+            }
+        }
     });
 }
 
