@@ -45,6 +45,15 @@ fn under_share(share: &Path, path: &str) -> Option<PathBuf> {
     crate::under(share, path)
 }
 
+/// rekordbox keeps its bundled samples and effect sounds (MERGE FX, GROOVE CIRCUIT, OSC_SAMPLER) in a
+/// `Sampler` folder, either in its own music folder or under `PioneerDJ`, and lists them in the
+/// collection beside the tracks. They are not music, so the library leaves them out.
+pub(crate) fn is_sampler_file(path: &str) -> bool {
+    let mut parts: Vec<&str> = path.split(['/', '\\']).collect();
+    parts.pop();
+    parts.iter().any(|p| p.eq_ignore_ascii_case("Sampler"))
+}
+
 impl Collection {
     /// Reads the library in `master_db`, decrypting with `key` (64 hex characters). `share` is the
     /// folder that holds the analysis files, normally the `share` directory beside the database.
@@ -81,6 +90,9 @@ impl Collection {
             let mut rows = stmt.query([])?;
             while let Some(r) = rows.next()? {
                 let raw_id: String = r.get(0)?;
+                if r.get::<_, Option<String>>(1)?.is_some_and(|f| is_sampler_file(&f)) {
+                    continue;
+                }
                 // BPM and ColorID are hundredths of a BPM and a 1-8 colour id, both 0 when unset.
                 let tempo: i64 = r.get(3).unwrap_or(0);
                 let color_id: i64 = r.get::<_, Option<String>>(16)?.and_then(|s| s.parse().ok()).unwrap_or(0);

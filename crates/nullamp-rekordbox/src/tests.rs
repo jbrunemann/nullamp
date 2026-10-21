@@ -1,4 +1,5 @@
 use super::*;
+use crate::masterdb::is_sampler_file;
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rekordbox")
@@ -194,10 +195,13 @@ fn synthetic_collection() -> (tempfile::TempDir, PathBuf, PathBuf) {
          INSERT INTO djmdContent VALUES('100','/Users/x/Music/a.mp3','Alpha',12800,425,3,1,320,44100,6899624,5,7,1999,'hi','2025-08-07','/PIONEER/USBANLZ/TEST/ANLZ0000.DAT','6','A1','AL1','G1','L1','K1',0);
          INSERT INTO djmdContent VALUES('200','/Users/x/Music/b.mp3','Beta',0,100,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
          INSERT INTO djmdContent VALUES('300','/Users/x/Music/gone.mp3','Gone',0,0,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',1);
+         INSERT INTO djmdContent VALUES('400','/Users/x/Music/rekordbox/Sampler/MERGE FX/MergeFX Sample Sound 104.wav','MergeFX',0,3,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
+         INSERT INTO djmdContent VALUES('500','C:\\Users\\x\\Music\\PioneerDJ\\Sampler\\OSC_SAMPLER\\kick.wav','Kick',0,1,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
          INSERT INTO djmdPlaylist VALUES('P1','My List','root',0,1,0);
          INSERT INTO djmdPlaylist VALUES('F1','Folder','root',1,2,0);
          INSERT INTO djmdSongPlaylist VALUES('P1','100',0,0);
-         INSERT INTO djmdSongPlaylist VALUES('P1','300',1,0);",
+         INSERT INTO djmdSongPlaylist VALUES('P1','300',1,0);
+         INSERT INTO djmdSongPlaylist VALUES('P1','400',2,0);",
     )
     .unwrap();
     (dir, master, share)
@@ -207,7 +211,7 @@ fn synthetic_collection() -> (tempfile::TempDir, PathBuf, PathBuf) {
 fn collection_reads_tracks_resolving_names_paths_and_analysis() {
     let (_dir, master, share) = synthetic_collection();
     let col = Collection::open(&master, TEST_KEY, &share).unwrap();
-    assert_eq!(col.tracks.len(), 2, "the deleted track is left out");
+    assert_eq!(col.tracks.len(), 2, "the deleted track and the sampler files are left out");
     let t = col.tracks.iter().find(|t| t.id == 100).unwrap();
     assert_eq!((t.title.as_str(), t.artist.as_str(), t.album.as_str()), ("Alpha", "Alpha Artist", "Alpha Album"));
     assert_eq!((t.genre.as_str(), t.label.as_str(), t.key.as_deref()), ("Trance", "Deal Records", Some("Bbm")));
@@ -230,9 +234,18 @@ fn collection_reads_playlists_and_folders() {
     let list = col.playlists.iter().find(|p| p.name == "My List").unwrap();
     assert!(!list.is_folder && list.parent.is_none());
     let i = col.tracks.iter().position(|t| t.id == 100).unwrap();
-    assert_eq!(list.tracks, vec![i], "the deleted track's entry is dropped");
+    assert_eq!(list.tracks, vec![i], "the entries of the deleted track and of a sampler file are dropped");
     let folder = col.playlists.iter().find(|p| p.name == "Folder").unwrap();
     assert!(folder.is_folder && folder.tracks.is_empty());
+}
+
+#[test]
+fn sampler_files_are_recognised_by_their_folder() {
+    assert!(is_sampler_file("/Users/x/Music/rekordbox/Sampler/MERGE FX/a.wav"));
+    assert!(is_sampler_file("C:\\Users\\x\\Music\\PioneerDJ\\sampler\\a.wav"));
+    assert!(!is_sampler_file("/Users/x/Music/Sampler.mp3"));
+    assert!(!is_sampler_file("/Users/x/Music/Sampler"));
+    assert!(!is_sampler_file("/Users/x/Music/a.mp3"));
 }
 
 #[test]
