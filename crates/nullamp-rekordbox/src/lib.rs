@@ -97,6 +97,9 @@ pub struct Track {
     /// The analysis file (`ANLZ0000.DAT`), absent for tracks rekordbox never analysed.
     pub analysis: Option<PathBuf>,
     pub artwork: Option<PathBuf>,
+    /// A track of a streaming service (Spotify, Tidal, ...) that rekordbox lists but that has no
+    /// audio file. Only the desktop library knows these.
+    pub streaming: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -199,6 +202,7 @@ impl Stick {
                 file: on_stick(root, &t.file_path).unwrap_or_default(),
                 analysis: on_stick(root, &t.analyze_path),
                 artwork: tables.artwork.get(&t.artwork_id).and_then(|p| on_stick(root, p)),
+                streaming: false,
             })
             .collect();
         Ok(Stick { root: root.to_path_buf(), tracks })

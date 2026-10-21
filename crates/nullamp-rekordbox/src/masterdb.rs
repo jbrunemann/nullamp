@@ -8,7 +8,7 @@
 //! extract or store it ourselves). Opening while rekordbox runs is fine: a read-only connection sees
 //! a consistent snapshot through the WAL and never writes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
@@ -45,13 +45,15 @@ fn under_share(share: &Path, path: &str) -> Option<PathBuf> {
     crate::under(share, path)
 }
 
-/// rekordbox keeps its bundled samples and effect sounds (MERGE FX, GROOVE CIRCUIT, OSC_SAMPLER) in a
-/// `Sampler` folder, either in its own music folder or under `PioneerDJ`, and lists them in the
-/// collection beside the tracks. They are not music, so the library leaves them out.
-pub(crate) fn is_sampler_file(path: &str) -> bool {
+/// rekordbox lists the content it ships with in the collection beside the tracks: its samples and
+/// effect sounds (MERGE FX, GROOVE CIRCUIT, OSC_SAMPLER) in a `Sampler` folder, in its own music
+/// folder or under `PioneerDJ`, and its demo tracks in `PioneerDJ/Demo Tracks`. None of it is the
+/// user's music, so the library leaves it out.
+pub(crate) fn is_bundled_file(path: &str) -> bool {
     let mut parts: Vec<&str> = path.split(['/', '\\']).collect();
     parts.pop();
     parts.iter().any(|p| p.eq_ignore_ascii_case("Sampler"))
+        || parts.windows(2).any(|w| w[0].eq_ignore_ascii_case("PioneerDJ") && w[1].eq_ignore_ascii_case("Demo Tracks"))
 }
 
 impl Collection {
@@ -67,6 +69,13 @@ impl Collection {
         conn.pragma_update(None, "key", key.trim())?;
         // A first read proves the key: a wrong one fails here with "file is not a database".
         conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)).map_err(|_| Error::Format("wrong key or not a rekordbox database"))?;
+
+        // ServiceID is 0 or empty for a local file and names the streaming service otherwise. It is
+        // read apart from the tracks so a database without the column still opens.
+        let streaming: HashSet<String> = conn
+            .prepare("SELECT ID FROM djmdContent WHERE rb_local_deleted = 0 AND ServiceID IS NOT NULL AND ServiceID NOT IN (0, '0', '')")
+            .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_, String>(0))?.collect())
+            .unwrap_or_default();
 
         let mut tracks = Vec::new();
         // ContentID is text in the database; map it to the row index for the playlists below.
@@ -90,7 +99,7 @@ impl Collection {
             let mut rows = stmt.query([])?;
             while let Some(r) = rows.next()? {
                 let raw_id: String = r.get(0)?;
-                if r.get::<_, Option<String>>(1)?.is_some_and(|f| is_sampler_file(&f)) {
+                if r.get::<_, Option<String>>(1)?.is_some_and(|f| is_bundled_file(&f)) {
                     continue;
                 }
                 // BPM and ColorID are hundredths of a BPM and a 1-8 colour id, both 0 when unset.
@@ -121,6 +130,7 @@ impl Collection {
                     file: PathBuf::from(text(r.get(1)?)),
                     analysis,
                     artwork: None,
+                    streaming: streaming.contains(&raw_id),
                 };
                 index_of.insert(raw_id, tracks.len());
                 tracks.push(track);

@@ -1,7 +1,7 @@
 //! rekordbox USB sticks: their tracks as playlist entries, and the waveform rekordbox analysed
 //! for a track. Everything here runs on worker threads; the UI only receives the results.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -348,6 +348,8 @@ impl Desktop {
         for (&i, name) in picked.iter().zip(names) {
             lists.push(Loaded { name, tracks: Ok(col.playlists[i].tracks.iter().map(|&t| entry(&col.tracks[t])).collect()) });
         }
+        let chosen: BTreeSet<usize> = if all { (0..col.tracks.len()).collect() } else { picked.iter().flat_map(|&i| col.playlists[i].tracks.iter().copied()).collect() };
+        log_streaming(chosen.into_iter().map(|t| &col.tracks[t]));
         Ok(lists)
     }
 
@@ -372,6 +374,19 @@ impl Desktop {
 
     pub fn waveform(&self, file: &Path) -> Option<Analysed> {
         analysed(file, &self.track(file)?)
+    }
+}
+
+/// The chosen tracks that belong to a streaming service. They stay in the lists but show as
+/// unavailable, because Nullamp plays files only; the log says why.
+fn log_streaming<'a>(tracks: impl Iterator<Item = &'a Track>) {
+    let streaming: Vec<&Track> = tracks.filter(|t| t.streaming).collect();
+    if streaming.is_empty() {
+        return;
+    }
+    log::info!("rekordbox: {} of the chosen tracks come from a streaming service and cannot be played, so they show as unavailable (Nullamp plays files, it does not stream):", streaming.len());
+    for t in streaming {
+        log::info!("rekordbox: streaming track: {} - {}", t.artist, t.title);
     }
 }
 

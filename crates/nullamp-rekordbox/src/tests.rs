@@ -1,5 +1,5 @@
 use super::*;
-use crate::masterdb::is_sampler_file;
+use crate::masterdb::is_bundled_file;
 
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rekordbox")
@@ -197,11 +197,16 @@ fn synthetic_collection() -> (tempfile::TempDir, PathBuf, PathBuf) {
          INSERT INTO djmdContent VALUES('300','/Users/x/Music/gone.mp3','Gone',0,0,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',1);
          INSERT INTO djmdContent VALUES('400','/Users/x/Music/rekordbox/Sampler/MERGE FX/MergeFX Sample Sound 104.wav','MergeFX',0,3,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
          INSERT INTO djmdContent VALUES('500','C:\\Users\\x\\Music\\PioneerDJ\\Sampler\\OSC_SAMPLER\\kick.wav','Kick',0,1,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
+         INSERT INTO djmdContent VALUES('600','/Users/x/Music/PioneerDJ/Demo Tracks/Demo Track 1.mp3','Demo Track 1',0,200,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
+         INSERT INTO djmdContent VALUES('700','spotify:track:abc','Streamed',0,200,0,0,0,0,0,0,0,0,'','',NULL,'0',NULL,NULL,NULL,NULL,'0',0);
          INSERT INTO djmdPlaylist VALUES('P1','My List','root',0,1,0);
          INSERT INTO djmdPlaylist VALUES('F1','Folder','root',1,2,0);
          INSERT INTO djmdSongPlaylist VALUES('P1','100',0,0);
          INSERT INTO djmdSongPlaylist VALUES('P1','300',1,0);
-         INSERT INTO djmdSongPlaylist VALUES('P1','400',2,0);",
+         INSERT INTO djmdSongPlaylist VALUES('P1','400',2,0);
+         INSERT INTO djmdSongPlaylist VALUES('P1','600',3,0);
+         ALTER TABLE djmdContent ADD COLUMN ServiceID INTEGER DEFAULT 0;
+         UPDATE djmdContent SET ServiceID = 3 WHERE ID = '700';",
     )
     .unwrap();
     (dir, master, share)
@@ -211,7 +216,7 @@ fn synthetic_collection() -> (tempfile::TempDir, PathBuf, PathBuf) {
 fn collection_reads_tracks_resolving_names_paths_and_analysis() {
     let (_dir, master, share) = synthetic_collection();
     let col = Collection::open(&master, TEST_KEY, &share).unwrap();
-    assert_eq!(col.tracks.len(), 2, "the deleted track and the sampler files are left out");
+    assert_eq!(col.tracks.len(), 3, "the deleted track and the bundled samples and demo tracks are left out");
     let t = col.tracks.iter().find(|t| t.id == 100).unwrap();
     assert_eq!((t.title.as_str(), t.artist.as_str(), t.album.as_str()), ("Alpha", "Alpha Artist", "Alpha Album"));
     assert_eq!((t.genre.as_str(), t.label.as_str(), t.key.as_deref()), ("Trance", "Deal Records", Some("Bbm")));
@@ -234,18 +239,36 @@ fn collection_reads_playlists_and_folders() {
     let list = col.playlists.iter().find(|p| p.name == "My List").unwrap();
     assert!(!list.is_folder && list.parent.is_none());
     let i = col.tracks.iter().position(|t| t.id == 100).unwrap();
-    assert_eq!(list.tracks, vec![i], "the entries of the deleted track and of a sampler file are dropped");
+    assert_eq!(list.tracks, vec![i], "the entries of the deleted track and of bundled files are dropped");
     let folder = col.playlists.iter().find(|p| p.name == "Folder").unwrap();
     assert!(folder.is_folder && folder.tracks.is_empty());
 }
 
 #[test]
-fn sampler_files_are_recognised_by_their_folder() {
-    assert!(is_sampler_file("/Users/x/Music/rekordbox/Sampler/MERGE FX/a.wav"));
-    assert!(is_sampler_file("C:\\Users\\x\\Music\\PioneerDJ\\sampler\\a.wav"));
-    assert!(!is_sampler_file("/Users/x/Music/Sampler.mp3"));
-    assert!(!is_sampler_file("/Users/x/Music/Sampler"));
-    assert!(!is_sampler_file("/Users/x/Music/a.mp3"));
+fn collection_marks_streaming_tracks_and_opens_without_the_column() {
+    let (_dir, master, share) = synthetic_collection();
+    let col = Collection::open(&master, TEST_KEY, &share).unwrap();
+    let streaming: Vec<u32> = col.tracks.iter().filter(|t| t.streaming).map(|t| t.id).collect();
+    assert_eq!(streaming, vec![700]);
+
+    let conn = rusqlite::Connection::open(&master).unwrap();
+    conn.pragma_update(None, "key", TEST_KEY).unwrap();
+    conn.execute_batch("ALTER TABLE djmdContent DROP COLUMN ServiceID").unwrap();
+    drop(conn);
+    let col = Collection::open(&master, TEST_KEY, &share).unwrap();
+    assert_eq!(col.tracks.len(), 3);
+    assert!(col.tracks.iter().all(|t| !t.streaming));
+}
+
+#[test]
+fn bundled_files_are_recognised_by_their_folder() {
+    assert!(is_bundled_file("/Users/x/Music/rekordbox/Sampler/MERGE FX/a.wav"));
+    assert!(is_bundled_file("C:\\Users\\x\\Music\\PioneerDJ\\sampler\\a.wav"));
+    assert!(is_bundled_file("/Users/x/Music/PioneerDJ/Demo Tracks/Demo Track 1.mp3"));
+    assert!(!is_bundled_file("/Users/x/Music/Demo Tracks/mine.mp3"), "only the folder under PioneerDJ is rekordbox's");
+    assert!(!is_bundled_file("/Users/x/Music/Sampler.mp3"));
+    assert!(!is_bundled_file("/Users/x/Music/Sampler"));
+    assert!(!is_bundled_file("/Users/x/Music/a.mp3"));
 }
 
 #[test]
