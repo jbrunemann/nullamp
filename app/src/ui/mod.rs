@@ -603,6 +603,7 @@ impl App {
         self.update_entry_art();
         self.publish_now_playing();
         self.flush_saves(false);
+        self.clear_now_if_unloaded();
     }
 
     fn on_output_event(&mut self, ev: &EngineEvent) {
@@ -804,6 +805,20 @@ impl App {
         self.mark_settings_dirty();
         // The deck keeps its picture until the new file's cover arrives, to change from it.
         let (art_shown, art_transition) = (self.now.art_shown.take(), self.now.art_transition.take());
+    /// With no file loaded (its list was cleared or removed) the deck falls back to the empty
+    /// state, and once playback is stopped it drops the waveform and cover of the file, which
+    /// load again when it plays. Either way the last file's picture does not linger.
+    fn clear_now_if_unloaded(&mut self) {
+        if self.player.current_entry().is_none() {
+            if self.now.waveform.is_some() || self.now.meta.is_some() || self.now.art_shown.is_some() {
+                self.now = NowState::default();
+            }
+        } else if self.player.status == Status::Stopped {
+            let n = &mut self.now;
+            (n.waveform, n.wave_colors, n.art, n.retro_art, n.art_file, n.art_shown, n.art_transition) = Default::default();
+        }
+    }
+
         self.now = NowState { art_shown, art_transition, ..NowState::default() };
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });

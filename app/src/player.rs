@@ -221,7 +221,8 @@ impl<E: Engine> Player<E> {
             _ => self.token(),
         };
         self.preload = None;
-        let changed = self.current.as_ref().is_none_or(|c| c.path != path || c.list != list || c.entry != entry);
+        // Playing again after a stop counts as a change: the deck dropped the file's waveform and cover.
+        let changed = self.status == Status::Stopped || self.current.as_ref().is_none_or(|c| c.path != path || c.list != list || c.entry != entry);
         self.current = Some(Current { list, entry, path: path.clone(), token, info: None });
         self.status = Status::Loading;
         self.load_paused = !play;
