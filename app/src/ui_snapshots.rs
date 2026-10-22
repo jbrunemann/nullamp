@@ -151,6 +151,53 @@ fn render_playlist_columns() {
 
 #[test]
 #[ignore]
+fn render_playlist_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 420.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 1200);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+    settle(&mut h, 100);
+    h.event(egui::Event::Text("TONE".into()));
+    settle(&mut h, 200);
+    save(&mut h, "04d-playlist-filter.png");
+    let names = |h: &Harness<'_, App>| {
+        let app = h.state();
+        let mut v: Vec<String> = app.player.lists[0].playlist.entries().iter().filter(|e| app.selection.ids.contains(&e.id)).map(|e| e.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    };
+    // Enter leaves the field with the first match selected; ⌘A then takes only the matches.
+    h.key_press(egui::Key::Enter);
+    settle(&mut h, 100);
+    assert_eq!(names(&h), ["tagged_v23.mp3"]);
+    h.key_press(egui::Key::End);
+    settle(&mut h, 100);
+    assert_eq!(names(&h), ["tone_mono_22k.wav"], "the last shown row, not the last entry");
+    h.key_press(egui::Key::ArrowUp);
+    settle(&mut h, 100);
+    assert_eq!(names(&h), ["tone.m4a"], "arrows skip hidden rows");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    settle(&mut h, 100);
+    // The titles of the tagged files and the file names of the rest contain "tone"; the mix and the missing file do not.
+    assert_eq!(names(&h), ["tagged_v23.mp3", "tagged_v24.mp3", "tone.flac", "tone.m4a", "tone.ogg", "tone_mono_22k.wav"]);
+    // Esc in the field clears the filter.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+    settle(&mut h, 100);
+    h.key_press(egui::Key::Escape);
+    settle(&mut h, 100);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    settle(&mut h, 100);
+    assert_eq!(names(&h).len(), 8);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+    settle(&mut h, 100);
+    h.event(egui::Event::Text("nothing like this".into()));
+    settle(&mut h, 200);
+    save(&mut h, "04e-playlist-filter-none.png");
+}
+
+#[test]
+#[ignore]
 fn render_player_only() {
     for (width, name) in [(1100.0, "04-player-only.png"), (640.0, "04-player-narrow.png")] {
         render_player_only_at(width, name);

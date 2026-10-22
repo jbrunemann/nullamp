@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, Vec2, pos2, vec2};
-use nullamp_core::{EntryId, EntryStatus, PlaylistEntry};
+use nullamp_core::{EntryId, EntryStatus, Filter, Playlist, PlaylistEntry, Revision};
 
 use super::widgets::{self, Icon};
 use super::{App, SideTab, dialogs, inspector, theme};
@@ -28,6 +28,66 @@ pub struct ViewState {
     /// The column whose header is being dragged to a new position.
     header_drag: Option<Col>,
     pub art: ArtCache,
+    pub filter: FilterState,
+}
+
+/// The filter typed in the toolbar, shared by all playlists, and what it matches in each.
+#[derive(Default)]
+pub struct FilterState {
+    query: String,
+    filter: Filter,
+    /// Per list index, found again when that list's revision changes.
+    matches: Vec<Option<Matches>>,
+    /// Put the keyboard focus in the field next frame (⌘F).
+    pub focus: bool,
+}
+
+impl FilterState {
+    pub fn is_active(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.query.clear();
+        self.refresh();
+    }
+
+    fn refresh(&mut self) {
+        self.filter = Filter::new(&self.query);
+        self.matches.clear();
+    }
+
+    /// The matches in list `list`, found again only when its entries changed.
+    fn of(&mut self, list: usize, pl: &Playlist) -> (&[usize], &HashSet<EntryId>) {
+        if self.matches.len() <= list {
+            self.matches.resize_with(list + 1, || None);
+        }
+        let slot = &mut self.matches[list];
+        if slot.as_ref().is_none_or(|m| m.revision != pl.revision()) {
+            let rows = self.filter.indices(pl);
+            let ids = rows.iter().map(|&i| pl.entries()[i].id).collect();
+            *slot = Some(Matches { revision: pl.revision(), rows, ids });
+        }
+        let m = slot.as_ref().unwrap();
+        (&m.rows, &m.ids)
+    }
+}
+
+/// What the filter matches in one list at one revision.
+struct Matches {
+    revision: Revision,
+    /// Entry indices, in list order.
+    rows: Vec<usize>,
+    ids: HashSet<EntryId>,
+}
+
+/// The entry indices of the viewed list that are shown, in order; `None` when no filter hides any.
+fn shown_rows(app: &mut App) -> Option<Vec<usize>> {
+    if !app.pl_view.filter.is_active() {
+        return None;
+    }
+    let list = app.player.viewing;
+    Some(app.pl_view.filter.of(list, &app.player.lists[list].playlist).0.to_vec())
 }
 
 pub struct Drag {
@@ -250,9 +310,14 @@ fn playlist_tabs(app: &mut App, ui: &mut Ui) {
             for i in 0..app.player.lists.len() {
                 let doc = &app.player.lists[i];
                 let playing = app.player.current.as_ref().is_some_and(|c| c.list == i) && app.player.status != Status::Stopped;
-                let label = if playing { format!("▶ {}", doc.playlist.name) } else { doc.playlist.name.clone() };
-                let resp = widgets::tab(ui, i == app.player.viewing, &label)
-                    .on_hover_text(format!("{} tracks · double-click to rename", doc.playlist.len()));
+                let mut label = if playing { format!("▶ {}", doc.playlist.name) } else { doc.playlist.name.clone() };
+                let mut hover = format!("{} tracks · double-click to rename", doc.playlist.len());
+                if app.pl_view.filter.is_active() {
+                    let found = app.pl_view.filter.of(i, &doc.playlist).0.len();
+                    label = format!("{label} ({found})");
+                    hover = format!("{found} of {hover} match the filter");
+                }
+                let resp = widgets::tab(ui, i == app.player.viewing, &label).on_hover_text(hover);
                 // A row drag over another playlist's tab copies the rows into it.
                 if app.pl_view.drag.is_some() && i != app.player.viewing && pointer.is_some_and(|p| resp.rect.contains(p)) {
                     app.pl_view.drop_tab = Some(i);
@@ -311,13 +376,14 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
         }
         ui.separator();
         let has_sel = !app.selection.ids.is_empty();
+        let movable = has_sel && !app.pl_view.filter.is_active();
         if ui.add_enabled(has_sel, egui::Button::new("Remove")).on_hover_text("Delete / Backspace").clicked() {
             remove_selected(app);
         }
-        if ui.add_enabled(has_sel, egui::Button::new("▲")).on_hover_text("Move up (⌥↑ / Alt+Up)").clicked() {
+        if ui.add_enabled(movable, egui::Button::new("▲")).on_hover_text("Move up (⌥↑ / Alt+Up)").on_disabled_hover_text(MOVE_FILTERED).clicked() {
             move_selected(app, -1);
         }
-        if ui.add_enabled(has_sel, egui::Button::new("▼")).on_hover_text("Move down (⌥↓ / Alt+Down)").clicked() {
+        if ui.add_enabled(movable, egui::Button::new("▼")).on_hover_text("Move down (⌥↓ / Alt+Down)").on_disabled_hover_text(MOVE_FILTERED).clicked() {
             move_selected(app, 1);
         }
         ui.menu_button("Sort", |ui| {
@@ -424,15 +490,68 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             let font = egui::TextStyle::Small.resolve(ui.style());
             let needed = ui.painter().layout_no_wrap(LABEL.into(), font, theme::text()).size().x + 2.0 * ui.spacing().button_padding.x;
             if app.player.current.is_some() && ui.available_width() >= needed && ui.small_button(LABEL).on_hover_text(format!("Scroll to the playing track ({})", widgets::cmd_key('J', false))).clicked() {
-                let c = app.player.current.clone().unwrap();
-                if app.player.viewing != c.list {
-                    app.player.viewing = c.list;
-                    app.selection = Default::default();
-                }
-                app.scroll_to = Some(c.entry);
+                show_playing(app);
             }
+            filter_field(app, ui);
         });
     });
+}
+
+const MOVE_FILTERED: &str = "Clear the filter to move entries";
+
+/// The filter field. Esc clears it, Enter moves to the list with the first match selected.
+fn filter_field(app: &mut App, ui: &mut Ui) {
+    let width = (ui.available_width() - 8.0).min(180.0);
+    if width < 60.0 {
+        return;
+    }
+    let edit = egui::TextEdit::singleline(&mut app.pl_view.filter.query).hint_text("Filter").desired_width(width);
+    let resp = ui.add(edit).on_hover_text(format!("Show only tracks whose title, artist, album or file name contain every word ({})", widgets::cmd_key('F', false)));
+    if resp.changed() {
+        app.pl_view.filter.refresh();
+    }
+    if std::mem::take(&mut app.pl_view.filter.focus) {
+        resp.request_focus();
+        // Select what is there, so typing replaces the last filter.
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(app.pl_view.filter.query.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(ui.ctx(), resp.id);
+        }
+    }
+    if resp.lost_focus() {
+        let (escape, enter) = ui.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::Enter)));
+        if escape {
+            app.pl_view.filter.clear();
+        } else if enter
+            && app.selection.ids.is_empty()
+            && let Some(&first) = shown_rows(app).unwrap_or_default().first()
+        {
+            // The table already dropped selected rows the filter hides.
+            let id = app.player.viewed().entries()[first].id;
+            set_single(app, id);
+            app.scroll_to = Some(id);
+        }
+    }
+}
+
+/// How many rows of the viewed list the filter shows; `None` without a filter.
+pub fn shown_count(app: &mut App) -> Option<usize> {
+    let list = app.player.viewing;
+    app.pl_view.filter.is_active().then(|| app.pl_view.filter.of(list, &app.player.lists[list].playlist).0.len())
+}
+
+/// Switch to the playing track's list and scroll to it, clearing a filter that hides it (◎ Now playing, ⌘J).
+pub fn show_playing(app: &mut App) {
+    let Some(c) = app.player.current.clone() else { return };
+    if app.player.viewing != c.list {
+        app.player.viewing = c.list;
+        app.selection = Default::default();
+    }
+    if shown_rows(app).is_some_and(|rows| !rows.iter().any(|&i| app.player.viewed().entries()[i].id == c.entry)) {
+        app.pl_view.filter.clear();
+    }
+    app.scroll_to = Some(c.entry);
 }
 
 fn header(app: &mut App, ui: &mut Ui, order: &[Col]) {
@@ -521,6 +640,10 @@ fn set_columns(app: &mut App, order: &[Col]) {
 
 fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
     let n = app.player.viewed().len();
+    let shown = shown_rows(app);
+    // Table rows map to entry indices through `shown` while a filter is on.
+    let n_rows = shown.as_ref().map_or(n, Vec::len);
+    let entry_at = |k: usize| shown.as_ref().map_or(k, |s| s[k]);
     let row_h = row_height(order);
     let show_art = order.contains(&Col::Art);
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -531,13 +654,24 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
         empty_state(app, ui, list_rect);
         return;
     }
+    if let Some(shown) = &shown {
+        // Rows the filter hides are not acted on.
+        let (_, ids) = app.pl_view.filter.of(app.player.viewing, &app.player.lists[app.player.viewing].playlist);
+        app.selection.ids.retain(|id| ids.contains(id));
+        if shown.is_empty() {
+            no_matches(ui, list_rect);
+            return;
+        }
+    }
 
     let mut area = egui::ScrollArea::vertical().id_salt(("pl", app.player.viewing)).auto_shrink([false, false]);
+    // A target the filter hides (the next track starting) is not scrolled to.
     if let Some(target) = app.scroll_to.take()
         && let Some(i) = app.player.viewed().index_of(target)
-        && !(app.pl_view.visible.start + 1..app.pl_view.visible.end.saturating_sub(1)).contains(&i)
+        && let Some(k) = shown.as_ref().map_or(Some(i), |s| s.binary_search(&i).ok())
+        && !(app.pl_view.visible.start + 1..app.pl_view.visible.end.saturating_sub(1)).contains(&k)
     {
-        let offset = (i as f32 * row_h - list_rect.height() / 2.0 + row_h).max(0.0);
+        let offset = (k as f32 * row_h - list_rect.height() / 2.0 + row_h).max(0.0);
         area = area.vertical_scroll_offset(offset);
     }
 
@@ -546,24 +680,25 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
     let mut rows = Vec::new();
     let mut play: Option<EntryId> = None;
 
-    let output = area.show_rows(ui, row_h, n, |ui, range| {
+    let output = area.show_rows(ui, row_h, n_rows, |ui, range| {
         app.pl_view.visible = range.clone();
         if show_art {
             // A few rows beyond the edge so covers are there before they scroll in.
-            let ahead = range.start..(range.end + 12).min(n);
+            let ahead = range.start..(range.end + 12).min(n_rows);
             let list = app.player.viewed().entries();
-            let wanted = list[ahead].iter().filter(|e| e.status.is_playable()).map(|e| e.path.as_path());
+            let wanted = ahead.map(|k| &list[entry_at(k)]).filter(|e| e.status.is_playable()).map(|e| e.path.as_path());
             if let Some(paths) = app.pl_view.art.next_request(wanted) {
                 app.workers.request_covers(paths);
             }
         }
-        for i in range {
+        for k in range {
+            let i = entry_at(k);
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
             rows.push((i, rect));
             // A context menu action can remove entries mid-loop; stop at the new end.
             let Some(entry) = app.player.viewed().entries().get(i).cloned() else { break };
             let id = entry.id;
-            paint_row(app, ui, rect, order, i, &entry, resp.hovered());
+            paint_row(app, ui, rect, order, i, k % 2 == 1, &entry, resp.hovered());
 
             if resp.clicked() {
                 click_row(app, ui, id);
@@ -597,7 +732,8 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
     // Drag-to-reorder: insertion point from the pointer position.
     if let Some(drag) = app.pl_view.drag.as_mut() {
         if let Some(p) = pointer {
-            drag.target = if app.pl_view.drop_tab.is_some() { None } else { insertion_index(&rows, p.y, n) };
+            // While filtered, rows can only be dragged onto another playlist's tab.
+            drag.target = if app.pl_view.drop_tab.is_some() || shown.is_some() { None } else { insertion_index(&rows, p.y, n) };
             // Auto-scroll near the edges.
             let r = output.inner_rect;
             let edge = 24.0;
@@ -627,7 +763,7 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
 
     // External files hovering: show where they will land.
     let hovering_files = ui.input(|i| !i.raw.hovered_files.is_empty());
-    if hovering_files {
+    if hovering_files && shown.is_none() {
         let t = ui.input(|i| i.pointer.hover_pos()).and_then(|p| drop_slot(list_rect, &rows, p, n)).unwrap_or(n);
         let y = rows.iter().find(|(i, _)| *i == t).map(|(_, r)| r.top()).or_else(|| rows.last().map(|(_, r)| r.bottom()));
         if let Some(y) = y {
@@ -664,13 +800,15 @@ fn drop_slot(list_rect: Rect, rows: &[(usize, Rect)], p: Pos2, n: usize) -> Opti
 /// Where dropped files go: the gap under the pointer, or the end.
 pub fn drop_index(app: &App, ctx: &egui::Context) -> Option<usize> {
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    if !app.playlist_open {
+    if !app.playlist_open || app.pl_view.filter.is_active() {
         return None;
     }
     drop_slot(app.pl_view.list_rect?, &app.pl_view.rows, p, app.player.viewed().len())
 }
 
-fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &PlaylistEntry, hovered: bool) {
+/// `i` is the entry's index in the list (its number), `odd` whether its table row is striped.
+#[allow(clippy::too_many_arguments)]
+fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, odd: bool, e: &PlaylistEntry, hovered: bool) {
     let p = ui.painter();
     let selected = app.selection.ids.contains(&e.id);
     let current = app.player.is_current(app.player.viewing, e.id);
@@ -678,7 +816,7 @@ fn paint_row(app: &App, ui: &Ui, rect: Rect, order: &[Col], i: usize, e: &Playli
         theme::select_bg()
     } else if hovered {
         theme::raised()
-    } else if i % 2 == 1 {
+    } else if odd {
         theme::row_alt()
     } else {
         theme::panel()
@@ -813,11 +951,12 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         });
     }
     ui.separator();
-    if ui.button("Move up").clicked() {
+    let movable = !app.pl_view.filter.is_active();
+    if ui.add_enabled(movable, egui::Button::new("Move up")).on_disabled_hover_text(MOVE_FILTERED).clicked() {
         move_selected(app, -1);
         ui.close();
     }
-    if ui.button("Move down").clicked() {
+    if ui.add_enabled(movable, egui::Button::new("Move down")).on_disabled_hover_text(MOVE_FILTERED).clicked() {
         move_selected(app, 1);
         ui.close();
     }
@@ -844,6 +983,14 @@ fn empty_state(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 }
 
+fn no_matches(ui: &mut Ui, rect: Rect) {
+    ui.allocate_rect(rect, Sense::hover());
+    let p = ui.painter();
+    let c = rect.center();
+    p.text(c - vec2(0.0, 14.0), Align2::CENTER_CENTER, "No tracks match the filter", theme::prop(15.0), theme::text_dim());
+    p.text(c + vec2(0.0, 10.0), Align2::CENTER_CENTER, "The number on each tab shows where there are matches", theme::prop(12.5), theme::text_faint());
+}
+
 // ----- Selection and editing -----
 
 fn set_single(app: &mut App, id: EntryId) {
@@ -856,7 +1003,7 @@ fn click_row(app: &mut App, ui: &Ui, id: EntryId) {
     let m = ui.input(|i| i.modifiers);
     if m.shift {
         let anchor = app.selection.anchor.unwrap_or(id);
-        let range = app.player.viewed().range(anchor, id);
+        let range = shown_range(app, anchor, id);
         if !m.command {
             app.selection.ids.clear();
         }
@@ -877,7 +1024,21 @@ fn click_row(app: &mut App, ui: &Ui, id: EntryId) {
 }
 
 fn select_all(app: &mut App) {
-    app.selection.ids = app.player.viewed().ids().collect();
+    app.selection.ids = match shown_rows(app) {
+        Some(rows) => rows.iter().map(|&i| app.player.viewed().entries()[i].id).collect(),
+        None => app.player.viewed().ids().collect(),
+    };
+}
+
+/// The shown entries between two ids, inclusive, in list order (for ⇧-click and ⇧-arrows).
+fn shown_range(app: &mut App, a: EntryId, b: EntryId) -> Vec<EntryId> {
+    let range = app.player.viewed().range(a, b);
+    if !app.pl_view.filter.is_active() {
+        return range;
+    }
+    let list = app.player.viewing;
+    let (_, ids) = app.pl_view.filter.of(list, &app.player.lists[list].playlist);
+    range.into_iter().filter(|id| ids.contains(id)).collect()
 }
 
 fn remove_selected(app: &mut App) {
@@ -923,7 +1084,8 @@ fn move_selected(app: &mut App, delta: isize) {
 
 /// Playlist keys: arrows, Enter, Delete, ⌘A, ⌥↑/⌥↓, Home/End.
 pub fn handle_keys(app: &mut App, ctx: &egui::Context) {
-    let n = app.player.viewed().len();
+    let shown = shown_rows(app);
+    let n = shown.as_ref().map_or(app.player.viewed().len(), Vec::len);
     if n == 0 {
         return;
     }
@@ -945,7 +1107,9 @@ pub fn handle_keys(app: &mut App, ctx: &egui::Context) {
         return;
     }
     if alt && (up || down) {
-        move_selected(app, if up { -1 } else { 1 });
+        if shown.is_none() {
+            move_selected(app, if up { -1 } else { 1 });
+        }
         return;
     }
     if delete {
@@ -959,7 +1123,9 @@ pub fn handle_keys(app: &mut App, ctx: &egui::Context) {
         app.player.play_entry(list, id, 0.0);
         return;
     }
-    let cur = app.selection.cursor.and_then(|id| app.player.viewed().index_of(id));
+    // Positions here are table rows, which skip what the filter hides.
+    let entry_at = |k: usize| shown.as_ref().map_or(k, |s| s[k]);
+    let cur = app.selection.cursor.and_then(|id| app.player.viewed().index_of(id)).and_then(|i| shown.as_ref().map_or(Some(i), |s| s.binary_search(&i).ok()));
     let target = if up {
         Some(cur.map(|i| i.saturating_sub(1)).unwrap_or(0))
     } else if down {
@@ -972,10 +1138,10 @@ pub fn handle_keys(app: &mut App, ctx: &egui::Context) {
         None
     };
     if let Some(t) = target {
-        let id = app.player.viewed().entries()[t].id;
+        let id = app.player.viewed().entries()[entry_at(t)].id;
         if shift {
             let anchor = app.selection.anchor.unwrap_or(id);
-            app.selection.ids = app.player.viewed().range(anchor, id).into_iter().collect();
+            app.selection.ids = shown_range(app, anchor, id).into_iter().collect();
             app.selection.cursor = Some(id);
         } else {
             set_single(app, id);

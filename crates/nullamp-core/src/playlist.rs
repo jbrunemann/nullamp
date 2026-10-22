@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,19 @@ impl PlaylistEntry {
     }
 }
 
+/// Marks one state of a playlist's entries. Every change gives a value no list has had
+/// before, so views can cache what they derive from the entries (such as filter matches).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Revision(u64);
+
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
+
+impl Default for Revision {
+    fn default() -> Self {
+        Revision(NEXT_REVISION.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// An ordered list of audio files.
 ///
 /// Entries are addressed by [`EntryId`] rather than index so that selection and the
@@ -54,11 +68,22 @@ impl PlaylistEntry {
 pub struct Playlist {
     pub name: String,
     entries: Vec<PlaylistEntry>,
+    #[serde(skip)]
+    revision: Revision,
 }
 
 impl Playlist {
     pub fn new(name: impl Into<String>) -> Self {
-        Playlist { name: name.into(), entries: Vec::new() }
+        Playlist { name: name.into(), entries: Vec::new(), revision: Revision::default() }
+    }
+
+    pub fn revision(&self) -> Revision {
+        self.revision
+    }
+
+    /// Called by every method that can change the entries.
+    fn touch(&mut self) {
+        self.revision = Revision::default();
     }
 
     pub fn entries(&self) -> &[PlaylistEntry] {
@@ -86,15 +111,18 @@ impl Playlist {
     }
 
     pub fn get_mut(&mut self, id: EntryId) -> Option<&mut PlaylistEntry> {
+        self.touch();
         self.entries.iter_mut().find(|e| e.id == id)
     }
 
     pub fn entries_with_path_mut<'a>(&'a mut self, path: &'a Path) -> impl Iterator<Item = &'a mut PlaylistEntry> {
+        self.touch();
         self.entries.iter_mut().filter(move |e| e.path == path)
     }
 
     pub fn push(&mut self, entry: PlaylistEntry) -> EntryId {
         let id = entry.id;
+        self.touch();
         self.entries.push(entry);
         id
     }
@@ -103,6 +131,7 @@ impl Playlist {
     pub fn insert(&mut self, index: usize, entries: Vec<PlaylistEntry>) -> Vec<EntryId> {
         let index = index.min(self.entries.len());
         let ids = entries.iter().map(|e| e.id).collect();
+        self.touch();
         self.entries.splice(index..index, entries);
         ids
     }
@@ -115,11 +144,13 @@ impl Playlist {
     /// Remove the given entries. Returns how many were removed.
     pub fn remove(&mut self, ids: &HashSet<EntryId>) -> usize {
         let before = self.entries.len();
+        self.touch();
         self.entries.retain(|e| !ids.contains(&e.id));
         before - self.entries.len()
     }
 
     pub fn clear(&mut self) {
+        self.touch();
         self.entries.clear();
     }
 
@@ -128,6 +159,7 @@ impl Playlist {
     /// Blocks of selected entries move together; a block already at the edge stays put
     /// and the rest keep their relative order. Returns whether anything moved.
     pub fn move_by(&mut self, ids: &HashSet<EntryId>, delta: isize) -> bool {
+        self.touch();
         let mut moved = false;
         let steps = delta.unsigned_abs();
         for _ in 0..steps {
@@ -155,6 +187,7 @@ impl Playlist {
     /// gap before `target` (an index into the list *before* the move, `len` = end).
     /// This is the drag-and-drop operation. Relative order is preserved.
     pub fn move_to(&mut self, ids: &HashSet<EntryId>, target: usize) -> bool {
+        self.touch();
         let target = target.min(self.entries.len());
         let before: Vec<EntryId> = self.ids().collect();
         let removed_before_target = self.entries[..target].iter().filter(|e| ids.contains(&e.id)).count();
@@ -168,10 +201,12 @@ impl Playlist {
 
     /// Stable sort by `compare`.
     pub fn sort_by(&mut self, compare: impl FnMut(&PlaylistEntry, &PlaylistEntry) -> std::cmp::Ordering) {
+        self.touch();
         self.entries.sort_by(compare);
     }
 
     pub fn reverse(&mut self) {
+        self.touch();
         self.entries.reverse();
     }
 
@@ -197,6 +232,40 @@ impl Playlist {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+/// A typed playlist filter: every word must occur, ignoring case, in an entry's title,
+/// artist, album or file name, so "daft one" finds "One More Time" by Daft Punk.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Filter {
+    words: Vec<String>,
+}
+
+impl Filter {
+    pub fn new(query: &str) -> Self {
+        Filter { words: query.split_whitespace().map(str::to_lowercase).collect() }
+    }
+
+    /// True when the filter lets everything through.
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    pub fn matches(&self, e: &PlaylistEntry) -> bool {
+        if self.words.is_empty() {
+            return true;
+        }
+        let file = e.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
+        let fields = [e.info.title.as_deref().unwrap_or(""), e.info.artist.as_deref().unwrap_or(""), e.info.album.as_deref().unwrap_or(""), &file];
+        // A separator no word can contain, so a word never matches across two fields.
+        let text = fields.join("\n").to_lowercase();
+        self.words.iter().all(|w| text.contains(w.as_str()))
+    }
+
+    /// Indices of the matching entries, in list order.
+    pub fn indices(&self, p: &Playlist) -> Vec<usize> {
+        p.entries.iter().enumerate().filter(|(_, e)| self.matches(e)).map(|(i, _)| i).collect()
     }
 }
 
@@ -303,5 +372,37 @@ mod tests {
         assert_eq!(names(&q), ["a", "b"]);
         assert_ne!(q.entries()[0].id, q.entries()[1].id);
         assert_ne!(q.entries()[0].id, p.entries()[0].id);
+    }
+
+    #[test]
+    fn filter_needs_every_word_in_some_field() {
+        let mut p = Playlist::new("test");
+        let info = |title: &str, artist: &str, album: &str| TrackInfo { title: Some(title.into()), artist: Some(artist.into()), album: Some(album.into()), ..Default::default() };
+        p.push(PlaylistEntry::with_info("/m/01 one.mp3".into(), info("One More Time", "Daft Punk", "Discovery")));
+        p.push(PlaylistEntry::with_info("/m/02 da funk.flac".into(), info("Da Funk", "Daft Punk", "Homework")));
+        p.push(PlaylistEntry::new("/m/Ünïcode/Björk - Jóga.mp3".into()));
+        assert_eq!(Filter::new("daft").indices(&p), [0, 1]);
+        assert_eq!(Filter::new("  DAFT   one ").indices(&p), [0]);
+        assert_eq!(Filter::new("homework").indices(&p), [1]);
+        assert_eq!(Filter::new("flac").indices(&p), [1], "the file name counts");
+        assert_eq!(Filter::new("björk JÓGA").indices(&p), [2], "case folds beyond ASCII");
+        assert_eq!(Filter::new("ünïcode").indices(&p), Vec::<usize>::new(), "folders do not count");
+        assert_eq!(Filter::new("punkdisc").indices(&p), Vec::<usize>::new(), "no match across fields");
+        assert!(Filter::new(" ").is_empty());
+        assert_eq!(Filter::new("").indices(&p), [0, 1, 2]);
+    }
+
+    #[test]
+    fn revision_changes_with_the_entries() {
+        let mut p = list(&["a", "b"]);
+        let r = p.revision();
+        assert_eq!(p.clone().revision(), r);
+        p.reverse();
+        assert_ne!(p.revision(), r);
+        let r = p.revision();
+        let id = p.entries()[0].id;
+        p.get_mut(id);
+        assert_ne!(p.revision(), r);
+        assert_ne!(Playlist::new("x").revision(), Playlist::new("x").revision());
     }
 }

@@ -19,7 +19,7 @@ pub mod tracklist_text;
 
 pub use ids::EntryId;
 pub use key::{Key, KeyNotation};
-pub use playlist::{EntryStatus, Playlist, PlaylistEntry};
+pub use playlist::{EntryStatus, Filter, Playlist, PlaylistEntry, Revision};
 pub use queue::{Navigator, RepeatMode};
 pub use setlist::{Setlist, SetlistEntry};
 pub use track::TrackInfo;

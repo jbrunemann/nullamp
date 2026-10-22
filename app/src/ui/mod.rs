@@ -525,6 +525,8 @@ impl App {
             ids = p.insert(at, entries);
         });
         if list == self.player.viewing {
+            // Added files are shown even when they do not match the filter.
+            self.pl_view.filter.clear();
             self.selection.ids = ids.iter().copied().collect();
             self.selection.anchor = ids.first().copied();
             self.selection.cursor = ids.last().copied();
@@ -1118,7 +1120,13 @@ impl App {
             self.toggle_playlist();
         }
         if consume(cmd(Key::J)) {
-            self.scroll_to = self.player.current.as_ref().map(|c| c.entry);
+            playlist_view::show_playing(self);
+        }
+        if consume(cmd(Key::F)) {
+            if !self.playlist_open {
+                self.toggle_playlist();
+            }
+            self.pl_view.filter.focus = true;
         }
         if consume(KeyboardShortcut::new(Modifiers::NONE, Key::F1)) {
             self.dialogs.settings = if self.dialogs.settings == Some(dialogs::SettingsTab::Shortcuts) { None } else { Some(dialogs::SettingsTab::Shortcuts) };
@@ -1284,6 +1292,7 @@ impl App {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
+            let shown = playlist_view::shown_count(self);
             let pl = self.player.viewed();
             let (total, incomplete) = pl.total_duration();
             let missing = pl.entries().iter().filter(|e| !e.status.is_playable()).count();
@@ -1297,6 +1306,9 @@ impl App {
                 .color(theme::text_dim())
                 .size(11.5),
             );
+            if let Some(n) = shown {
+                ui.label(egui::RichText::new(format!("· {n} shown")).color(theme::text_dim()).size(11.5));
+            }
             if !self.selection.ids.is_empty() {
                 ui.label(egui::RichText::new(format!("· {} selected", self.selection.ids.len())).color(theme::text_dim()).size(11.5));
             }

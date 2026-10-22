@@ -147,7 +147,8 @@ Playlists are saved automatically and are restored the next time you start Nulla
 | Copy to another playlist | Drag the rows onto that playlist's tab, or right-click ▸ **Copy to playlist**. They are added at the end and stay in this playlist too. |
 | Remove | **Remove**, or Delete or Backspace |
 | Right-click menu | **Play**, **Inspect metadata**, **Show in folder**, **Copy path**, **Copy to playlist**, **Move up**, **Move down**, **Remove** |
-| Find the playing track | **◎ Now playing**, or ⌘J |
+| Find the playing track | **◎ Now playing**, or ⌘J. This clears a filter that hides it. |
+| Filter | Type in the **Filter** field at the right of the toolbar, or press ⌘F. Only tracks whose title, artist, album or file name contain every word you type stay in the table. Each tab shows how many of its tracks match, so you can see which playlist has what you are looking for; the filter stays when you switch tabs. Enter moves to the list, Esc in the field clears it. While a filter is on, rows cannot be reordered (dragging them onto another tab still copies them), and ⌘A, ⇧-click and the arrow keys only take the shown rows. Adding files clears the filter. |
 
 Missing files stay in the list, greyed out with a warning, so you can find and fix them. **List ▸ Remove unavailable entries** removes them all.
 
@@ -382,6 +383,7 @@ Press F1, or right-click the display and choose **Keyboard shortcuts**, to see t
 | ⌘L | Setlist |
 | ⌘P | Show or hide the playlist |
 | ⌘J | Scroll to the playing track |
+| ⌘F | Filter the playlist |
 | F1 | Keyboard shortcuts |
 
 The letter keys do not fire while you type in a text field.

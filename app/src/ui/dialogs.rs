@@ -694,6 +694,7 @@ fn shortcuts_body(ui: &mut egui::Ui) {
         (format!("{} / {}", widgets::cmd_key('O', false), widgets::cmd_key('O', true)), "Add files / folder"),
         (format!("{} / {} / {}", widgets::cmd_key('I', false), widgets::cmd_key('L', false), widgets::cmd_key('P', false)), "Inspector / setlist / list"),
         (widgets::cmd_key('J', false), "Show playing track"),
+        (widgets::cmd_key('F', false), "Filter the playlist"),
         ("F1".into(), "This help"),
     ];
     const COLUMNS: usize = 3;
