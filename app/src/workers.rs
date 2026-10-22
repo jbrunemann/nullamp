@@ -10,7 +10,9 @@
 //!   delay playback;
 //! - *online* artwork lookups (the tracks of a mix, and the inspector's "Find online") wait on
 //!   the network for seconds, so they have a thread of their own too and answer in the order
-//!   they were asked.
+//!   they were asked;
+//! - *identify* (naming the tracks of a mix with Shazam) runs for minutes, mostly waiting
+//!   between requests, so it has a thread of its own and must not hold up the artwork lookups.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -24,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crossbeam_channel::{Receiver, Sender, select_biased};
 use nullamp_audio::{Tempo, TempoError, Waveform, WaveformError};
 use nullamp_core::setlist::{MixInfo, Provenance};
-use nullamp_core::{Setlist, TrackInfo, cue, m3u, tracklist_text};
+use nullamp_core::{EntryId, Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
 
 use crate::paths::AppPaths;
@@ -137,6 +139,19 @@ struct EntryArtRequest {
     title: String,
 }
 
+struct IdentifyRequest {
+    request: u64,
+    path: PathBuf,
+    tracks: Vec<IdentifyTrack>,
+}
+
+/// One track of a mix to name: its setlist entry and where it plays in the file.
+pub struct IdentifyTrack {
+    pub entry: EntryId,
+    pub start: f64,
+    pub end: f64,
+}
+
 enum OnlineRequest {
     EntryArt(EntryArtRequest),
     TrackCover { request: u64, artist: String, title: String },
@@ -204,6 +219,12 @@ pub enum JobResult {
     /// asked for), `Ok(None)` for no clear beat. A whole-file request is not answered when the
     /// file's tags already state a BPM, and abandoned requests send nothing.
     Tempo { token: u64, span: Option<(f64, f64)>, result: Result<Option<Tempo>, String> },
+    /// `done` of the `total` clips of an [`Workers::identify`] request have been asked about.
+    IdentifyProgress { request: u64, done: usize, total: usize },
+    /// What Shazam says about one track of the request.
+    Identified { request: u64, entry: EntryId, verdict: nullamp_shazam::Verdict },
+    /// The request is over: all tracks answered, or why it stopped. A cancelled request sends nothing.
+    IdentifyDone { request: u64, result: Result<(), String> },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -216,6 +237,9 @@ pub struct Workers {
     tempo: Sender<TempoRequest>,
     tempo_generation: Arc<AtomicU64>,
     online: Sender<OnlineRequest>,
+    identify: Sender<IdentifyRequest>,
+    /// The identify request that may run; any other one stops at its next step.
+    identify_current: Arc<AtomicU64>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -367,6 +391,28 @@ impl Workers {
                 .expect("spawn online worker");
         }
 
+        let identify_current = Arc::new(AtomicU64::new(0));
+        let (identify, identify_rx) = crossbeam_channel::unbounded::<IdentifyRequest>();
+        {
+            let (tx, w, current) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&identify_current));
+            std::thread::Builder::new()
+                .name("nullamp-identify".into())
+                .spawn(move || {
+                    while let Ok(mut request) = identify_rx.recv() {
+                        while let Ok(newer) = identify_rx.try_recv() {
+                            request = newer;
+                        }
+                        let send = |r: JobResult| {
+                            let sent = tx.send(r).is_ok();
+                            w();
+                            sent
+                        };
+                        run_identify(&current, request, &send);
+                    }
+                })
+                .expect("spawn identify worker");
+        }
+
         Workers {
             interactive,
             bulk,
@@ -375,6 +421,8 @@ impl Workers {
             tempo,
             tempo_generation,
             online,
+            identify,
+            identify_current,
             results,
             scan_generation,
             cover_generation,
@@ -401,6 +449,19 @@ impl Workers {
     /// [`JobResult::EntryArt`] under `key`.
     pub fn request_entry_art(&self, key: String, artist: String, title: String) {
         let _ = self.online.send(OnlineRequest::EntryArt(EntryArtRequest { key, artist, title }));
+    }
+
+    /// Name the tracks of the mix at `path` with Shazam, one after the other. Answered with
+    /// [`JobResult::IdentifyProgress`] and [`JobResult::Identified`] as it goes and
+    /// [`JobResult::IdentifyDone`] at the end, under `request`. A newer request replaces this one.
+    pub fn identify(&self, request: u64, path: PathBuf, tracks: Vec<IdentifyTrack>) {
+        self.identify_current.store(request, Ordering::SeqCst);
+        let _ = self.identify.send(IdentifyRequest { request, path, tracks });
+    }
+
+    /// Stop the running identify request before its next clip or request.
+    pub fn cancel_identify(&self) {
+        self.identify_current.store(0, Ordering::SeqCst);
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with
@@ -529,6 +590,102 @@ fn run_tempo(dir: &Path, current: &AtomicU64, request: TempoRequest) -> Option<J
         }
         Err(TempoError::Cancelled) => None,
         Err(e) => Some(JobResult::Tempo { token, span, result: Err(e.to_string()) }),
+    }
+}
+
+/// Decode a few clips of each track and ask Shazam about them, [`nullamp_shazam::PAUSE`] apart.
+/// Stops quietly once `current` names another request, and stops with an error when Shazam
+/// keeps refusing or every clip of a track failed to reach it (offline, say).
+fn run_identify(current: &AtomicU64, request: IdentifyRequest, send: &dyn Fn(JobResult) -> bool) {
+    use nullamp_shazam::{BACK_OFF, CLIP_SECONDS, CLIPS_PER_TRACK, Error, PAUSE, RATE};
+    let id = request.request;
+    let alive = || current.load(Ordering::SeqCst) == id;
+    // Sleeps in short steps so a cancel takes effect quickly; false once cancelled.
+    let wait = |d: std::time::Duration| {
+        let until = std::time::Instant::now() + d;
+        while std::time::Instant::now() < until {
+            if !alive() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        alive()
+    };
+    let total = request.tracks.len() * CLIPS_PER_TRACK;
+    let (mut done, mut first) = (0, true);
+    let stop = |message: String| {
+        if alive() {
+            send(JobResult::IdentifyDone { request: id, result: Err(message) });
+        }
+    };
+    let clock = nullamp_core::time::format_clock;
+    let file = request.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for track in &request.tracks {
+        log::info!("Shazam: asking about {} to {} of {file}", clock(track.start), clock(track.end));
+        let starts = nullamp_shazam::clip_starts(track.start, track.end, CLIPS_PER_TRACK);
+        let clips = match nullamp_audio::decode_clips(&request.path, RATE, &starts, CLIP_SECONDS, &|| !alive()) {
+            Ok(c) => c,
+            Err(nullamp_audio::MonoError::Cancelled) => return,
+            Err(e) => return stop(format!("Cannot read the mix: {e}")),
+        };
+        let mut answers = Vec::new();
+        let mut failure = None;
+        for (at, clip) in starts.iter().zip(&clips) {
+            if !first && !wait(PAUSE) {
+                return;
+            }
+            first = false;
+            let mut result = nullamp_shazam::recognise(clip);
+            if result == Err(Error::TooMany) {
+                log::info!("Shazam refuses requests for now, waiting {} s", BACK_OFF.as_secs());
+                if !wait(BACK_OFF) {
+                    return;
+                }
+                result = nullamp_shazam::recognise(clip);
+            }
+            match result {
+                Ok(Some(song)) => {
+                    log::info!(
+                        "Shazam: clip at {}: {} - {} (at {} in the song, tempo {:+.1}%, pitch {:+.1}%)",
+                        clock(*at),
+                        song.artist,
+                        song.title,
+                        clock(song.offset),
+                        song.time_skew * 100.0,
+                        song.frequency_skew * 100.0
+                    );
+                    answers.push((*at, song));
+                }
+                Ok(None) => log::info!("Shazam: clip at {}: no match", clock(*at)),
+                Err(Error::TooMany) => return stop("Shazam refuses more requests for now; try again in a few minutes".into()),
+                Err(e) => {
+                    log::warn!("Shazam: clip at {}: {e}", clock(*at));
+                    failure = Some(e.to_string());
+                }
+            }
+            done += 1;
+            if !alive() || !send(JobResult::IdentifyProgress { request: id, done, total }) {
+                return;
+            }
+        }
+        if let (Some(e), true) = (&failure, answers.is_empty()) {
+            return stop(format!("Cannot reach Shazam: {e}"));
+        }
+        let verdict = nullamp_shazam::agree(&answers);
+        match &verdict {
+            nullamp_shazam::Verdict::Named { song, support } => log::info!("Shazam: named {} - {} ({support} of {} clips agree)", song.artist, song.title, starts.len()),
+            nullamp_shazam::Verdict::Unsure { candidates } if candidates.is_empty() => log::info!("Shazam: no clip matched a song"),
+            nullamp_shazam::Verdict::Unsure { candidates } => log::info!(
+                "Shazam: unsure, the clips do not agree: {}",
+                candidates.iter().map(|s| format!("{} - {}", s.artist, s.title)).collect::<Vec<_>>().join(" | ")
+            ),
+        }
+        if !alive() || !send(JobResult::Identified { request: id, entry: track.entry, verdict }) {
+            return;
+        }
+    }
+    if alive() {
+        send(JobResult::IdentifyDone { request: id, result: Ok(()) });
     }
 }
 

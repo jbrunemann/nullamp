@@ -202,19 +202,34 @@ Open **Setlist** in the side panel.
 
 ### Covers of the tracks in a mix
 
-When a track inside a mix starts playing for the first time, Nullamp looks up its cover online by artist and title (Deezer first, then iTunes). This is one of only two things in Nullamp that use the network; the other is the update check. Each track is looked up once and the result is cached, so the same track in another mix gets the same cover. Entries without an artist or title, and "ID - ID" entries, are not looked up.
+When a track inside a mix starts playing for the first time, Nullamp looks up its cover online by artist and title (Deezer first, then iTunes). This is one of only three things in Nullamp that use the network; the others are the update check and [Identify with Shazam](#identifying-tracks-with-shazam). Each track is looked up once and the result is cached, so the same track in another mix gets the same cover. Entries without an artist or title, and "ID - ID" entries, are not looked up.
 
 While the lookup runs, the deck shows the mix file's own cover. When nothing is found, it shows a generated retro landscape, which looks the same for that track every time. To switch the lookup off, set `online_artwork` to `false` (see [Settings file](#settings-file)).
 
 ### Correcting a setlist
 
-Right-click an entry for **Edit entry**, **Set start to playhead** and **Delete entry**. In the editor you can change the title and artist, type a time, or press **→ playhead** to use the current playback position. The **exact** checkbox says whether the time is trustworthy.
+Right-click an entry for **Edit entry**, **Set start to playhead**, **Identify with Shazam** and **Delete entry**. In the editor you can change the title and artist, type a time, or press **→ playhead** to use the current playback position. The **exact** checkbox says whether the time is trustworthy.
 
 To fix a time by ear: play to the moment the new track starts, right-click that entry, and choose **Set start to playhead**. The boundary becomes exact.
 
 To add a missing track, play to where it starts and click **+ At playhead**.
 
 Your corrections are saved with the setlist. They survive renaming, moving or retagging the audio file, because Nullamp identifies the audio by a fingerprint of its content, not by its name. **Import ▸ Scan file again** re-reads the file's chapters and cue sheets while keeping your corrections.
+
+### Identifying tracks with Shazam
+
+For a mix of your own that has no tracklist anywhere, mark where each track starts and let Shazam name the tracks one by one:
+
+1. Play the mix, and at the start of each track click **+ At playhead**. Leave artist and title empty.
+2. Right-click an entry and choose **Identify with Shazam**. Nullamp takes five 12-second clips from the middle of that track, away from the blends, and asks Shazam about each one, five seconds apart, so it takes about half a minute. The entry shows a spinner and how many clips have been asked about; **Cancel Shazam** in its right-click menu stops it, and so does playing another file. One track is asked about at a time.
+3. The track is named only when at least two of its clips name the same song, at positions that fit how the mix moves through it. Single clips are often wrong, so this keeps chance answers out. The entry then shows artist and title as a suggestion, with Shazam as its source, and the status bar says what was found.
+4. When the clips disagree, the entry keeps its text and gets an orange **?**. Edit the entry to see the songs Shazam named; **Use** puts one into the fields, **open** shows its page on shazam.com, and **Save** keeps it.
+
+If you typed the entry's artist or title yourself, Shazam's answer does not replace them: it is offered in the editor, as for an unsure track. An entry from a cue sheet or chapters that you have not edited is filled in, so you can also use this to check a tracklist.
+
+**Settings ▸ Logs** shows what happened: the answer for each clip (with where the clip sits in the song and how much faster or slower the mix plays it), and whether the clips agreed.
+
+Only a signature of each clip is sent, a list of its loudest frequencies, not the audio. Nullamp uses the address the Shazam apps use, which Shazam does not offer for other programs: it can stop working at any time, and Shazam may refuse requests for a while if there are many. Shazam often knows only one version of a track (a vocal version for an instrumental, say), and it cannot know unreleased tracks or your own edits.
 
 ### Importing a setlist
 
@@ -411,7 +426,13 @@ If a data file cannot be read, Nullamp renames it to `.broken`, tells you, and s
 
 **A file is greyed out with a warning.** The file moved or its volume is not mounted. Reconnect the volume, or remove the entry.
 
-**A mix shows no setlist.** The file has no chapters or cue sheet that Nullamp could find. Put a `.cue` file next to it with exactly the same name, or use **Import ▸ Paste tracklist…**, or add entries yourself with **+ At playhead**.
+**A mix shows no setlist.** The file has no chapters or cue sheet that Nullamp could find. Put a `.cue` file next to it with exactly the same name, or use **Import ▸ Paste tracklist…**, or add entries yourself with **+ At playhead** and right-click them for **Identify with Shazam**.
+
+**Identify with Shazam is greyed out.** The entry has no start time, or Shazam is still being asked about another entry. Wait for it, or choose **Cancel Shazam** on that entry.
+
+**Identify with Shazam stops with "Shazam refuses more requests".** Shazam limits how often it answers. Wait a few minutes and try again.
+
+**Shazam is often unsure.** The clips may fall into long blends, or the track is unknown to Shazam. **Settings ▸ Logs** shows each clip's answer. Move the start of the entry, or of the next one, closer to where the tracks really change, or edit the entry and pick from Shazam's answers.
 
 **Times in a mix are a little off.** Seek to the true start, then use **Set start to playhead** on that entry.
 
@@ -432,7 +453,8 @@ If a data file cannot be read, Nullamp renames it to `.broken`, tells you, and s
 - Seeking far into a variable bit rate MP3 that has no seek table is approximate. Constant bit rate files, which covers most DJ mixes, seek exactly.
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
 - Batch tag editing is limited to 500 files.
-- Tracklists come only from chapters, cue sheets or paste import. Nullamp does not look them up online.
+- Tracklists come only from chapters, cue sheets, paste import or Shazam. Nullamp does not look them up online.
+- Identify with Shazam needs the start of each track; it does not find where tracks change.
 - Nullamp does not detect musical keys; it only shows keys from tags, rekordbox or Mixxx.
 - Cues, hot cues and beat grids from rekordbox and Mixxx are not read.
 - "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window instead.

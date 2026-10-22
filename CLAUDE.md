@@ -9,7 +9,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 ## Current focus (user preference)
 
 - **macOS only for now.** The user wants a working, likeable macOS app before any Linux or Windows work. Do not run Docker, cross-builds or other-OS packaging unless asked.
-- **Almost no online features.** Tracklist search and the MusicBrainz/Cover Art Archive lookup were both removed on purpose (too error prone and complex for how rarely they were used), and the `nullamp-online` crate is gone. Two things use the network: the user-initiated update check on the Settings Updates tab (`nullamp-update`), and the cover lookup for the active track of a mix (`nullamp-artwork`, Deezer then iTunes, once per track, cached). Both run `curl`. See "Online sources" in `docs/HANDOFF.md` before proposing anything else online.
+- **Almost no online features.** Tracklist search and the MusicBrainz/Cover Art Archive lookup were both removed on purpose (too error prone and complex for how rarely they were used), and the `nullamp-online` crate is gone. Three things use the network: the user-initiated update check on the Settings Updates tab (`nullamp-update`), the cover lookup for the active track of a mix (`nullamp-artwork`, Deezer then iTunes, once per track, cached), and the user-initiated "Identify with Shazam" on a setlist entry (`nullamp-shazam`, signatures of short clips to Shazam's unofficial endpoint, chosen by the user knowing it is against Shazam's terms and may break). All run `curl`. See "Online sources" in `docs/HANDOFF.md` before proposing anything else online.
 - Disk space is tight: `/` and `/Volumes/Development` share one APFS container. Keep `target/` lean and never create large Docker artifacts.
 
 ## Layout
@@ -21,6 +21,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | `crates/nullamp-meta` | Tags via lofty, ID3 chapters via id3, artwork, technical info, safe tag writing with backups |
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
 | `crates/nullamp-artwork` | Cover of one track of a mix by artist and title: Deezer search, then iTunes Search, via `curl`; result matching |
+| `crates/nullamp-shazam` | Names the tracks of a mix with Shazam: signatures of 12 s clips in the Shazam apps' format, posted via `curl`, and the rule that several clips must agree |
 | `crates/nullamp-update` | Update check: asks a release address (GitHub latest release by default) via `curl` and compares versions; copied from macsplorer's `update-check` |
 | `crates/nullamp-rekordbox` | Read-only reader of rekordbox libraries: a USB export (tracks from `export.pdb`, waveforms from the analysis files) and the desktop `master.db` (tracks and playlists, SQLCipher, user-supplied key) |
 | `crates/nullamp-mixxx` | Read-only reader of the Mixxx library (`mixxxdb.sqlite`, plain SQLite): tracks, crates, playlists and play history |
@@ -36,6 +37,7 @@ cargo test -p nullamp ui_snapshots -- --ignored --test-threads=1   # renders the
 cargo run --release -p nullamp-audio --example probe -- FILE [NEXT_FILE] [--audible]   # engine latency probe, silent by default
 cargo run --release -p nullamp-audio --example waveform FILE   # times the waveform pass for a file
 cargo run --release -p nullamp-audio --example tempo FILE...   # BPM estimate and time per file
+cargo run --release -p nullamp-shazam --example identify -- MIX CUE   # names the tracks at the cue's starts with Shazam (30 requests for 6 tracks)
 packaging/macos/bundle.sh                    # builds target/bundle/Nullamp.app
 NULLAMP_HOME=/some/dir cargo run --release   # run with an isolated config/data/cache directory
 ```

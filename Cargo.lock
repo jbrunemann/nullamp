@@ -2939,6 +2939,7 @@ dependencies = [
  "nullamp-meta",
  "nullamp-mixxx",
  "nullamp-rekordbox",
+ "nullamp-shazam",
  "nullamp-sysmedia",
  "nullamp-update",
  "pollster 0.4.0",
@@ -3018,6 +3019,18 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "unicode-normalization",
+]
+
+[[package]]
+name = "nullamp-shazam"
+version = "1.7.0"
+dependencies = [
+ "base64",
+ "nullamp-audio",
+ "nullamp-core",
+ "realfft",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

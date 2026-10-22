@@ -15,6 +15,7 @@ nullamp-meta = { path = "crates/nullamp-meta" }
 nullamp-sysmedia = { path = "crates/nullamp-sysmedia" }
 nullamp-update = { path = "crates/nullamp-update" }
 nullamp-artwork = { path = "crates/nullamp-artwork" }
+nullamp-shazam = { path = "crates/nullamp-shazam" }
 nullamp-rekordbox = { path = "crates/nullamp-rekordbox" }
 nullamp-mixxx = { path = "crates/nullamp-mixxx" }
 serde = { version = "1", features = ["derive"] }

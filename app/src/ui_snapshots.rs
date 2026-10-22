@@ -22,7 +22,7 @@ fn out_dir() -> PathBuf {
     d
 }
 
-fn seeded_store(dir: &Path, appearance: &str) -> Store {
+pub(crate) fn seeded_store(dir: &Path, appearance: &str) -> Store {
     let paths = AppPaths { config: dir.join("config"), data: dir.join("data"), cache: dir.join("cache") };
     let store = Store::new(paths);
     let f = fixtures();
@@ -35,7 +35,7 @@ fn seeded_store(dir: &Path, appearance: &str) -> Store {
     store
 }
 
-fn settle(h: &mut Harness<'_, App>, ms: u64) {
+pub(crate) fn settle(h: &mut Harness<'_, App>, ms: u64) {
     for _ in 0..(ms / 50) {
         std::thread::sleep(Duration::from_millis(50));
         h.step();

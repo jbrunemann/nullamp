@@ -13,6 +13,7 @@ nullamp-meta.workspace = true
 nullamp-sysmedia.workspace = true
 nullamp-update.workspace = true
 nullamp-artwork.workspace = true
+nullamp-shazam.workspace = true
 nullamp-rekordbox.workspace = true
 nullamp-mixxx.workspace = true
 serde.workspace = true
