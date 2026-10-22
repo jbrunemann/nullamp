@@ -4,7 +4,7 @@
 
 # Nullamp user manual
 
-Version 0.2. This manual covers the macOS app. For building from source and the project layout, see the [README](../README.md).
+Version 1.7. This manual covers the macOS app. For building from source and the project layout, see the [README](../README.md).
 
 <p align="center">
   <img src="images/nullamp-main.png" alt="Nullamp playing a DJ mix: the player deck on top, the playlist on the left and the setlist on the right" width="900">
@@ -19,10 +19,12 @@ Version 0.2. This manual covers the macOS app. For building from source and the 
 5. [Playlists](#5-playlists)
 6. [DJ mixes and setlists](#6-dj-mixes-and-setlists)
 7. [Editing tags and artwork](#7-editing-tags-and-artwork)
-8. [Keyboard shortcuts](#8-keyboard-shortcuts)
-9. [Where Nullamp keeps your data](#9-where-nullamp-keeps-your-data)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Known limitations](#12-known-limitations)
+8. [rekordbox and Mixxx](#8-rekordbox-and-mixxx)
+9. [Settings](#9-settings)
+10. [Keyboard shortcuts](#10-keyboard-shortcuts)
+11. [Where Nullamp keeps your data](#11-where-nullamp-keeps-your-data)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Known limitations](#13-known-limitations)
 
 ## 1. What Nullamp is
 
@@ -31,7 +33,7 @@ Nullamp plays the music files on your disk. It is built for two things:
 - **Fast, plain playback.** Files open in a few tens of milliseconds, seeking is instant, and nothing you do blocks the window.
 - **DJ mixes.** A mix is one long audio file that contains many tracks. Nullamp reads the track list (the *setlist*) and always shows which track is playing right now.
 
-It also has a metadata editor for tags and artwork that edits files safely.
+It also has a metadata editor for tags and artwork that edits files safely, and it can read the libraries of rekordbox and Mixxx.
 
 Nullamp is not a streaming service and not a library manager. It never moves, renames or scans your music folders on its own.
 
@@ -52,12 +54,13 @@ Do any of the following:
 - Drag files or folders from Finder onto the window. They land where you drop them.
 - Click **Add files…** (⌘O) or **Add folder…** (⇧⌘O) above the playlist.
 - Use **List ▸ Import M3U / M3U8…** to load an existing playlist.
+- Use the **List** menu to add playlists from rekordbox or Mixxx (see [section 8](#8-rekordbox-and-mixxx)).
 
 Double-click a row, or select it and press Enter, to play it.
 
 ## 3. A tour of the window
 
-The window has four areas, from top to bottom. The numbers refer to the screenshot at the top of this manual.
+The window has four areas, from top to bottom.
 
 ### The deck
 
@@ -69,16 +72,25 @@ The black display at the top is the *LCD*.
 | Spectrum below the digits | A live visualiser. Click it to cycle between spectrum, oscilloscope and off. The picture is aligned to what you hear, not to what was just decoded. |
 | Orange title | The track that is playing. For a mix, this is the track *inside* the mix. |
 | Green line under it | For a mix: `MIX ▸ mix title, DJ`. For a single track: artist and album. |
+| `BPM` frame | The tempo. It comes from the file's tags, or from rekordbox or Mixxx. Without either, Nullamp listens to the audio and shows its estimate with a `~` in front. For a mix it shows the tempo of the track inside the mix. `---` means the file's BPM tag is `-1`, which switches the tempo off for that file. |
 | `FILE 1/2   TRACK 3/6` | Position in the playlist, and for a mix the position in the setlist. |
+| `OUT` and a device name | The audio output. Click it to choose another device. |
 | Bottom line | Format, bit rate, sample rate, channels and the file name. Hover the file name for the full path. |
 | `SHUF  RPT  MUTE` | Lit when shuffle, repeat or mute is on. |
-| Square at the right | Artwork. For a mix it switches to the artwork of the current setlist entry when there is one. Click it to open the Inspector. |
+
+Right-click the display to open the settings (see [section 9](#9-settings)).
+
+### The artwork
+
+The square to the right of the LCD shows the artwork of the playing file. While a mix plays, it shows the cover of the track inside the mix (see [Covers of the tracks in a mix](#covers-of-the-tracks-in-a-mix)). A change of cover is animated.
+
+Click the artwork to cycle between three looks: **dithered** (the default, in the style of the LCD), **original** and **off**. The choice is kept across tracks and restarts. A file without any artwork shows a generated picture instead, and clicking it opens the Inspector.
 
 ### The timeline
 
 Under the LCD is the seek bar. Click or drag to seek.
 
-Behind the bar is a rough waveform of the whole file: the dim outline is the peak level and the brighter body the average loudness, scaled so the loudest point fills the bar. It appears a moment after a track starts (a long mix takes a second or two the first time and is instant afterwards), so you can spot breaks, builds and drops before you get there.
+Behind the bar is a waveform of the whole file: the dim outline is the peak level and the brighter body the average loudness, scaled so the loudest point fills the bar. It appears a moment after a track starts, drawing from left to right (a long mix takes a second or two the first time and is instant afterwards), so you can spot breaks, builds and drops before you get there. Tracks known to rekordbox or Mixxx use that program's coloured waveform instead (see [section 8](#8-rekordbox-and-mixxx)).
 
 When the playing file is a mix, the timeline is divided into one segment per setlist entry. Thin vertical lines mark the track boundaries and the current track is lit in amber. Solid boundaries are exact. Dashed boundaries are estimates (see [Approximate times](#approximate-times)). Hover a segment to see the track name and its start time. The numbers at the ends are elapsed and total time.
 
@@ -90,6 +102,7 @@ When the playing file is a mix, the timeline is divided into one segment per set
 | Shuffle | Toggle shuffle |
 | Repeat | Cycle repeat modes |
 | Speaker and green bars | Mute, and volume. Click the bars or scroll over them. |
+| **DIM** | Dims everything except the LCD and the artwork. Click again for darker steps, then off. The D key does the same. |
 | **Playlist**, **Setlist**, **Inspector** | Show or hide the playlist and the two side panels |
 
 The **Setlist** button carries the number of entries (`Setlist · 6`). It only appears for a mix.
@@ -98,22 +111,19 @@ The **Setlist** button carries the number of entries (`Setlist · 6`). It only a
 
 The left area holds your playlists. The right area is the side panel, which shows either the **Setlist** or the **Inspector**. Drag the divider between them to resize. The `×` closes the side panel.
 
-The status bar at the bottom shows track counts and total time and messages. Right-click the display to open the settings (General, Audio device, Shortcuts and About tabs).
+The status bar at the bottom shows track counts, total time and messages.
 
 ## 4. Playing music
 
-- **Play, pause, stop, previous, next:** the transport buttons, or Space (play and pause), and Z X C V B. See [Keyboard shortcuts](#9-keyboard-shortcuts).
+- **Play, pause, stop, previous, next:** the transport buttons, or Space (play and pause), and Z X C V B. See [Keyboard shortcuts](#10-keyboard-shortcuts).
 - **Seek:** click or drag the timeline (the seek happens when you let go), or press ← and → to move 5 seconds.
 - **Volume:** the green bars, or + and −. M mutes.
 - **Shuffle and repeat:** S and R, or the buttons.
 - **Gapless:** the next track is prepared while the current one plays, so albums and consecutive mixes play without a gap.
-- **Media keys:** the hardware play, pause and skip keys work even while Nullamp is in the background. The macOS Now Playing widget shows the current track. For a mix, it shows the track inside the mix as the title and "mix title, DJ" as the album.
-- **Output device changes:** if you plug in headphones, connect Bluetooth speakers, or wake the Mac from sleep, Nullamp recovers and continues from the same position.
-- **Resume:** by default Nullamp starts silent. It does not resume the last track unless the `resume_playback` setting is on (see [Settings](#settings-file)).
-
-### Themes
-
-Right-click the display, choose **General** and pick dark, light or system on the **General** tab. The LCD stays dark in every theme. The choice is remembered.
+- **Media keys:** the hardware play, pause and skip keys work even while Nullamp is in the background. The macOS Now Playing widget shows the current track. For a mix, it shows the track inside the mix as the title, "mix title, DJ" as the album, and the track's cover when one was found.
+- **Output device:** click `OUT` on the LCD, or open **Settings ▸ Audio device**, to choose where sound goes. Your choice sticks: if the device is unplugged, Nullamp plays on the system default and returns to your device when it comes back.
+- **Device changes:** if you plug in headphones, connect Bluetooth speakers, or wake the Mac from sleep, Nullamp recovers and continues from the same position.
+- **Resume:** by default Nullamp starts silent. It does not resume the last track unless the `resume_playback` setting is on (see [Settings file](#settings-file)).
 
 ## 5. Playlists
 
@@ -134,18 +144,27 @@ Playlists are saved automatically and are restored the next time you start Nulla
 | Select | Click. ⇧-click or ⇧↑/⇧↓ extends, ⌘A selects all. |
 | Play | Double-click, or Enter |
 | Reorder | Drag rows. A line shows where they will land. Or use **▲ ▼**, or ⌥↑ and ⌥↓. |
+| Copy to another playlist | Drag the rows onto that playlist's tab, or right-click ▸ **Copy to playlist**. They are added at the end and stay in this playlist too. |
 | Remove | **Remove**, or Delete or Backspace |
-| Right-click menu | **Play**, **Inspect metadata**, **Show in folder**, **Copy path**, **Move up**, **Move down**, **Remove** |
+| Right-click menu | **Play**, **Inspect metadata**, **Show in folder**, **Copy path**, **Copy to playlist**, **Move up**, **Move down**, **Remove** |
 | Find the playing track | **◎ Now playing**, or ⌘J |
 
 Missing files stay in the list, greyed out with a warning, so you can find and fix them. **List ▸ Remove unavailable entries** removes them all.
 
-Columns: right-click the header to show or hide columns, drag a header to reorder them, and choose **Reset columns** to go back to the default. A column shows the track number, a small artwork thumbnail with the artist, the title, the album, the format and the duration.
+### Columns
+
+The available columns are number, artwork (a small thumbnail), title, artist, album, year, format, bitrate, BPM, key and time. Year and bitrate are hidden at first. Right-click the header to show or hide columns, drag a header to reorder them, and choose **Reset columns** to go back to the default.
+
+The **BPM** column shows the tempo from the tags. A tempo Nullamp detected while playing is shown with a `~` and kept with the playlist. The **KEY** column is coloured by its position on the Camelot wheel, so keys that mix well look alike. Keys are shown as Camelot codes (`8A`) unless the `camelot` setting is off, which shows names (`Am`).
 
 ### Toolbar menus
 
-- **Sort:** by title, artist, album, file path or duration, and **Reverse**.
-- **List:** import or export M3U/M3U8, select all, remove unavailable entries, **Rescan tags** (re-read tags for every entry), and **Clear playlist…**.
+- **Sort:** by title, artist, album, file path, bitrate, BPM, key or duration, and **Reverse**. By key follows the Camelot wheel.
+- **List:**
+  - **Open rekordbox USB**, **Open rekordbox collection…**, **Open Mixxx library…** and **Read metadata from DJ software** (see [section 8](#8-rekordbox-and-mixxx)).
+  - **Import M3U / M3U8…** and **Export as M3U8…**.
+  - **Select all**, **Remove unavailable entries** and **Rescan tags** (re-read tags for every entry).
+  - **Clear playlist…**.
 
 ### Hiding the playlist
 
@@ -179,6 +198,12 @@ Open **Setlist** in the side panel.
 - Any problem, such as entries out of order or beyond the end of the file, is listed above the entries.
 
 **Double-click** an entry to jump to it. Press ⇧← and ⇧→ to go to the previous or next entry while listening.
+
+### Covers of the tracks in a mix
+
+When a track inside a mix starts playing for the first time, Nullamp looks up its cover online by artist and title (Deezer first, then iTunes). This is one of only two things in Nullamp that use the network; the other is the update check. Each track is looked up once and the result is cached, so the same track in another mix gets the same cover. Entries without an artist or title, and "ID - ID" entries, are not looked up.
+
+While the lookup runs, the deck shows the mix file's own cover. When nothing is found, it shows a generated retro landscape, which looks the same for that track every time. To switch the lookup off, set `online_artwork` to `false` (see [Settings file](#settings-file)).
 
 ### Correcting a setlist
 
@@ -221,7 +246,10 @@ Open the **Inspector** (the button, or ⌘I). It shows the selected file in the 
 
 ### Fields
 
-Title, artist, album, album artist, date, genre, track and disc numbers, composer, comment, description, copyright, and the artist and file URLs. Change what you like and press **Save**. **Cancel** discards your edits, and **Reload** reads the file again.
+Title, artist, album, date or year, genre, BPM, key, track number and total, and comment. Change what you like and press **Save**. **Cancel** discards your edits, and **Reload** reads the file again.
+
+- **BPM:** when the field is empty and Nullamp has detected the tempo of the playing file, a **Detected N BPM: use it** button fills it in. MP3 and M4A store whole numbers only. Enter `-1` to switch tempo display and detection off for a file.
+- **Key:** type it as a Camelot code (`8A`), an Open Key code (`1m`) or a name (`Am`, `F# minor`, `Bb`). It is written as you type it.
 
 ### Several files at once
 
@@ -229,13 +257,20 @@ Select up to 500 files and open the Inspector. A field that differs between the 
 
 ### Artwork
 
-The artwork section lists every embedded image with its thumbnail on the left and its type, size and weight beside it. **Import…** adds an image and **Remove** deletes one. **Set as front cover** tags an image as the front cover and moves it to the first position. The front cover is the image other players show as album art, so use it when an image is labelled "Other" and some apps do not display it. Nullamp itself falls back to the first image when none is tagged as the front cover. The button only appears on images that are not already the front cover. With several files selected, changing artwork changes it in all of them.
+The artwork section lists every embedded image with its thumbnail on the left and its type, size and weight beside it.
+
+- **Import…** adds an image and **Remove** deletes one.
+- **Find online** looks up a cover by the artist and title in the form, using the same services as the mix track covers. The image is added as type "Other" and is only written when you press **Save**. It is not available for several files at once.
+- **Set as front cover** tags an image as the front cover and moves it to the first position. The front cover is the image other players show as album art, so use it when an image is labelled "Other" and some apps do not display it. Nullamp itself falls back to the first image when none is tagged as the front cover. The button only appears on images that are not already the front cover.
+
+With several files selected, changing artwork changes it in all of them.
 
 ### Read-only information
 
 Below the fields you will find:
 
 - **Technical**: format, bit rate, sample rate, channels, duration.
+- **From DJ software**: what rekordbox or Mixxx knows about the file, such as key, BPM, rating and colour (see [section 8](#8-rekordbox-and-mixxx)).
 - **Embedded chapters** and **Cue sheet in tags**, if the file has them.
 - **Other tag items**: frames Nullamp does not edit. They are preserved when saving.
 
@@ -251,11 +286,77 @@ Nullamp never edits your file in place. Each save:
 
 If anything fails, your original is untouched. Chapters, artwork you did not change, and unknown frames survive. The audio itself is never rewritten. With backups on, you can click **Restore it** after a save to put the previous version back.
 
-Backups are off by default; turn them on with `backup_before_tag_writes` (see [Settings file](#settings-file)). They are stored in the data folder (see [section 9](#9-where-nullamp-keeps-your-data)), with a size budget of 256 MB by default. A file larger than half the budget is not backed up. The oldest backups go first.
+Backups are off by default; turn them on with `backup_before_tag_writes` (see [Settings file](#settings-file)). They are stored in the data folder (see [section 11](#11-where-nullamp-keeps-your-data)), with a size budget of 256 MB by default. A file larger than half the budget is not backed up. The oldest backups go first.
 
-## 8. Keyboard shortcuts
+## 8. rekordbox and Mixxx
 
-Press F1, or right-click the display, choose **Keyboard shortcuts**, to see this list in the app.
+Nullamp can add playlists from rekordbox and Mixxx, and use what those programs know about your tracks. It only reads their libraries and never changes them.
+
+### rekordbox USB sticks
+
+Plug in a USB stick exported by rekordbox and choose **List ▸ Open rekordbox USB**. Each stick becomes a playlist named after the volume, with title, artist, album, duration, bitrate, BPM and key filled in from rekordbox's database. Opening it again refreshes that playlist.
+
+### The rekordbox desktop library
+
+The library of the rekordbox app on your Mac is encrypted, and Nullamp needs its key once:
+
+1. Quit rekordbox.
+2. Open **Settings ▸ rekordbox** and click **Copy key command**. The tab tells you whether a Python 3 is installed, which the command needs.
+3. Paste the command into Terminal and run it. It installs a small tool in a private folder and prints a 64-character key.
+4. Paste the key into the **master.db key** field.
+
+Then choose **List ▸ Open rekordbox collection…**. A dialog lists your playlists and folders. Tick **Entire collection** for one list with every track, or tick the playlists you want; ticking a folder ticks everything in it. Click **Add**.
+
+rekordbox's bundled samples, effect sounds and demo tracks are left out. Streaming tracks (from Spotify and the like) are added but show as unavailable, because there is no file to play.
+
+### The Mixxx library
+
+Choose **List ▸ Open Mixxx library…**. The same kind of dialog lists your crates, playlists and history sessions. Nullamp finds the library in Mixxx's own folder; you cannot point it elsewhere. Mixxx's library is only read after you open it this way the first time.
+
+If macOS refuses access (the Mac App Store version of Mixxx keeps its library in a protected folder), allow Nullamp under **System Settings ▸ Privacy & Security ▸ Full Disk Access**.
+
+### What Nullamp uses from them
+
+- **Key, BPM, year and the like** fill in what a file's own tags lack. The tags always win where they have a value.
+- **Waveforms:** the timeline shows rekordbox's or Mixxx's coloured waveform instead of Nullamp's own. Turn this off with **Use rekordbox's and Mixxx's waveform analysis** on the rekordbox tab.
+- **Rating and colour** are shown in the Inspector under **From DJ software**.
+
+This works for any file the programs know, wherever you add it from. Nullamp also caches what it learned by the content of the file, so a copy of the file on another disk keeps its key, BPM and waveform even when the stick is away or the program is closed.
+
+To cache this for a whole playlist ahead of time, choose **List ▸ Read metadata from DJ software**. The import dialogs do the same when **Also read waveforms, keys and ratings** is ticked. Progress shows in the status bar.
+
+## 9. Settings
+
+Right-click the LCD and pick a page. The settings page has these tabs:
+
+| Tab | What it holds |
+|---|---|
+| **General** | Appearance: dark, light, or follow macOS. The LCD stays dark in every theme. |
+| **Audio device** | The output device, as on the `OUT` label. |
+| **Shortcuts** | The keyboard shortcuts. F1 opens it. |
+| **rekordbox** | The waveform setting and the desktop library key (see [section 8](#8-rekordbox-and-mixxx)). |
+| **Updates** | Your version and **Check for updates**. Nullamp only contacts the update address when you press the button. |
+| **Cache** | What the cache holds, by kind, with a **Clear** button for each, **Clear all** and **Show in Finder**. Everything is made again when needed, except data from a rekordbox stick that is not plugged in. |
+| **Logs** | The last 50 lines of Nullamp's log, with **Copy**. Useful when reporting a problem. |
+| **About** | Version and licence. The **Nullamp ▸ About** menu opens it too. |
+
+### Settings file
+
+Nullamp writes `settings.json` in the config folder (see [section 11](#11-where-nullamp-keeps-your-data)). **Nullamp ▸ Open Config File** opens it in your text editor. Quit the app before editing it by hand, or your changes may be overwritten. Useful keys:
+
+| Key | Meaning |
+|---|---|
+| `resume_playback` | Resume the last track at start. Default off. |
+| `backup_before_tag_writes` | Keep a backup on every tag write. Default off. |
+| `backup_budget_mb` | Size budget for backups. Default 256. |
+| `online_artwork` | Look up covers of the tracks inside mixes, and allow **Find online**. Default on. |
+| `camelot` | Show keys as Camelot codes (`8A`) rather than names (`Am`). Default on. |
+| `appearance` | `dark`, `light` or `system`. |
+| `visualizer` | `spectrum`, `scope` or `off`. |
+
+## 10. Keyboard shortcuts
+
+Press F1, or right-click the display and choose **Keyboard shortcuts**, to see this list in the app.
 
 | Key | Action |
 |---|---|
@@ -269,6 +370,7 @@ Press F1, or right-click the display, choose **Keyboard shortcuts**, to see this
 | M | Mute |
 | S | Shuffle |
 | R | Cycle repeat |
+| D | Dim everything but the display and artwork |
 | ↑ ↓, Home, End | Move the selection (⇧ extends it) |
 | Enter | Play the selected entry |
 | Delete or Backspace | Remove the selected entries |
@@ -284,36 +386,26 @@ Press F1, or right-click the display, choose **Keyboard shortcuts**, to see this
 
 The letter keys do not fire while you type in a text field.
 
-## 9. Where Nullamp keeps your data
+## 11. Where Nullamp keeps your data
 
 | What | Where |
 |---|---|
 | Settings, playlists, saved setlists | `~/Library/Application Support/Nullamp/` |
 | Tag-write backups | `~/Library/Application Support/Nullamp/tag-backups/` |
-| Artwork thumbnails | `~/Library/Caches/Nullamp/artwork/`. Safe to delete. |
-| Waveforms | `~/Library/Caches/Nullamp/waveforms/`. A few KB per file, recomputed when missing. Entries not used for 90 days are removed when Nullamp starts. |
+| Artwork thumbnails and mix track covers | `~/Library/Caches/Nullamp/artwork/`. Covers found online are kept 30 days, tracks with nothing found 7 days. |
+| Waveforms, tempos and DJ software data | `~/Library/Caches/Nullamp/waveforms/`. A few KB per file. Entries not used for 90 days are removed when Nullamp starts. |
+
+Everything under `~/Library/Caches/Nullamp/` is safe to delete, and the **Cache** tab in the settings does it for you.
 
 Set the environment variable `NULLAMP_HOME` to a folder before launching to keep everything in one place, for example on a USB stick or for testing: `NULLAMP_HOME=/some/dir open -a Nullamp`.
 
 If a data file cannot be read, Nullamp renames it to `.broken`, tells you, and starts fresh with that file.
 
-### Settings file
-
-Nullamp writes `settings.json` in the config folder. Quit the app before editing it by hand. Useful keys:
-
-| Key | Meaning |
-|---|---|
-| `resume_playback` | Resume the last track at start. Default off. |
-| `backup_before_tag_writes` | Keep a backup on every tag write. Default off. |
-| `backup_budget_mb` | Size budget for backups. Default 256. |
-| `appearance` | `dark`, `light` or `system`. |
-| `visualizer` | `spectrum`, `scope` or `off`. |
-
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 **The first launch says the app cannot be opened.** The app is unsigned. Right-click it, choose **Open**, and confirm once.
 
-**No sound, or sound on the wrong device.** Nullamp plays to the current macOS output device. Change it in System Settings ▸ Sound. Nullamp follows the change within a moment.
+**No sound, or sound on the wrong device.** Click `OUT` on the LCD and choose the device. If you never picked one, Nullamp follows the macOS output device in System Settings ▸ Sound within a moment.
 
 **A file is greyed out with a warning.** The file moved or its volume is not mounted. Reconnect the volume, or remove the entry.
 
@@ -325,13 +417,21 @@ Nullamp writes `settings.json` in the config folder. Quit the app before editing
 
 **A save went wrong.** Press **Restore it** right after saving, or find the original in the tag-backups folder.
 
-**Lookups do nothing.** The status bar says `offline mode`. Click it to turn lookups on.
+**Open rekordbox collection is greyed out.** It needs the key on **Settings ▸ rekordbox** first.
 
-## 12. Known limitations
+**The rekordbox key does not work.** Quit rekordbox before running the key command, and paste the whole 64-character result.
+
+**Mixxx tracks all show as unavailable.** Mixxx stores the full path of each file. A library copied from another computer points to paths that do not exist on this Mac.
+
+**Mix track covers do not appear.** The Mac is offline, or the services do not know the track. Nullamp tries again a minute later, or when the track becomes active again. Check that `online_artwork` is not off.
+
+## 13. Known limitations
 
 - Seeking far into a variable bit rate MP3 that has no seek table is approximate. Constant bit rate files, which covers most DJ mixes, seek exactly.
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
 - Batch tag editing is limited to 500 files.
-- Nullamp has no online features. Tracklists come from chapters, cue sheets or paste import.
+- Tracklists come only from chapters, cue sheets or paste import. Nullamp does not look them up online.
+- Nullamp does not detect musical keys; it only shows keys from tags, rekordbox or Mixxx.
+- Cues, hot cues and beat grids from rekordbox and Mixxx are not read.
 - "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window instead.
 - macOS is the only supported platform for now.
