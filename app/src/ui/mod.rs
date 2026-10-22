@@ -34,6 +34,8 @@ const DEFAULT_HEIGHT: f32 = 720.0;
 /// Keep in step with the minimum window size in `main.rs`.
 const MIN_WIDTH: f32 = 640.0;
 const MIN_FULL_HEIGHT: f32 = 420.0;
+/// The narrowest the side panel can be dragged.
+const SIDE_MIN_WIDTH: f32 = 300.0;
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,6 +213,10 @@ pub struct App {
     pub side_open: bool,
     pub side_tab: SideTab,
     pub playlist_open: bool,
+    /// Whether the window is too narrow for the playlist toolbar and the side panel together (as of the last frame).
+    narrow: bool,
+    /// The side panel was closed because the window became narrow, and returns when it is wide again.
+    side_suspended: bool,
     /// The LCD and the artwork as last drawn: the parts of the window that dimming leaves bright.
     deck_bright: [egui::Rect; 2],
     /// Whether the window is currently shrunk to just the player (`None` before the
@@ -292,6 +298,8 @@ impl App {
             side_open: settings.side_panel_open,
             side_tab,
             playlist_open: settings.playlist_open,
+            narrow: false,
+            side_suspended: false,
             deck_bright: [egui::Rect::NOTHING; 2],
             compact: None,
             full_height: DEFAULT_HEIGHT,
@@ -1201,8 +1209,46 @@ impl App {
     }
 
     pub fn toggle_playlist(&mut self) {
-        self.playlist_open = !self.playlist_open;
+        self.side_suspended = false;
+        if self.playlist_open {
+            self.playlist_open = false;
+        } else {
+            self.show_playlist();
+        }
         self.mark_settings_dirty();
+    }
+
+    /// Opens the playlist; in a narrow window it takes the place of the side panel.
+    pub fn show_playlist(&mut self) {
+        self.playlist_open = true;
+        if self.narrow {
+            self.side_open = false;
+        }
+    }
+
+    /// Opens the side panel on `tab`; in a narrow window it takes the place of the playlist.
+    pub fn show_side(&mut self, tab: SideTab) {
+        self.side_open = true;
+        self.side_tab = tab;
+        if self.narrow {
+            self.playlist_open = false;
+        }
+    }
+
+    /// Keeps to one section at a time while the window is narrow: the side panel steps aside for the playlist
+    /// and comes back when the window is wide enough again.
+    fn fit_sections(&mut self, width: f32) {
+        if width <= 0.0 {
+            return;
+        }
+        self.narrow = width < self.pl_view.toolbar_min + SIDE_MIN_WIDTH;
+        if self.narrow && self.side_open && self.playlist_open {
+            self.side_open = false;
+            self.side_suspended = true;
+        } else if !self.narrow && self.side_suspended {
+            self.side_suspended = false;
+            self.side_open = self.playlist_open;
+        }
     }
 
     /// With neither the playlist nor the side panel showing, the window is just the
@@ -1236,14 +1282,14 @@ impl App {
     }
 
     pub fn toggle_side(&mut self, tab: SideTab) {
+        self.side_suspended = false;
         if self.side_open && self.shown_tab() == tab {
             self.side_open = false;
         } else {
             if tab == SideTab::Setlist && !self.mix.is_mix && self.player.current.is_some() {
                 setlist_view::pin(self);
             }
-            self.side_open = true;
-            self.side_tab = tab;
+            self.show_side(tab);
             if tab == SideTab::Inspector && self.inspector.targets.is_empty() {
                 inspector::load_on_open(self);
             }
@@ -1357,6 +1403,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::sync(&ctx);
+        self.fit_sections(ctx.content_rect().width());
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
 
@@ -1374,7 +1421,7 @@ impl eframe::App for App {
             egui::Panel::right("side")
                 .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(8)))
                 .default_size(380.0)
-                .size_range(300.0..=720.0)
+                .size_range(SIDE_MIN_WIDTH..=(ui.ctx().content_rect().width() - self.pl_view.toolbar_min).clamp(SIDE_MIN_WIDTH, 720.0))
                 .resizable(true)
                 .show(ui, |ui| self.side_panel(ui));
         }

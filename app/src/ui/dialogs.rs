@@ -168,7 +168,7 @@ fn check_python(app: &mut App) {
 
 /// Shows the playlists of a library for the user to choose from.
 pub fn open_library_import(app: &mut App, source: ImportSource, overview: Overview) {
-    app.playlist_open = true;
+    app.show_playlist();
     app.dialogs.library_import = Some(LibraryImport { source, overview, all: false, selected: HashSet::new() });
 }
 

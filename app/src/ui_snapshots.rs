@@ -1161,3 +1161,35 @@ fn render_rekordbox_waveform() {
     save(&mut h, "rekordbox-waveform-plain.png");
     h.state_mut().player.stop();
 }
+
+/// In a window too narrow for the playlist toolbar and the side panel, only one of them shows and opening one closes the other.
+#[test]
+fn narrow_window_shows_one_bottom_section() {
+    use crate::ui::SideTab;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(500.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    h.state_mut().playlist_open = true;
+    h.state_mut().side_open = true;
+    settle(&mut h, 300);
+    assert!(h.state().playlist_open && !h.state().side_open, "the side panel steps aside for the playlist");
+
+    h.state_mut().toggle_side(SideTab::Inspector);
+    settle(&mut h, 100);
+    assert!(h.state().side_open && !h.state().playlist_open, "opening the inspector replaces the playlist");
+
+    h.state_mut().toggle_playlist();
+    settle(&mut h, 100);
+    assert!(h.state().playlist_open && !h.state().side_open, "opening the playlist replaces the inspector");
+}
+
+/// A wide window keeps both sections.
+#[test]
+fn wide_window_keeps_both_bottom_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    h.state_mut().side_open = true;
+    settle(&mut h, 300);
+    assert!(h.state().playlist_open && h.state().side_open);
+}

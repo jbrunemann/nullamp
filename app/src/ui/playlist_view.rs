@@ -29,6 +29,8 @@ pub struct ViewState {
     header_drag: Option<Col>,
     pub art: ArtCache,
     pub filter: FilterState,
+    /// Width the toolbar needs to keep the filter field, as measured last frame; zero until the playlist has been drawn.
+    pub toolbar_min: f32,
 }
 
 /// The filter typed in the toolbar, shared by all playlists, and what it matches in each.
@@ -484,6 +486,8 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 ui.close();
             }
         });
+        // Below this width the toolbar drops the filter field and the pill; the margins are the frame's.
+        app.pl_view.toolbar_min = ui.min_rect().width() + ui.spacing().item_spacing.x + FILTER_MIN_WIDTH + 8.0 + 16.0;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Drop the pill rather than let it overlap the Sort and List buttons in a narrow panel.
             const LABEL: &str = "◎ Now playing";
@@ -497,12 +501,13 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
     });
 }
 
+const FILTER_MIN_WIDTH: f32 = 60.0;
 const MOVE_FILTERED: &str = "Clear the filter to move entries";
 
 /// The filter field. Esc clears it, Enter moves to the list with the first match selected.
 fn filter_field(app: &mut App, ui: &mut Ui) {
     let width = (ui.available_width() - 8.0).min(180.0);
-    if width < 60.0 {
+    if width < FILTER_MIN_WIDTH {
         return;
     }
     let edit = egui::TextEdit::singleline(&mut app.pl_view.filter.query).hint_text("Filter").desired_width(width);
@@ -914,8 +919,7 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         ui.close();
     }
     if ui.button("Inspect metadata").clicked() {
-        app.side_open = true;
-        app.side_tab = SideTab::Inspector;
+        app.show_side(SideTab::Inspector);
         inspector::load_from_selection(app);
         ui.close();
     }
