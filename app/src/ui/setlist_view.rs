@@ -71,6 +71,14 @@ pub struct MixState {
     /// Songs Shazam named for entries it was unsure about, or that were open in the editor
     /// when the answer came, for the user to pick from in the editor. Not saved.
     candidates: HashMap<EntryId, Vec<Song>>,
+    split: Option<Splitting>,
+}
+
+/// A running "Find tracks" request.
+struct Splitting {
+    request: u64,
+    /// The untimed entries the starts are for, 0 without a list (see [`untimed_count`]).
+    listed: usize,
 }
 
 /// A running "Identify with Shazam" request.
@@ -90,6 +98,9 @@ pub fn reset_for_track(app: &mut App, token: u64, path: PathBuf) {
     // The setlist shown is about to change; its tracks are no longer worth asking about.
     if app.mix.identify.is_some() {
         app.workers.cancel_identify();
+    }
+    if app.mix.split.is_some() {
+        app.workers.cancel_split();
     }
     app.mix = MixState { token, path: Some(path), loading: true, is_mix: app.mix.is_mix, ..Default::default() };
 }
@@ -159,10 +170,11 @@ pub fn on_now_playing(app: &mut App, info: &NowPlayingInfo) {
 fn refresh_tag_entries(app: &mut App, discovered: Option<Setlist>) {
     let from_tag = |e: &SetlistEntry| e.provenance.is_from_tags() && !e.user_edited;
     let key = |e: &SetlistEntry| (e.artist.clone(), e.title.clone(), e.version.clone(), e.label.clone(), e.start);
-    let (incoming_mix, incoming): (MixInfo, Vec<SetlistEntry>) = match discovered {
+    let (incoming_mix, mut incoming): (MixInfo, Vec<SetlistEntry>) = match discovered {
         Some(s) => (s.mix, s.entries.into_iter().filter(|e| e.provenance.is_from_tags()).collect()),
         None => (MixInfo::default(), Vec::new()),
     };
+    keep_found_times(app.mix.setlist.as_ref().map_or(&[][..], |s| &s.entries[..]), &mut incoming);
     let current: Vec<_> = app.mix.setlist.iter().flat_map(|s| s.entries.iter()).filter(|e| from_tag(e)).map(key).collect();
     if current == incoming.iter().map(key).collect::<Vec<_>>() {
         return;
@@ -189,6 +201,25 @@ fn refresh_tag_entries(app: &mut App, discovered: Option<Setlist>) {
         app.mix.origin = app.mix.setlist.is_some().then_some(SetlistOrigin::Discovered);
     }
     app.info(if n == 0 { "Setlist from the tags removed".to_owned() } else { format!("Setlist reloaded from the tags: {n} tracks") });
+}
+
+/// Times placed on the tag's track list (by "Find tracks") stay when the tag is rewritten: by
+/// position when it still lists as many tracks (so fixing a name keeps its time), else by name.
+fn keep_found_times(current: &[SetlistEntry], incoming: &mut [SetlistEntry]) {
+    let timed: Vec<&SetlistEntry> = current.iter().filter(|e| e.provenance == Provenance::TagDescription && !e.user_edited).collect();
+    if timed.iter().all(|e| e.start.is_none()) || incoming.iter().any(|e| e.start.is_some()) {
+        return;
+    }
+    let same = |a: &SetlistEntry, b: &SetlistEntry| a.artist == b.artist && a.full_title() == b.full_title();
+    let by_position = timed.len() == incoming.len();
+    let mut used = vec![false; timed.len()];
+    for (i, e) in incoming.iter_mut().enumerate() {
+        let from = if by_position { Some(i) } else { (0..timed.len()).find(|&k| !used[k] && same(timed[k], e)) };
+        if let Some(k) = from {
+            used[k] = true;
+            (e.start, e.timing) = (timed[k].start, timed[k].timing);
+        }
+    }
 }
 
 /// Track the active entry from the playback position (cheap: runs every frame).
@@ -458,6 +489,7 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             select(app, Some(id));
             changed(app);
         }
+        find_tracks_button(app, ui);
         if has && ui.button("Clear…").clicked() {
             app.mix.confirm_clear = true;
         }
@@ -572,11 +604,80 @@ pub fn on_identify_done(app: &mut App, request: u64, result: Result<(), String>)
     }
 }
 
+// ----- Find tracks (offline, from the audio) -----
+
+/// How many entries "Find tracks" would give start times: those of a list without any times yet,
+/// 0 without a list. `None` once the list has times, so they are never overwritten.
+fn untimed_count(app: &App) -> Option<usize> {
+    match &app.mix.setlist {
+        Some(s) if s.has_times() => None,
+        Some(s) => Some(s.entries.len()),
+        None => Some(0),
+    }
+}
+
+fn find_tracks_button(app: &mut App, ui: &mut Ui) {
+    if app.mix.split.is_some() {
+        ui.spinner().on_hover_text("Finding tracks…");
+        if ui.button("Cancel").on_hover_text("Stop finding tracks").clicked() {
+            app.workers.cancel_split();
+            app.mix.split = None;
+        }
+        return;
+    }
+    let Some(listed) = untimed_count(app) else { return };
+    let hover = if listed > 0 {
+        format!("Estimate from the audio where each of the {listed} listed tracks starts (offline, takes a few seconds). Correct the times where needed.")
+    } else {
+        "Estimate from the audio where the tracks change (offline, takes a few seconds). The number of tracks is a guess; with a track list in the file's comment tag the times come out much better.".to_owned()
+    };
+    let can = !app.mix.loading && app.mix.path.is_some();
+    if ui.add_enabled(can, egui::Button::new("Find tracks")).on_hover_text(hover).clicked() {
+        find_tracks(app, listed);
+    }
+}
+
+fn find_tracks(app: &mut App, listed: usize) {
+    let Some(path) = app.mix.path.clone() else { return };
+    let request = app.workers.request_id();
+    app.workers.split(request, path, (listed > 0).then_some(listed));
+    app.mix.split = Some(Splitting { request, listed });
+}
+
+/// The listed entries get the starts in order, as approximate times; without a list each start
+/// becomes an unnamed entry. Nothing changes if the list changed while the mix was analysed.
+pub fn on_split(app: &mut App, request: u64, result: Result<Vec<f64>, String>) {
+    let Some(listed) = app.mix.split.as_ref().filter(|s| s.request == request).map(|s| s.listed) else { return };
+    app.mix.split = None;
+    let starts = match result {
+        Ok(s) => s,
+        Err(e) => return app.warn(e),
+    };
+    if untimed_count(app) != Some(listed) {
+        return app.info("The setlist changed while the tracks were being found; nothing was changed");
+    }
+    let s = app.mix.setlist.get_or_insert_with(Setlist::default);
+    if listed > 0 {
+        for (e, &t) in s.entries.iter_mut().zip(&starts) {
+            (e.start, e.timing) = (Some(t), Timing::Approximate);
+        }
+    } else {
+        s.entries.extend(starts.iter().map(|&t| SetlistEntry::new("", "", Some(t), Provenance::Manual)));
+    }
+    app.mix.scroll_to_active = true;
+    changed(app);
+    app.info(match (listed, starts.len()) {
+        (0, n) => format!("Found {n} tracks; their number is a guess, so add or delete entries where it is off. The times are estimates (≈)"),
+        (l, n) if n < l => format!("Placed {n} of the {l} listed tracks, the mix is too short for more. The times are estimates (≈)"),
+        (l, _) => format!("Placed the {l} listed tracks; the times are estimates (≈), correct them where needed"),
+    });
+}
+
 fn empty_hint(app: &mut App, ui: &mut Ui) {
     ui.add_space(6.0);
     ui.label(RichText::new("No setlist for this file.").color(theme::text_dim()));
     ui.label(
-        RichText::new("Nullamp looked for embedded chapters, a cue sheet in the tags, and a .cue file next to it. Import a cue sheet, paste a tracklist copied from a web page, or add entries at the playhead.")
+        RichText::new("Nullamp looked for embedded chapters, a cue sheet in the tags, and a .cue file next to it. Import a cue sheet, paste a tracklist copied from a web page, add entries at the playhead, or let Find tracks estimate where the tracks change.")
             .small()
             .color(theme::text_faint()),
     );
@@ -1157,6 +1258,71 @@ mod tests {
         assert_eq!(app.mix.origin, Some(SetlistOrigin::Saved), "the filled setlist is saved");
         h.state_mut().player.stop();
     }
+
+    fn tag_list(names: &[&str]) -> Setlist {
+        Setlist { entries: names.iter().map(|n| SetlistEntry::new("Artist", *n, None, Provenance::TagDescription)).collect(), ..Default::default() }
+    }
+
+    /// Found starts go to the listed tracks in order, or become unnamed entries without a list;
+    /// an answer for a list that has changed meanwhile, or for another request, changes nothing.
+    #[test]
+    fn found_starts_time_the_list_or_make_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        {
+            let app = h.state_mut();
+            let id = app.player.lists[0].playlist.entries()[5].id;
+            app.player.play_entry(0, id, 0.0);
+        }
+        settle(&mut h, 1500);
+        let app = h.state_mut();
+        assert_eq!(untimed_count(app), None, "the mix fixture has chapters, which are not touched");
+
+        app.mix.setlist = Some(tag_list(&["One", "Two", "Three"]));
+        assert_eq!(untimed_count(app), Some(3));
+        app.mix.split = Some(Splitting { request: 5, listed: 3 });
+        on_split(app, 4, Ok(vec![0.0, 1.0, 2.0]));
+        assert!(app.mix.split.is_some(), "another request's answer is dropped");
+        on_split(app, 5, Ok(vec![0.0, 64.0, 130.0]));
+        let entries = &app.mix.setlist.as_ref().unwrap().entries;
+        assert_eq!(entries.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(64.0), Some(130.0)]);
+        assert!(entries.iter().all(|e| e.timing == Timing::Approximate && !e.user_edited));
+        assert_eq!(entries[1].title, "Two");
+        assert_eq!(app.mix.origin, Some(SetlistOrigin::Saved));
+        assert_eq!(untimed_count(app), None, "a timed list is not offered again");
+
+        app.mix.setlist = None;
+        app.mix.split = Some(Splitting { request: 6, listed: 0 });
+        on_split(app, 6, Ok(vec![0.0, 300.0]));
+        let entries = &app.mix.setlist.as_ref().unwrap().entries;
+        assert_eq!(entries.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(300.0)]);
+        assert!(entries.iter().all(|e| e.is_unidentified()));
+
+        // The user pasted a list while the mix was analysed without one.
+        app.mix.setlist = Some(tag_list(&["One", "Two"]));
+        app.mix.split = Some(Splitting { request: 7, listed: 0 });
+        on_split(app, 7, Ok(vec![0.0, 300.0]));
+        assert!(app.mix.setlist.as_ref().unwrap().entries.iter().all(|e| e.start.is_none()));
+        assert!(app.mix.split.is_none());
+        h.state_mut().player.stop();
+    }
+
+    #[test]
+    fn found_times_survive_a_rewrite_of_the_tag() {
+        let mut current = tag_list(&["One", "Two", "Three"]).entries;
+        for (e, t) in current.iter_mut().zip([0.0, 64.0, 130.0]) {
+            e.start = Some(t);
+        }
+        // A name fixed in place keeps its time.
+        let mut incoming = tag_list(&["One", "Tow", "Three"]).entries;
+        keep_found_times(&current, &mut incoming);
+        assert_eq!(incoming.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(64.0), Some(130.0)]);
+        // With a track added, times follow the names.
+        let mut incoming = tag_list(&["One", "New", "Two", "Three"]).entries;
+        keep_found_times(&current, &mut incoming);
+        assert_eq!(incoming.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), None, Some(64.0), Some(130.0)]);
+    }
 }
 
 /// A setlist entry while Shazam is being asked about it, and the entry editor offering candidates.
@@ -1199,5 +1365,39 @@ fn render_identify() {
     crate::ui::select_setlist_entry(h.state_mut(), 1);
     settle(&mut h, 300);
     save(&mut h, "14c-identify-candidates.png");
+    h.state_mut().player.stop();
+}
+
+/// "Find tracks" offered for an untimed track list, running, and the list with the found times.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn render_find_tracks() {
+    use egui_kittest::Harness;
+
+    use crate::ui_snapshots::{seeded_store, settle};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/screenshots");
+    std::fs::create_dir_all(&out).unwrap();
+    let save = |h: &mut Harness<'_, App>, name: &str| h.render().expect("render").save(out.join(name)).unwrap();
+    let names = [("Pablo Bolivar", "Senda (Luca Bacchetti Endless Remix)"), ("Dhany G", "Sun 24"), ("Jeremy Olander", "Osho"), ("Valleraphon", "Shade (Paul Sawyer Remix)")];
+    h.state_mut().mix.setlist = Some(Setlist { entries: names.iter().map(|(a, t)| SetlistEntry::new(*a, *t, None, Provenance::TagDescription)).collect(), ..Default::default() });
+    settle(&mut h, 300);
+    save(&mut h, "15a-find-tracks-offered.png");
+    h.state_mut().mix.split = Some(Splitting { request: 9, listed: 4 });
+    settle(&mut h, 300);
+    save(&mut h, "15b-find-tracks-running.png");
+    on_split(h.state_mut(), 9, Ok(vec![0.0, 318.0, 432.0, 952.0]));
+    settle(&mut h, 300);
+    save(&mut h, "15c-find-tracks-done.png");
     h.state_mut().player.stop();
 }

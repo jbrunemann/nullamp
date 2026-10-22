@@ -770,6 +770,7 @@ impl App {
             JobResult::IdentifyProgress { request, done, total } => setlist_view::on_identify_progress(self, request, done, total),
             JobResult::Identified { request, entry, verdict } => setlist_view::on_identified(self, request, entry, verdict),
             JobResult::IdentifyDone { request, result } => setlist_view::on_identify_done(self, request, result),
+            JobResult::Split { request, result } => setlist_view::on_split(self, request, result),
             JobResult::TextWritten { path, result } => match result {
                 Ok(()) => self.info(format!("Saved {}", path.display())),
                 Err(e) => self.error(format!("Cannot write {}: {e}", path.display())),

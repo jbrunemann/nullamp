@@ -17,7 +17,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | Path | What it is |
 |---|---|
 | `crates/nullamp-core` | Pure logic, no I/O: playlists, play order (shuffle/repeat), setlists and validation, M3U, cue sheets, pasted-tracklist parser, commands and media-key dedupe |
-| `crates/nullamp-audio` | Audio engine: symphonia decoding on its own thread, rubato resampling, rtrb ring buffer, cpal output, gapless preload, device recovery |
+| `crates/nullamp-audio` | Audio engine: symphonia decoding on its own thread, rubato resampling, rtrb ring buffer, cpal output, gapless preload, device recovery; offline analysis (waveform, tempo, where the tracks of a mix start) |
 | `crates/nullamp-meta` | Tags via lofty, ID3 chapters via id3, artwork, technical info, safe tag writing with backups |
 | `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
 | `crates/nullamp-artwork` | Cover of one track of a mix by artist and title: Deezer search, then iTunes Search, via `curl`; result matching |
@@ -37,6 +37,7 @@ cargo test -p nullamp ui_snapshots -- --ignored --test-threads=1   # renders the
 cargo run --release -p nullamp-audio --example probe -- FILE [NEXT_FILE] [--audible]   # engine latency probe, silent by default
 cargo run --release -p nullamp-audio --example waveform FILE   # times the waveform pass for a file
 cargo run --release -p nullamp-audio --example tempo FILE...   # BPM estimate and time per file
+cargo run --release -p nullamp-audio --example split -- MIX [--tracks N]   # where the tracks of a mix start, offline (the setlist's Find tracks)
 cargo run --release -p nullamp-shazam --example identify -- MIX CUE   # names the tracks at the cue's starts with Shazam (30 requests for 6 tracks)
 packaging/macos/bundle.sh                    # builds target/bundle/Nullamp.app
 NULLAMP_HOME=/some/dir cargo run --release   # run with an isolated config/data/cache directory

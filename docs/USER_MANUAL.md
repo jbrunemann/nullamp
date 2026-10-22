@@ -216,6 +216,15 @@ To add a missing track, play to where it starts and click **+ At playhead**.
 
 Your corrections are saved with the setlist. They survive renaming, moving or retagging the audio file, because Nullamp identifies the audio by a fingerprint of its content, not by its name. **Import ▸ Scan file again** re-reads the file's chapters and cue sheets while keeping your corrections.
 
+### Finding where the tracks change
+
+**Find tracks** in the setlist toolbar estimates from the audio where each track of the mix starts. It works offline and takes a few seconds; a spinner shows while it runs, and **Cancel** next to it stops it. It is offered while the setlist has no times: when there is no setlist yet, or when it is only a track list, such as one written in the file's comment tag.
+
+- **With a track list** (say, the tracklist of the mix pasted into the file's comment tag), the number of tracks is known, and each listed track gets its start in list order. This is the accurate way: knowing how many tracks there are matters most.
+- **Without a list**, Nullamp also guesses how many tracks there are and adds an unnamed entry for each. The guess can be off by several tracks in mixes whose tracks sound alike, so add or delete entries where it is wrong, and name them yourself or with [Identify with Shazam](#identifying-tracks-with-shazam).
+
+The times are estimates, shown with **≈**. Correct one by playing to where the track takes over and choosing **Set start to playhead**. A change is placed where the next track has taken over, not where it first fades in. Times found for a list from the comment tag stay when you later edit the tag.
+
 ### Identifying tracks with Shazam
 
 For a mix of your own that has no tracklist anywhere, mark where each track starts and let Shazam name the tracks one by one:
@@ -426,7 +435,7 @@ If a data file cannot be read, Nullamp renames it to `.broken`, tells you, and s
 
 **A file is greyed out with a warning.** The file moved or its volume is not mounted. Reconnect the volume, or remove the entry.
 
-**A mix shows no setlist.** The file has no chapters or cue sheet that Nullamp could find. Put a `.cue` file next to it with exactly the same name, or use **Import ▸ Paste tracklist…**, or add entries yourself with **+ At playhead** and right-click them for **Identify with Shazam**.
+**A mix shows no setlist.** The file has no chapters or cue sheet that Nullamp could find. Put a `.cue` file next to it with exactly the same name, or use **Import ▸ Paste tracklist…**, or let **Find tracks** estimate where the tracks change, or add entries yourself with **+ At playhead**, and right-click them for **Identify with Shazam**.
 
 **Identify with Shazam is greyed out.** The entry has no start time, or Shazam is still being asked about another entry. Wait for it, or choose **Cancel Shazam** on that entry.
 
@@ -454,7 +463,7 @@ If a data file cannot be read, Nullamp renames it to `.broken`, tells you, and s
 - The setlist panel follows the file that is playing. You cannot edit the setlist of a file that is not playing.
 - Batch tag editing is limited to 500 files.
 - Tracklists come only from chapters, cue sheets, paste import or Shazam. Nullamp does not look them up online.
-- Identify with Shazam needs the start of each track; it does not find where tracks change.
+- Identify with Shazam needs the start of each track; **Find tracks** estimates them, best when the number of tracks is known from a track list.
 - Nullamp does not detect musical keys; it only shows keys from tags, rekordbox or Mixxx.
 - Cues, hot cues and beat grids from rekordbox and Mixxx are not read.
 - "Open with Nullamp" from Finder is not wired up yet. Drag files onto the window instead.

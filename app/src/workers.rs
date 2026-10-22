@@ -12,7 +12,9 @@
 //!   the network for seconds, so they have a thread of their own too and answer in the order
 //!   they were asked;
 //! - *identify* (naming the tracks of a mix with Shazam) runs for minutes, mostly waiting
-//!   between requests, so it has a thread of its own and must not hold up the artwork lookups.
+//!   between requests, so it has a thread of its own and must not hold up the artwork lookups;
+//! - *split* (finding where the tracks of a mix start, offline) decodes and analyses the whole
+//!   mix for several seconds, so it has a thread of its own as well.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -145,6 +147,13 @@ struct IdentifyRequest {
     tracks: Vec<IdentifyTrack>,
 }
 
+struct SplitRequest {
+    request: u64,
+    path: PathBuf,
+    /// How many tracks the mix has, when a track list says so.
+    tracks: Option<usize>,
+}
+
 /// One track of a mix to name: its setlist entry and where it plays in the file.
 pub struct IdentifyTrack {
     pub entry: EntryId,
@@ -225,6 +234,8 @@ pub enum JobResult {
     Identified { request: u64, entry: EntryId, verdict: nullamp_shazam::Verdict },
     /// The request is over: all tracks answered, or why it stopped. A cancelled request sends nothing.
     IdentifyDone { request: u64, result: Result<(), String> },
+    /// The answer to [`Workers::split`]: where each track starts, the first at 0. A cancelled request sends nothing.
+    Split { request: u64, result: Result<Vec<f64>, String> },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -240,6 +251,9 @@ pub struct Workers {
     identify: Sender<IdentifyRequest>,
     /// The identify request that may run; any other one stops at its next step.
     identify_current: Arc<AtomicU64>,
+    split: Sender<SplitRequest>,
+    /// The split request that may run; any other one stops at its next packet or step.
+    split_current: Arc<AtomicU64>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -413,6 +427,41 @@ impl Workers {
                 .expect("spawn identify worker");
         }
 
+        let split_current = Arc::new(AtomicU64::new(0));
+        let (split, split_rx) = crossbeam_channel::unbounded::<SplitRequest>();
+        {
+            let (tx, w, current) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&split_current));
+            std::thread::Builder::new()
+                .name("nullamp-split".into())
+                .spawn(move || {
+                    while let Ok(mut request) = split_rx.recv() {
+                        while let Ok(newer) = split_rx.try_recv() {
+                            request = newer;
+                        }
+                        let id = request.request;
+                        let alive = || current.load(Ordering::SeqCst) == id;
+                        if !alive() {
+                            continue;
+                        }
+                        let started = std::time::Instant::now();
+                        let result = match nullamp_audio::find_track_starts(&request.path, request.tracks, &|| !alive()) {
+                            Err(nullamp_audio::SplitError::Cancelled) => continue,
+                            Ok(starts) => {
+                                let count = request.tracks.map_or_else(|| "number guessed".to_owned(), |n| format!("{n} listed"));
+                                log::info!("Found {} track starts in {} ({count}) in {:.1} s", starts.len(), request.path.display(), started.elapsed().as_secs_f64());
+                                Ok(starts)
+                            }
+                            Err(e) => Err(format!("Cannot read the mix: {e}")),
+                        };
+                        if !alive() || tx.send(JobResult::Split { request: id, result }).is_err() {
+                            continue;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn split worker");
+        }
+
         Workers {
             interactive,
             bulk,
@@ -423,6 +472,8 @@ impl Workers {
             online,
             identify,
             identify_current,
+            split,
+            split_current,
             results,
             scan_generation,
             cover_generation,
@@ -462,6 +513,18 @@ impl Workers {
     /// Stop the running identify request before its next clip or request.
     pub fn cancel_identify(&self) {
         self.identify_current.store(0, Ordering::SeqCst);
+    }
+
+    /// Find where the tracks of the mix at `path` start, offline; `tracks` is how many there are
+    /// when known. Answered with [`JobResult::Split`] under `request`. A newer request replaces this one.
+    pub fn split(&self, request: u64, path: PathBuf, tracks: Option<usize>) {
+        self.split_current.store(request, Ordering::SeqCst);
+        let _ = self.split.send(SplitRequest { request, path, tracks });
+    }
+
+    /// Stop the running split request at its next packet or step.
+    pub fn cancel_split(&self) {
+        self.split_current.store(0, Ordering::SeqCst);
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with
