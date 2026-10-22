@@ -69,6 +69,10 @@ pub fn parse(text: &str, origin_url: Option<String>) -> ParsedTracklist {
             // Played simultaneously with the previous entry: share its start.
             entry.start = out.setlist.entries.last().and_then(|e| e.start).or(entry.start);
         }
+        // A time that stands in the text is taken at face value; only the app's own guesses are approximate.
+        if entry.start.is_some() {
+            entry.timing = Timing::Exact;
+        }
         out.setlist.entries.push(entry);
     }
     out
@@ -153,7 +157,6 @@ fn parse_track(text: &str, start: Option<f64>, provenance: &Provenance) -> Optio
     let mut e = SetlistEntry::new(artist.trim(), title.trim(), start, provenance.clone());
     e.version = version;
     e.label = label;
-    e.timing = Timing::Approximate;
     e.verification = if e.is_unidentified() { Verification::Unidentified } else { Verification::Suggested };
     Some(e)
 }
@@ -206,7 +209,7 @@ mod tests {
         assert_eq!(e[4].verification, Verification::Unidentified);
         assert_eq!(e[5].artist, "Artist ft. Guest");
         assert_eq!(e[5].title, "Song (Live)", "non-version parentheses stay in the title");
-        assert!(e.iter().all(|x| x.timing == Timing::Approximate));
+        assert!(e.iter().filter(|x| x.start.is_some()).all(|x| x.timing == Timing::Exact), "a time in the text is exact");
         assert_eq!(e[0].provenance.url(), Some("https://example.com/list"));
     }
 
@@ -221,6 +224,15 @@ mod tests {
             Booking: mail me.\nA - B\nC - D\nE - F\nMore words here.\nAnd more.\nAnd even more text.\n";
         assert!(parse_description(prose).is_none(), "prose with a few dashes is not a tracklist");
         assert!(parse_description("A - B\nC - D\n").is_none(), "too short");
+    }
+
+    #[test]
+    fn times_in_a_description_are_exact() {
+        let s = parse_description("03:59 Paradisio – Bailando\n06:16 La Bouche – Forget me nots\n08:30 Artist C - Song C\n").unwrap();
+        assert_eq!(s.entries[0].start, Some(239.0));
+        assert_eq!(s.entries[1].start, Some(376.0));
+        assert!(s.entries.iter().all(|e| e.timing == Timing::Exact));
+        assert!(parse("03:59 Paradisio – Bailando", None).setlist.entries.iter().all(|e| e.timing == Timing::Exact), "pasted times are exact too");
     }
 
     #[test]

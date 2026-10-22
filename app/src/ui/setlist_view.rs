@@ -1097,9 +1097,11 @@ fn apply_edit(app: &mut App, id: EntryId) -> bool {
         e.title = title;
         e.version = version;
         e.label = label;
+        // A time typed in is the user's own, so changing it makes the entry exact.
+        let retimed = start.is_some() && start != e.start;
         e.start = start;
         e.end = end;
-        e.timing = if exact { Timing::Exact } else { Timing::Approximate };
+        e.timing = if exact || retimed { Timing::Exact } else { Timing::Approximate };
         e.verification = if confirmed {
             Verification::Confirmed
         } else if e.is_unidentified() {
