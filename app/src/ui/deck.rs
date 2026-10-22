@@ -851,13 +851,17 @@ fn transport(app: &mut App, ui: &mut Ui) {
             if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
                 app.toggle_side(SideTab::Inspector);
             }
-            // Single tracks hide it; ⌘L still opens it to add a setlist.
-            if app.mix.is_mix {
+            // Single tracks hide it; ⌘L still opens it to add a setlist. It also yields to the volume meter when the window is too narrow.
+            let label = match &app.mix.setlist {
+                Some(s) => format!("Setlist · {}", s.entries.len()),
+                None => "Setlist".into(),
+            };
+            let gap = ui.spacing().item_spacing.x;
+            // The Inspector tab is already placed, so only the Playlist tab still needs room besides this one.
+            let needed = widgets::tab_width(ui, &label) + gap + widgets::tab_width(ui, "Playlist");
+            let fits = ui.available_width() >= needed + 10.0;
+            if app.mix.is_mix && fits {
                 let set = app.side_open && app.shown_tab() == SideTab::Setlist;
-                let label = match &app.mix.setlist {
-                    Some(s) => format!("Setlist · {}", s.entries.len()),
-                    None => "Setlist".into(),
-                };
                 if widgets::tab(ui, set, &label).on_hover_text(format!("DJ mix setlist ({})", widgets::cmd_key('L', false))).clicked() {
                     app.toggle_side(SideTab::Setlist);
                 }

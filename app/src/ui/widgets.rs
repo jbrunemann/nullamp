@@ -318,6 +318,12 @@ pub fn tab(ui: &mut Ui, selected: bool, label: &str) -> Response {
     resp
 }
 
+/// The width `tab` takes for `label`, so a row of tabs can be fitted before it is laid out.
+pub fn tab_width(ui: &Ui, label: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), theme::text());
+    galley.size().x + 2.0 * ui.spacing().button_padding.x
+}
+
 /// A horizontal level control (volume) drawn as a segmented meter.
 pub fn level_slider(ui: &mut Ui, value: &mut f32, width: f32, muted: bool) -> Response {
     let (rect, mut resp) = ui.allocate_exact_size(vec2(width, 18.0), Sense::click_and_drag());
