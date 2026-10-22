@@ -262,6 +262,7 @@ Click **Export**:
 - **Text tracklist…** writes a plain text list with timestamps.
 - **Copy as text** puts the list on the clipboard.
 - **Write as MP3 chapters…** stores the setlist inside the MP3 itself as ID3 chapters, so other players can see it. This replaces any chapters already in the file. Other tags and the audio are kept, and a backup is made if backups are on.
+- **Write cue sheet into the comment…** is for a setlist you have finished correcting. It replaces the file's comment with a cue sheet of the setlist (start times, artists, titles, and the mix's title and DJ), so the list travels with the file and Nullamp reads it back wherever the file is played. Every entry needs a start time; the item stays greyed out until they all have one. Before writing, Nullamp says how many entries are not confirmed and how many start times are still estimates (≈). Whatever the comment held before, such as the original track list, is replaced. Other tags and the audio are kept, and a backup is made if backups are on. Times are stored in cue sheet frames (1/75 s). Versions are written as part of the title, and labels are not stored. When a file also has two or more MP3 chapters, the chapters are read first.
 
 **Clear…** removes all entries for the file, including your corrections. It asks first.
 

@@ -1418,6 +1418,29 @@ mod tests {
         assert_eq!(s.entries[1].start, Some(60.0));
     }
 
+    /// What "Write cue sheet into the comment" stores comes back as the same setlist.
+    #[test]
+    fn a_setlist_written_into_the_comment_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("set.mp3");
+        std::fs::copy(fixture("tagged_v24.mp3"), &path).unwrap();
+        let mut list = Setlist { mix: MixInfo { title: Some("Live \"Somewhere\"".into()), dj: Some("DJ X".into()), ..Default::default() }, entries: Vec::new() };
+        for (artist, title, start) in [("Ärtist One", "Opener", 0.0), ("Two", "Second", 61.5), ("Three", "Ünïcode Tune", 125.0)] {
+            list.entries.push(nullamp_core::setlist::SetlistEntry::new(artist, title, Some(start), Provenance::Manual));
+        }
+        let text = cue::write(&list, "set.mp3");
+        let edit = nullamp_meta::Edit { fields: [(nullamp_meta::Field::Comment, Some(text.trim_end().to_owned()))].into(), ..Default::default() };
+        nullamp_meta::write(&path, nullamp_meta::stamp(&path).unwrap(), &edit, &Default::default()).unwrap();
+
+        let meta = nullamp_meta::read(&path).unwrap();
+        let s = discover_local_setlist(&path, Some(&meta)).expect("the comment is read as a cue sheet");
+        // Cue sheets count in frames of 1/75 s.
+        let got: Vec<(&str, &str, i64)> = s.entries.iter().map(|e| (e.artist.as_str(), e.title.as_str(), (e.start.unwrap() * 75.0).round() as i64)).collect();
+        assert_eq!(got, [("Ärtist One", "Opener", 0), ("Two", "Second", 4613), ("Three", "Ünïcode Tune", 9375)]);
+        assert_eq!(s.mix.dj.as_deref(), Some("DJ X"));
+        assert_eq!(s.mix.title.as_deref(), Some("Live 'Somewhere'"));
+    }
+
     #[test]
     fn finds_tracklist_urls() {
         let path = fixture("tagged_v24.mp3");

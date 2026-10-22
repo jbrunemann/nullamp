@@ -201,16 +201,30 @@ fn push_artwork(app: &mut App, kind: ArtworkKind, data: Arc<[u8]>, mime: Option<
 
 /// Store the current setlist as MP3 chapters (via the same safe write path).
 pub fn write_chapters(app: &mut App) {
-    let (Some(path), Some(setlist)) = (app.mix.path.clone(), app.mix.setlist.clone()) else { return };
+    let Some(setlist) = app.mix.setlist.clone() else { return };
+    write_setlist(app, Edit { chapters: Some(setlist), ..Default::default() }, "Writing chapters…");
+}
+
+/// Replace the playing file's comment with a cue sheet of its setlist, which discovery reads
+/// back as an embedded cue sheet (and other players that know the convention do too).
+pub fn write_cue_comment(app: &mut App) {
+    let (Some(path), Some(setlist)) = (&app.mix.path, &app.mix.setlist) else { return };
+    let audio_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let text = nullamp_core::cue::write(setlist, &audio_name);
+    let edit = Edit { fields: BTreeMap::from([(Field::Comment, Some(text.trim_end().to_owned()))]), ..Default::default() };
+    write_setlist(app, edit, "Writing the cue sheet…");
+}
+
+fn write_setlist(app: &mut App, edit: Edit, status: &str) {
+    let Some(path) = app.mix.path.clone() else { return };
     let Some(stamp) = app.now.meta.as_ref().filter(|m| m.path == path).map(|m| m.stamp) else {
         app.warn("File information is still loading; try again in a moment");
         return;
     };
     let request = app.workers.request_id();
     app.inspector.save_request = Some(request);
-    let edit = Edit { chapters: Some(setlist), ..Default::default() };
     app.workers.submit(Job::WriteTags { request, files: vec![(path, stamp)], edit, options: write_options(app) });
-    app.info("Writing chapters…");
+    app.info(status);
 }
 
 fn write_options(app: &App) -> WriteOptions {

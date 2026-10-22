@@ -67,6 +67,7 @@ pub struct MixState {
     scroll_to_active: bool,
     confirm_clear: bool,
     confirm_chapters: bool,
+    confirm_cue_comment: bool,
     identify: Option<Identifying>,
     /// Songs Shazam named for entries it was unsure about, or that were open in the editor
     /// when the answer came, for the user to pick from in the editor. Not saved.
@@ -461,6 +462,16 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 let is_mp3 = app.mix.path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3")));
                 if ui.add_enabled(is_mp3, egui::Button::new("Write as MP3 chapters…")).on_hover_text("Store the setlist inside the MP3 file (ID3 CHAP frames)").clicked() {
                     app.mix.confirm_chapters = true;
+                    ui.close();
+                }
+                let untimed = app.mix.setlist.as_ref().map_or(0, |s| s.entries.iter().filter(|e| e.start.is_none()).count());
+                let hover = if untimed == 0 {
+                    "Replace the file's comment with a cue sheet of this setlist, for a list you have finished correcting".to_owned()
+                } else {
+                    format!("{untimed} {} no start time yet; a cue sheet needs one for every track", if untimed == 1 { "entry has" } else { "entries have" })
+                };
+                if ui.add_enabled(untimed == 0, egui::Button::new("Write cue sheet into the comment…")).on_hover_text(hover.clone()).on_disabled_hover_text(hover).clicked() {
+                    app.mix.confirm_cue_comment = true;
                     ui.close();
                 }
                 ui.separator();
@@ -1190,6 +1201,37 @@ fn confirm_modals(app: &mut App, ctx: &egui::Context) {
             });
         });
     }
+    if app.mix.confirm_cue_comment {
+        let entries = app.mix.setlist.as_ref().map_or(&[][..], |s| &s.entries[..]);
+        let unconfirmed = entries.iter().filter(|e| e.verification != Verification::Confirmed).count();
+        let estimated = entries.iter().filter(|e| e.timing == Timing::Approximate).count();
+        let tracks = entries.len();
+        egui::Modal::new(egui::Id::unique("write-cue-comment")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading("Write the setlist into the comment?");
+            ui.label(format!(
+                "The file's comment is replaced by a cue sheet of these {tracks} tracks, with their start times, artists and titles. Nullamp reads it back when the file is played anywhere. Other tags and the audio are preserved. A backup copy is kept if backups are enabled."
+            ));
+            if unconfirmed > 0 || estimated > 0 {
+                ui.add_space(4.0);
+            }
+            if unconfirmed > 0 {
+                ui.label(RichText::new(format!("{unconfirmed} of {tracks} entries are not confirmed yet.")).color(theme::warn()));
+            }
+            if estimated > 0 {
+                ui.label(RichText::new(format!("{estimated} of {tracks} start times are estimates (≈).")).color(theme::warn()));
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Write cue sheet").clicked() {
+                    app.mix.confirm_cue_comment = false;
+                    super::inspector::write_cue_comment(app);
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    app.mix.confirm_cue_comment = false;
+                }
+            });
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1399,5 +1441,8 @@ fn render_find_tracks() {
     on_split(h.state_mut(), 9, Ok(vec![0.0, 318.0, 432.0, 952.0]));
     settle(&mut h, 300);
     save(&mut h, "15c-find-tracks-done.png");
+    h.state_mut().mix.confirm_cue_comment = true;
+    settle(&mut h, 300);
+    save(&mut h, "15d-write-cue-comment.png");
     h.state_mut().player.stop();
 }
