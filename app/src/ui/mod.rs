@@ -5,6 +5,7 @@ pub mod dialogs;
 mod inspector;
 mod menu;
 mod playlist_view;
+pub mod sections;
 mod setlist_view;
 pub mod theme;
 mod visualizer;
@@ -24,6 +25,7 @@ use nullamp_meta::FileMetadata;
 use nullamp_sysmedia::{NowPlaying, PlaybackState, SystemEvent, SystemMedia};
 
 use crate::player::{Note, Player, Status};
+use sections::{Plan, Section, Wanted, Widths};
 use crate::store::{ArtworkMode, PlaylistDoc, Settings, Store};
 use crate::workers::{Job, JobResult, Workers};
 
@@ -34,15 +36,8 @@ const DEFAULT_HEIGHT: f32 = 720.0;
 /// Keep in step with the minimum window size in `main.rs`.
 const MIN_WIDTH: f32 = 640.0;
 const MIN_FULL_HEIGHT: f32 = 420.0;
-/// The narrowest the side panel can be dragged.
+/// The narrowest a setlist or inspector column can be dragged.
 const SIDE_MIN_WIDTH: f32 = 300.0;
-
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SideTab {
-    Setlist,
-    Inspector,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageKind {
@@ -210,13 +205,15 @@ pub struct App {
     pub now: NowState,
     pub mix: setlist_view::MixState,
     pub inspector: inspector::InspectorState,
-    pub side_open: bool,
-    pub side_tab: SideTab,
+    /// The sections the user has open. Whether they fit is `plan`'s business, so a window that grows
+    /// again brings back what was open.
     pub playlist_open: bool,
-    /// Whether the window is too narrow for the playlist toolbar and the side panel together (as of the last frame).
-    narrow: bool,
-    /// The side panel was closed because the window became narrow, and returns when it is wide again.
-    side_suspended: bool,
+    pub setlist_open: bool,
+    pub inspector_open: bool,
+    /// The section opened last: it wins when only one fits and takes the shared tab.
+    recent: Section,
+    /// What is drawn, as of the last frame.
+    pub plan: Plan,
     /// The LCD and the artwork as last drawn: the parts of the window that dimming leaves bright.
     deck_bright: [egui::Rect; 2],
     /// Whether the window is currently shrunk to just the player (`None` before the
@@ -288,18 +285,20 @@ impl App {
             )
         };
 
-        let side_tab = if settings.side_panel_tab == "inspector" { SideTab::Inspector } else { SideTab::Setlist };
+        // Before the setlist and the inspector had separate switches, one side panel held both as tabs.
+        let setlist_open = settings.setlist_open.unwrap_or(settings.side_panel_open);
+        let inspector_open = settings.inspector_open.unwrap_or(settings.side_panel_open);
         let mut app = App {
             player,
             engine_events,
             system_events,
             sysmedia: Some(sysmedia),
             workers,
-            side_open: settings.side_panel_open,
-            side_tab,
             playlist_open: settings.playlist_open,
-            narrow: false,
-            side_suspended: false,
+            setlist_open,
+            inspector_open,
+            recent: Section::Playlist,
+            plan: Plan::default(),
             deck_bright: [egui::Rect::NOTHING; 2],
             compact: None,
             full_height: DEFAULT_HEIGHT,
@@ -331,6 +330,8 @@ impl App {
         for w in std::mem::take(&mut app.store.load_warnings) {
             app.warn(w);
         }
+        // Until the first frame measures the window, assume there is room for everything.
+        app.plan = sections::plan(app.wanted(), Widths { total: f32::INFINITY, playlist_min: 0.0, side_min: SIDE_MIN_WIDTH }, app.recent);
         app.scan_all_lists();
         app.restore_session();
         if let Some(s) = app.sysmedia.as_mut() {
@@ -447,12 +448,9 @@ impl App {
         s.repeat = self.player.nav.repeat;
         s.playlist_order = self.player.lists.iter().map(|d| d.key.clone()).collect();
         s.active_playlist = self.player.lists.get(self.player.viewing).map(|d| d.key.clone());
-        s.side_panel_open = self.side_open;
         s.playlist_open = self.playlist_open;
-        s.side_panel_tab = match self.side_tab {
-            SideTab::Setlist => "setlist".into(),
-            SideTab::Inspector => "inspector".into(),
-        };
+        s.setlist_open = Some(self.setlist_open);
+        s.inspector_open = Some(self.inspector_open);
         s.resume = self.player.current.as_ref().and_then(|c| {
             let doc = self.player.lists.get(c.list)?;
             Some(crate::store::ResumePoint {
@@ -1123,10 +1121,10 @@ impl App {
             dialogs::open_folder(self);
         }
         if consume(cmd(Key::I)) {
-            self.toggle_side(SideTab::Inspector);
+            self.toggle_side(Section::Inspector);
         }
         if consume(cmd(Key::L)) {
-            self.toggle_side(SideTab::Setlist);
+            self.toggle_side(Section::Setlist);
         }
         if consume(cmd(Key::P)) {
             self.toggle_playlist();
@@ -1135,7 +1133,7 @@ impl App {
             playlist_view::show_playing(self);
         }
         if consume(cmd(Key::F)) {
-            if !self.playlist_open {
+            if !self.plan.playlist {
                 self.toggle_playlist();
             }
             self.pl_view.filter.focus = true;
@@ -1207,14 +1205,13 @@ impl App {
         if shift(Key::ArrowLeft) {
             setlist_view::jump_relative(self, -1);
         }
-        if self.playlist_open {
+        if self.plan.playlist {
             playlist_view::handle_keys(self, ctx);
         }
     }
 
     pub fn toggle_playlist(&mut self) {
-        self.side_suspended = false;
-        if self.playlist_open {
+        if self.plan.playlist {
             self.playlist_open = false;
         } else {
             self.show_playlist();
@@ -1222,43 +1219,41 @@ impl App {
         self.mark_settings_dirty();
     }
 
-    /// Opens the playlist; in a narrow window it takes the place of the side panel.
+    /// Opens the playlist; in a narrow window it takes the place of the section showing.
     pub fn show_playlist(&mut self) {
         self.playlist_open = true;
-        if self.narrow {
-            self.side_open = false;
-        }
+        self.recent = Section::Playlist;
     }
 
-    /// Opens the side panel on `tab`; in a narrow window it takes the place of the playlist.
-    pub fn show_side(&mut self, tab: SideTab) {
-        self.side_open = true;
-        self.side_tab = tab;
-        if self.narrow {
-            self.playlist_open = false;
+    /// Opens the setlist or the inspector; in a narrow window it takes the place of the section showing.
+    pub fn show_side(&mut self, section: Section) {
+        match section {
+            Section::Setlist => self.setlist_open = true,
+            Section::Inspector => self.inspector_open = true,
+            Section::Playlist => return self.show_playlist(),
         }
+        self.recent = section;
     }
 
-    /// Keeps to one section at a time while the window is narrow: the side panel steps aside for the playlist
-    /// and comes back when the window is wide enough again.
+    fn wanted(&self) -> Wanted {
+        // A single track has no setlist to show; the switch is kept for the next mix.
+        Wanted { playlist: self.playlist_open, setlist: self.setlist_open && self.mix.is_mix, inspector: self.inspector_open }
+    }
+
+    /// Decides what the window has room for. Sections that do not fit stay open in the background and
+    /// return when the window is wide enough again.
     fn fit_sections(&mut self, width: f32) {
         if width <= 0.0 {
             return;
         }
-        self.narrow = width < self.pl_view.toolbar_min + SIDE_MIN_WIDTH;
-        if self.narrow && self.side_open && self.playlist_open {
-            self.side_open = false;
-            self.side_suspended = true;
-        } else if !self.narrow && self.side_suspended {
-            self.side_suspended = false;
-            self.side_open = self.playlist_open;
-        }
+        let widths = Widths { total: width, playlist_min: self.pl_view.toolbar_min, side_min: SIDE_MIN_WIDTH };
+        self.plan = sections::plan(self.wanted(), widths, self.recent);
     }
 
-    /// With neither the playlist nor the side panel showing, the window is just the
+    /// With nothing below the deck showing, the window is just the
     /// deck and the status bar, so shrink it to that and restore it afterwards.
     fn fit_window(&mut self, ctx: &egui::Context, deck_height: f32) {
-        let compact = !self.playlist_open && !self.side_open;
+        let compact = !self.plan.any();
         let before = self.compact.replace(compact);
         if before == Some(compact) {
             return;
@@ -1279,22 +1274,23 @@ impl App {
         }
     }
 
-    /// The side panel tab on screen. Single tracks show the inspector without changing
-    /// the saved choice, so the next mix opens on its setlist again.
-    pub fn shown_tab(&self) -> SideTab {
-        if self.side_tab == SideTab::Setlist && !self.mix.is_mix { SideTab::Inspector } else { self.side_tab }
-    }
-
-    pub fn toggle_side(&mut self, tab: SideTab) {
-        self.side_suspended = false;
-        if self.side_open && self.shown_tab() == tab {
-            self.side_open = false;
+    pub fn toggle_side(&mut self, section: Section) {
+        if self.plan.shows(section) {
+            match section {
+                Section::Setlist => self.setlist_open = false,
+                Section::Inspector => self.inspector_open = false,
+                Section::Playlist => self.playlist_open = false,
+            }
         } else {
-            if tab == SideTab::Setlist && !self.mix.is_mix && self.player.current.is_some() {
+            if section == Section::Setlist && !self.mix.is_mix {
+                // Only a playing track can be given a setlist.
+                if self.player.current.is_none() {
+                    return;
+                }
                 setlist_view::pin(self);
             }
-            self.show_side(tab);
-            if tab == SideTab::Inspector && self.inspector.targets.is_empty() {
+            self.show_side(section);
+            if section == Section::Inspector && self.inspector.targets.is_empty() {
                 inspector::load_on_open(self);
             }
         }
@@ -1312,31 +1308,28 @@ impl App {
         self.add_paths(list, dropped, at);
     }
 
-    fn side_panel(&mut self, ui: &mut egui::Ui) {
-        let shown = self.shown_tab();
+    /// A setlist or inspector column. Where the two share a column, its header switches between them.
+    fn side_panel(&mut self, ui: &mut egui::Ui, section: Section) {
         ui.horizontal(|ui| {
-            if self.mix.is_mix && widgets::tab(ui, shown == SideTab::Setlist, "Setlist").clicked() {
-                self.side_tab = SideTab::Setlist;
-                self.mark_settings_dirty();
-            }
-            if widgets::tab(ui, shown == SideTab::Inspector, "Inspector").clicked() {
-                self.side_tab = SideTab::Inspector;
-                if self.inspector.targets.is_empty() {
-                    inspector::load_on_open(self);
+            let tabs: &[(Section, &str)] = if self.plan.tabs { &[(Section::Setlist, "Setlist"), (Section::Inspector, "Inspector")] } else if section == Section::Setlist { &[(Section::Setlist, "Setlist")] } else { &[(Section::Inspector, "Inspector")] };
+            for &(tab, label) in tabs {
+                if widgets::tab(ui, tab == section, label).clicked() && tab != section {
+                    self.recent = tab;
+                    if tab == Section::Inspector && self.inspector.targets.is_empty() {
+                        inspector::load_on_open(self);
+                    }
                 }
-                self.mark_settings_dirty();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("✕").on_hover_text("Hide panel").clicked() {
-                    self.side_open = false;
-                    self.mark_settings_dirty();
+                    self.toggle_side(section);
                 }
             });
         });
         ui.add_space(4.0);
-        match shown {
-            SideTab::Setlist => setlist_view::show(self, ui),
-            SideTab::Inspector => inspector::show(self, ui),
+        match section {
+            Section::Setlist => setlist_view::show(self, ui),
+            _ => inspector::show(self, ui),
         }
     }
 
@@ -1421,27 +1414,35 @@ impl eframe::App for App {
             .exact_size(STATUS_HEIGHT)
             .resizable(false)
             .show(ui, |ui| self.status_bar(ui));
-        if self.side_open && self.playlist_open {
-            egui::Panel::right("side")
+        // The setlist and the inspector sit right of the playlist. Without the playlist the first of them
+        // fills the window and the other is a panel beside it. Panels are added from the outermost in.
+        let plan = self.plan;
+        let sides: Vec<Section> = [Section::Setlist, Section::Inspector].into_iter().filter(|&s| plan.shows(s)).collect();
+        let (fill, panels) = match sides.split_first() {
+            Some((&first, rest)) if !plan.playlist => (Some(first), rest.to_vec()),
+            _ => (None, sides),
+        };
+        let total = ctx.content_rect().width();
+        let mut used = 0.0;
+        for (i, &section) in panels.iter().rev().enumerate() {
+            let left_of = if plan.playlist { self.pl_view.toolbar_min } else { SIDE_MIN_WIDTH } + (panels.len() - 1 - i) as f32 * SIDE_MIN_WIDTH;
+            let shown = egui::Panel::right(if i == 0 { "side" } else { "side_left" })
                 .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(8)))
                 .default_size(380.0)
-                .size_range(SIDE_MIN_WIDTH..=(ui.ctx().content_rect().width() - self.pl_view.toolbar_min).clamp(SIDE_MIN_WIDTH, 720.0))
+                .size_range(SIDE_MIN_WIDTH..=(total - used - left_of).clamp(SIDE_MIN_WIDTH, 720.0))
                 .resizable(true)
-                .show(ui, |ui| self.side_panel(ui));
+                .show(ui, |ui| self.side_panel(ui, section));
+            used += shown.response.rect.width();
         }
-        // Without the playlist, the side panel takes over the space below the deck.
         let central = egui::CentralPanel::default();
-        if !self.playlist_open {
-            let margin = if self.side_open { egui::Margin::same(8) } else { egui::Margin::same(0) };
-            central.frame(egui::Frame::new().fill(if self.side_open { theme::panel() } else { theme::bg() }).inner_margin(margin)).show(ui, |ui| {
-                if self.side_open {
-                    self.side_panel(ui);
-                }
-            });
-        } else {
+        if plan.playlist {
             central
                 .frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(0)))
                 .show(ui, |ui| playlist_view::show(self, ui));
+        } else if let Some(section) = fill {
+            central.frame(egui::Frame::new().fill(theme::panel()).inner_margin(egui::Margin::same(8))).show(ui, |ui| self.side_panel(ui, section));
+        } else {
+            central.frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::same(0))).show(ui, |_| {});
         }
 
         // A veil painted last on the root layer, so dialogs and popups (higher layers) stay bright.

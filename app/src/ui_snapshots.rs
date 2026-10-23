@@ -92,7 +92,8 @@ fn render_main_window_as(appearance: &str, suffix: &str) {
 
     {
         let app = h.state_mut();
-        app.side_tab = crate::ui::SideTab::Inspector;
+        app.setlist_open = false;
+        app.inspector_open = true;
         crate::ui::inspect_selection(app);
     }
     settle(&mut h, 1200);
@@ -211,7 +212,8 @@ fn render_player_only_at(width: f32, name: &str) {
     {
         let app = h.state_mut();
         app.playlist_open = false;
-        app.side_open = false;
+        app.setlist_open = false;
+        app.inspector_open = false;
         app.settings.visualizer = "off".into();
         let id = app.player.lists[0].playlist.entries()[5].id;
         app.player.play_entry(0, id, 0.0);
@@ -500,7 +502,7 @@ fn render_key_column_as(appearance: &str, suffix: &str) {
 /// a single track that should get a setlist.
 #[test]
 fn setlist_hidden_for_single_tracks() {
-    use crate::ui::SideTab;
+    use crate::ui::sections::Section;
 
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
@@ -511,24 +513,24 @@ fn setlist_hidden_for_single_tracks() {
         app.player.play_entry(0, id, 0.0);
         settle(h, 1500);
     };
-    h.state_mut().side_tab = SideTab::Setlist;
+    h.state_mut().setlist_open = true;
 
     play(&mut h, 2);
     assert!(!h.state().mix.is_mix, "tone.flac is a short single track");
-    assert_eq!(h.state().shown_tab(), SideTab::Inspector);
-    assert_eq!(h.state().side_tab, SideTab::Setlist, "the saved choice is kept for the next mix");
+    assert!(!h.state().plan.setlist);
+    assert!(h.state().setlist_open, "the switch is kept for the next mix");
 
     play(&mut h, 5);
     assert!(h.state().mix.is_mix, "the mix fixture has chapters");
-    assert_eq!(h.state().shown_tab(), SideTab::Setlist);
+    assert!(h.state().plan.setlist);
 
     play(&mut h, 2);
     assert!(!h.state().mix.is_mix);
-    h.state_mut().side_open = false;
-    h.state_mut().toggle_side(SideTab::Setlist);
+    h.state_mut().setlist_open = false;
+    h.state_mut().toggle_side(Section::Setlist);
     settle(&mut h, 100);
     assert!(h.state().mix.is_mix && h.state().mix.pinned);
-    assert_eq!(h.state().shown_tab(), SideTab::Setlist);
+    assert!(h.state().plan.setlist);
     h.state_mut().player.stop();
 }
 
@@ -695,7 +697,8 @@ fn render_outputs_page() {
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(820.0, 160.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
     h.state_mut().playlist_open = false;
-    h.state_mut().side_open = false;
+    h.state_mut().setlist_open = false;
+    h.state_mut().inspector_open = false;
     settle(&mut h, 300);
     let device = |id: &str, kind, is_default| nullamp_audio::OutputDevice { id: id.into(), name: id.into(), kind, is_default };
     let app = h.state_mut();
@@ -971,7 +974,8 @@ fn render_tempo() {
     play_file(&mut h, fixtures().join("beat_120.mp3"));
     {
         let app = h.state_mut();
-        app.side_tab = crate::ui::SideTab::Inspector;
+        app.setlist_open = false;
+        app.inspector_open = true;
         let id = app.player.lists[0].playlist.entries().last().unwrap().id;
         app.selection.ids = [id].into();
         app.selection.cursor = Some(id);
@@ -1162,34 +1166,83 @@ fn render_rekordbox_waveform() {
     h.state_mut().player.stop();
 }
 
-/// In a window too narrow for the playlist toolbar and the side panel, only one of them shows and opening one closes the other.
+/// As the window narrows the setlist and the inspector first share a column, then the section opened last
+/// stands alone, and widening again brings everything back.
 #[test]
-fn narrow_window_shows_one_bottom_section() {
-    use crate::ui::SideTab;
+fn sections_give_way_as_the_window_narrows() {
+    use crate::ui::sections::Section;
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
-    let mut h = Harness::builder().with_size(egui::vec2(500.0, 600.0)).build_eframe(|cc| App::new(cc, store));
-    h.state_mut().playlist_open = true;
-    h.state_mut().side_open = true;
-    settle(&mut h, 300);
-    assert!(h.state().playlist_open && !h.state().side_open, "the side panel steps aside for the playlist");
+    let mut h = Harness::builder().with_size(egui::vec2(1500.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        app.playlist_open = true;
+        app.setlist_open = true;
+        app.inspector_open = true;
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    assert!(h.state().mix.is_mix, "the mix fixture has chapters");
+    let p = h.state().plan;
+    assert!(p.playlist && p.setlist && p.inspector && !p.tabs, "all three side by side");
 
-    h.state_mut().toggle_side(SideTab::Inspector);
+    h.set_size(egui::vec2(900.0, 600.0));
+    settle(&mut h, 300);
+    let p = h.state().plan;
+    assert!(p.playlist && p.tabs && p.setlist != p.inspector, "one column for the setlist and the inspector");
+
+    h.set_size(egui::vec2(640.0, 600.0));
+    settle(&mut h, 300);
+    let p = h.state().plan;
+    assert!(p.playlist && !p.setlist && !p.inspector, "the playlist alone");
+    assert!(h.state().setlist_open && h.state().inspector_open, "what was open stays open");
+
+    h.state_mut().toggle_side(Section::Inspector);
     settle(&mut h, 100);
-    assert!(h.state().side_open && !h.state().playlist_open, "opening the inspector replaces the playlist");
+    let p = h.state().plan;
+    assert!(p.inspector && !p.playlist, "opening the inspector replaces the playlist");
 
     h.state_mut().toggle_playlist();
     settle(&mut h, 100);
-    assert!(h.state().playlist_open && !h.state().side_open, "opening the playlist replaces the inspector");
+    let p = h.state().plan;
+    assert!(p.playlist && !p.inspector, "opening the playlist replaces the inspector");
+
+    h.set_size(egui::vec2(1500.0, 600.0));
+    settle(&mut h, 300);
+    let p = h.state().plan;
+    assert!(p.playlist && p.setlist && p.inspector, "a wide window brings everything back");
+    h.state_mut().player.stop();
 }
 
-/// A wide window keeps both sections.
+/// A wide window keeps the playlist and the inspector side by side.
 #[test]
 fn wide_window_keeps_both_bottom_sections() {
     let dir = tempfile::tempdir().unwrap();
     let store = seeded_store(dir.path(), "dark");
     let mut h = Harness::builder().with_size(egui::vec2(1180.0, 600.0)).build_eframe(|cc| App::new(cc, store));
-    h.state_mut().side_open = true;
+    h.state_mut().inspector_open = true;
     settle(&mut h, 300);
-    assert!(h.state().playlist_open && h.state().side_open);
+    assert!(h.state().plan.playlist && h.state().plan.inspector);
+}
+
+/// The playlist, the setlist and the inspector side by side, and the setlist and inspector sharing a column.
+#[test]
+#[ignore = "renders PNGs"]
+fn render_three_sections() {
+    for (width, name) in [(1500.0, "13-three-sections.png"), (950.0, "13-two-sections-tabbed.png")] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(width, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+        {
+            let app = h.state_mut();
+            app.setlist_open = true;
+            app.inspector_open = true;
+            let id = app.player.lists[0].playlist.entries()[5].id;
+            app.player.play_entry(0, id, 0.0);
+        }
+        settle(&mut h, 1500);
+        save(&mut h, name);
+        h.state_mut().player.stop();
+    }
 }
