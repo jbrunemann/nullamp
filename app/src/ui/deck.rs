@@ -9,7 +9,8 @@ use nullamp_core::time::{format_clock, format_precise};
 use nullamp_core::RepeatMode;
 
 use super::widgets::{self, Icon};
-use super::{App, SideTab, theme};
+use super::sections::Section;
+use super::{App, theme};
 use crate::store::ArtworkMode;
 use crate::player::Status;
 
@@ -38,7 +39,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 app.settings.artwork = app.settings.artwork.next();
                 app.mark_settings_dirty();
             } else {
-                app.toggle_side(SideTab::Inspector);
+                app.toggle_side(Section::Inspector);
             }
         }
     });
@@ -847,9 +848,9 @@ fn transport(app: &mut App, ui: &mut Ui) {
 
         let mut tabs_left = f32::INFINITY;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let ins = app.side_open && app.shown_tab() == SideTab::Inspector;
+            let ins = app.plan.inspector;
             if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
-                app.toggle_side(SideTab::Inspector);
+                app.toggle_side(Section::Inspector);
             }
             // Single tracks hide it; ⌘L still opens it to add a setlist. It also yields to the volume meter when the window is too narrow.
             let label = match &app.mix.setlist {
@@ -861,12 +862,12 @@ fn transport(app: &mut App, ui: &mut Ui) {
             let needed = widgets::tab_width(ui, &label) + gap + widgets::tab_width(ui, "Playlist");
             let fits = ui.available_width() >= needed + 10.0;
             if app.mix.is_mix && fits {
-                let set = app.side_open && app.shown_tab() == SideTab::Setlist;
+                let set = app.plan.setlist;
                 if widgets::tab(ui, set, &label).on_hover_text(format!("DJ mix setlist ({})", widgets::cmd_key('L', false))).clicked() {
-                    app.toggle_side(SideTab::Setlist);
+                    app.toggle_side(Section::Setlist);
                 }
             }
-            let playlist = widgets::tab(ui, app.playlist_open, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false)));
+            let playlist = widgets::tab(ui, app.plan.playlist, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false)));
             tabs_left = playlist.rect.left();
             if playlist.clicked() {
                 app.toggle_playlist();

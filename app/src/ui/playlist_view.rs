@@ -10,7 +10,8 @@ use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, TextureHandl
 use nullamp_core::{EntryId, EntryStatus, Filter, Playlist, PlaylistEntry, Revision};
 
 use super::widgets::{self, Icon};
-use super::{App, SideTab, dialogs, inspector, theme};
+use super::sections::Section;
+use super::{App, dialogs, inspector, theme};
 use crate::player::Status;
 use crate::store::PlaylistDoc;
 use crate::workers::{Job, Thumb};
@@ -805,7 +806,7 @@ fn drop_slot(list_rect: Rect, rows: &[(usize, Rect)], p: Pos2, n: usize) -> Opti
 /// Where dropped files go: the gap under the pointer, or the end.
 pub fn drop_index(app: &App, ctx: &egui::Context) -> Option<usize> {
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    if !app.playlist_open || app.pl_view.filter.is_active() {
+    if !app.plan.playlist || app.pl_view.filter.is_active() {
         return None;
     }
     drop_slot(app.pl_view.list_rect?, &app.pl_view.rows, p, app.player.viewed().len())
@@ -919,7 +920,7 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         ui.close();
     }
     if ui.button("Inspect metadata").clicked() {
-        app.show_side(SideTab::Inspector);
+        app.show_side(Section::Inspector);
         inspector::load_from_selection(app);
         ui.close();
     }
@@ -1022,7 +1023,7 @@ fn click_row(app: &mut App, ui: &Ui, id: EntryId) {
     } else {
         set_single(app, id);
     }
-    if app.side_open && app.shown_tab() == SideTab::Inspector && !app.settings.inspector_follows_playing {
+    if app.plan.inspector && !app.settings.inspector_follows_playing {
         inspector::load_from_selection(app);
     }
 }

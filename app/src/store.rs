@@ -33,8 +33,12 @@ pub struct Settings {
     pub active_playlist: Option<String>,
     pub backup_before_tag_writes: bool,
     pub backup_budget_mb: u64,
+    /// Whether the setlist and the inspector are open. Absent in older files, which kept one side panel
+    /// with two tabs in `side_panel_open`.
+    pub setlist_open: Option<bool>,
+    pub inspector_open: Option<bool>,
+    #[serde(skip_serializing)]
     pub side_panel_open: bool,
-    pub side_panel_tab: String,
     pub last_dir: Option<PathBuf>,
     /// LCD visualiser: "spectrum", "scope" or "off".
     pub visualizer: String,
@@ -95,8 +99,9 @@ impl Default for Settings {
             active_playlist: None,
             backup_before_tag_writes: false,
             backup_budget_mb: 256,
+            setlist_open: None,
+            inspector_open: None,
             side_panel_open: true,
-            side_panel_tab: "setlist".into(),
             last_dir: None,
             visualizer: "spectrum".into(),
             visualizer_brightness: 1.0,
