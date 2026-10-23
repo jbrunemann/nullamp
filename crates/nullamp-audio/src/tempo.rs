@@ -9,7 +9,9 @@
 //! Only about a minute and a half is analysed, from the middle of the track where the beat is
 //! steadiest, so the cost stays a fraction of a second whatever the length. For a long mix that
 //! is the tempo of its middle, which is only the mix's tempo if it keeps one; pass the span of
-//! one of its tracks to get that track's instead.
+//! one of its tracks to get that track's instead. A track of a mix is long enough to be sampled
+//! in several places, and the readings vote (see [`consensus`]): one stretch of dotted-eighth
+//! arpeggio or echo, say a breakdown, can read as a tempo a third faster than the beat.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -30,8 +32,22 @@ const MIN_SECONDS: f64 = 10.0;
 /// Tracks up to this long are analysed from their start; longer ones from [`START_FRACTION`] of the way in.
 const SHORT_TRACK_SECONDS: f64 = 100.0;
 const START_FRACTION: f64 = 0.3;
-/// Share of a span that is analysed (from its middle), leaving out the transitions at either end.
+/// Share of a short span that is analysed (from its middle), leaving out the transitions at either end.
 const SPAN_CENTRE: f64 = 0.7;
+/// A longer span is sampled in windows of this many seconds, spread evenly over what is left after
+/// cutting [`SPAN_MARGIN`] of its length off each end.
+const VOTE_SECONDS: f64 = 30.0;
+const SPAN_MARGIN: f64 = 0.1;
+/// Fewest and most windows of a span; with room for fewer than the first, the span is one window.
+const MIN_VOTE_WINDOWS: usize = 3;
+const MAX_VOTE_WINDOWS: usize = 8;
+/// Readings this close (as a ratio) are the same tempo.
+const AGREE: f64 = 0.015;
+/// Tempos of one beat that a syncopated stretch can read as: a dotted eighth is 4/3 of the beat's
+/// tempo, a triplet eighth 3/2 (their inverses are the same families seen from the other side).
+const RELATED: [f64; 2] = [4.0 / 3.0, 3.0 / 2.0];
+/// Windows a related tempo needs behind it to overrule the most common one.
+const MIN_BACKING: usize = 2;
 
 const MIN_BPM: f64 = 60.0;
 const MAX_BPM: f64 = 200.0;
@@ -73,22 +89,46 @@ pub struct Tempo {
 }
 
 /// Estimate the tempo of `path`, or of the part of it between `span` (start, end in seconds)
-/// when given. `Ok(None)` means the audio has no clear beat, or that the span is too short.
+/// when given, which a long span samples in several places. `Ok(None)` means the audio has no
+/// clear beat, or that the span is too short.
 pub fn compute(path: &Path, span: Option<(f64, f64)>, cancel: &dyn Fn() -> bool) -> Result<Option<Tempo>, TempoError> {
     let mut dec = Decoding::open_native(path)?;
+    let windows: Vec<(Option<f64>, f64)> = match (span, dec.info.duration) {
+        (Some((from, to)), _) => span_windows(from, to).into_iter().map(|(start, seconds)| (Some(start), seconds)).collect(),
+        (None, Some(d)) if d > SHORT_TRACK_SECONDS => vec![(Some(d * START_FRACTION), WINDOW_SECONDS)],
+        (None, _) => vec![(None, WINDOW_SECONDS)],
+    };
+    let mut tempos = Vec::with_capacity(windows.len());
+    for &(start, seconds) in &windows {
+        if seconds < MIN_SECONDS {
+            continue;
+        }
+        if let Some(tempo) = window_tempo(&mut dec, path, start, seconds, cancel)? {
+            tempos.push(tempo);
+        }
+    }
+    Ok(consensus(&tempos, windows.len()))
+}
+
+/// Where to analyse a span of a mix: (start, seconds) pairs. A long span gets several windows
+/// spread over it, a short one the single window that fits its middle.
+fn span_windows(from: f64, to: f64) -> Vec<(f64, f64)> {
+    let length = to - from;
+    let usable = length * (1.0 - 2.0 * SPAN_MARGIN);
+    if usable < MIN_VOTE_WINDOWS as f64 * VOTE_SECONDS {
+        let seconds = (length * SPAN_CENTRE).min(WINDOW_SECONDS);
+        return vec![(from + (length - seconds) / 2.0, seconds)];
+    }
+    let n = ((usable / VOTE_SECONDS) as usize).min(MAX_VOTE_WINDOWS);
+    let first = from + length * SPAN_MARGIN;
+    let step = (usable - VOTE_SECONDS) / (n - 1) as f64;
+    (0..n).map(|i| (first + i as f64 * step, VOTE_SECONDS)).collect()
+}
+
+/// Tempo of `seconds` of audio from `start` (the current position when `None`).
+fn window_tempo(dec: &mut Decoding, path: &Path, start: Option<f64>, seconds: f64, cancel: &dyn Fn() -> bool) -> Result<Option<Tempo>, TempoError> {
     let rate = dec.info.sample_rate.max(1);
     let channels = usize::from(dec.info.channels).max(1);
-    let (start, seconds) = match (span, dec.info.duration) {
-        (Some((from, to)), _) => {
-            let seconds = ((to - from) * SPAN_CENTRE).min(WINDOW_SECONDS);
-            (Some(from + ((to - from) - seconds) / 2.0), seconds)
-        }
-        (None, Some(d)) if d > SHORT_TRACK_SECONDS => (Some(d * START_FRACTION), WINDOW_SECONDS),
-        (None, _) => (None, WINDOW_SECONDS),
-    };
-    if seconds < MIN_SECONDS {
-        return Ok(None);
-    }
     if let Some(start) = start
         && let Err(e) = dec.seek(start)
     {
@@ -120,6 +160,55 @@ pub fn compute(path: &Path, span: Option<(f64, f64)>, cancel: &dyn Fn() -> bool)
         }
     }
     Ok(estimate(&mono, analysis_rate))
+}
+
+/// Octaves between `bpm` and [`PRIOR_BPM`].
+fn distance(bpm: f64) -> f64 {
+    (bpm / PRIOR_BPM).log2().abs()
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a / b - 1.0).abs() < AGREE
+}
+
+/// The tempo of a track from the readings of `windows` stretches of it (those with a beat).
+///
+/// The readings that agree form groups and the largest group wins, the one nearer 120 BPM when
+/// they tie. A stretch of syncopation (a dotted-eighth echo over a breakdown with no kick) is
+/// clear but reads a third or a half faster than the beat, so a group whose tempo is such a
+/// multiple of another's, and nearer 120, overrules a larger one when two windows back it.
+/// `None` when under a third of the windows found a beat.
+fn consensus(tempos: &[Tempo], windows: usize) -> Option<Tempo> {
+    if tempos.is_empty() || tempos.len() * 3 < windows {
+        return None;
+    }
+    let mut groups: Vec<Vec<Tempo>> = Vec::new();
+    for &t in tempos {
+        match groups.iter_mut().find(|g| close(f64::from(g[0].bpm), f64::from(t.bpm))) {
+            Some(g) => g.push(t),
+            None => groups.push(vec![t]),
+        }
+    }
+    let tempo_of = |g: &[Tempo]| {
+        let mut bpms: Vec<f32> = g.iter().map(|t| t.bpm).collect();
+        bpms.sort_by(f32::total_cmp);
+        f64::from(bpms[bpms.len() / 2])
+    };
+    let nearer = |a: &[Tempo], b: &[Tempo]| distance(tempo_of(a)) < distance(tempo_of(b));
+    let mut best = &groups[0];
+    for g in &groups[1..] {
+        if g.len() > best.len() || (g.len() == best.len() && nearer(g, best)) {
+            best = g;
+        }
+    }
+    let related = |a: f64, b: f64| RELATED.iter().any(|r| close(a * r, b) || close(a, b * r));
+    let overruling = groups
+        .iter()
+        .filter(|g| g.len() >= MIN_BACKING && related(tempo_of(g), tempo_of(best)) && nearer(g, best))
+        .max_by_key(|g| g.len());
+    let group = overruling.unwrap_or(best);
+    let confidence = group.iter().map(|t| t.confidence).sum::<f32>() / group.len() as f32;
+    Some(Tempo { bpm: tempo_of(group) as f32, confidence })
 }
 
 /// Tempo of mono `samples` at `rate` Hz, or `None` when too short or without a clear beat.
@@ -162,7 +251,6 @@ fn estimate(samples: &[f32], rate: f64) -> Option<Tempo> {
         return None;
     }
     // Half and double the dominant tempo fit the audio equally well; take the one nearest PRIOR_BPM.
-    let distance = |bpm: f64| (bpm / PRIOR_BPM).log2().abs();
     let mut octave = dominant;
     for bpm in (1..=4).flat_map(|n| [dominant * f64::from(1 << n), dominant / f64::from(1 << n)]) {
         if (MIN_BPM..=MAX_BPM).contains(&bpm) && distance(bpm) < distance(octave) {
@@ -329,6 +417,56 @@ mod tests {
         assert!((tempo((0.0, 15.0)).unwrap() - 120.0).abs() < 0.5);
         assert!((tempo((15.0, 30.0)).unwrap() - 90.0).abs() < 0.5);
         assert_eq!(tempo((2.0, 10.0)), None, "too short to tell");
+    }
+
+    fn reading(bpm: f32) -> Tempo {
+        Tempo { bpm, confidence: 0.6 }
+    }
+
+    #[test]
+    fn a_long_span_is_sampled_in_several_places_a_short_one_in_its_middle() {
+        // 387 s: eight windows of 30 s between 10% and 90%.
+        let windows = span_windows(381.0, 768.0);
+        assert_eq!(windows.len(), MAX_VOTE_WINDOWS);
+        assert!((windows[0].0 - (381.0 + 38.7)).abs() < 1e-9);
+        let (last_start, seconds) = windows[MAX_VOTE_WINDOWS - 1];
+        assert!((last_start + seconds - (768.0 - 38.7)).abs() < 1e-9, "the last window ends at the margin");
+        assert!(windows.windows(2).all(|w| w[1].0 >= w[0].0 + VOTE_SECONDS), "no overlap");
+        // Too little left after the margins for three windows: the middle 70%, as before.
+        assert_eq!(span_windows(0.0, 100.0), vec![(15.0, 70.0)]);
+        assert_eq!(span_windows(10.0, 25.0), vec![(12.25, 10.5)]);
+        // Exactly three windows fit 113 s.
+        assert_eq!(span_windows(0.0, 113.0).len(), 3);
+    }
+
+    #[test]
+    fn the_largest_group_of_readings_wins() {
+        let t = consensus(&[reading(124.0), reading(124.0), reading(128.0), reading(124.2)], 4).unwrap();
+        assert_eq!(t.bpm, 124.0);
+        // A tie goes to the one nearer 120.
+        assert_eq!(consensus(&[reading(130.0), reading(130.0), reading(125.0), reading(125.0)], 4).unwrap().bpm, 125.0);
+    }
+
+    #[test]
+    fn a_syncopated_stretch_does_not_outvote_the_beat() {
+        // "Cellar Door": 124 BPM, with a dotted-eighth breakdown that reads as 165.4.
+        let readings = [124.0, 124.0, 165.4, 165.4, 165.4, 124.0].map(reading);
+        assert_eq!(consensus(&readings, 6).unwrap().bpm, 124.0);
+        // Triplet feel reads as 3/2.
+        let readings = [128.0, 128.0, 192.0, 192.0, 192.0].map(reading);
+        assert_eq!(consensus(&readings, 5).unwrap().bpm, 128.0);
+        // One stray window does not overrule, and unrelated tempos are only counted.
+        let readings = [140.0, 140.0, 140.0, 105.0].map(reading);
+        assert_eq!(consensus(&readings, 4).unwrap().bpm, 140.0);
+        let readings = [150.0, 150.0, 150.0, 112.5, 112.5].map(reading);
+        assert_eq!(consensus(&readings, 5).unwrap().bpm, 112.5, "two windows back the beat that 150 is a third above");
+    }
+
+    #[test]
+    fn too_few_windows_with_a_beat_give_none() {
+        assert_eq!(consensus(&[], 3), None);
+        assert_eq!(consensus(&[reading(120.0)], 8), None);
+        assert!(consensus(&[reading(120.0)], 3).is_some());
     }
 
     #[test]

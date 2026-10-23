@@ -1680,6 +1680,49 @@ mod tests {
         Setlist { entries: names.iter().map(|(n, t)| SetlistEntry::new("Artist", *n, *t, Provenance::Online { provider: "1001Tracklists".into(), url: None })).collect(), ..Default::default() }
     }
 
+    /// The tempo of the active track is asked for again whenever its span changes: its own start
+    /// or end, or the start of the track after it.
+    #[test]
+    fn retiming_the_active_track_asks_for_its_tempo_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        {
+            let app = h.state_mut();
+            let id = app.player.lists[0].playlist.entries()[5].id;
+            app.player.play_entry(0, id, 0.0);
+        }
+        settle(&mut h, 1500);
+        {
+            // Hold the playhead inside the first track whatever its times become.
+            let app = h.state_mut();
+            app.player.command(Command::Pause, CommandSource::Ui);
+            app.player.command(Command::SeekTo(1.0), CommandSource::Ui);
+        }
+        settle(&mut h, 500);
+        {
+            let app = h.state_mut();
+            app.mix.is_mix = true;
+            app.mix.setlist = Some(timed(&[("A", Some(0.0)), ("B", Some(2.0)), ("C", Some(4.0))]));
+        }
+        settle(&mut h, 300);
+        let requested = |h: &Harness<'_, App>| h.state().now.segment_requested;
+        assert_eq!(requested(&h), Some((0.0, 2.0)));
+
+        h.state_mut().mix.setlist.as_mut().unwrap().entries[1].start = Some(3.0);
+        settle(&mut h, 300);
+        assert_eq!(requested(&h), Some((0.0, 3.0)), "the next track starting later");
+
+        h.state_mut().mix.setlist.as_mut().unwrap().entries[0].start = Some(0.5);
+        settle(&mut h, 300);
+        assert_eq!(requested(&h), Some((0.5, 3.0)), "its own start");
+
+        h.state_mut().mix.setlist.as_mut().unwrap().entries[0].end = Some(2.5);
+        settle(&mut h, 300);
+        assert_eq!(requested(&h), Some((0.5, 2.5)), "its own end");
+        h.state_mut().player.stop();
+    }
+
     /// The tracks without a time are looked for between the times their neighbours have, and
     /// only they get the answer.
     #[test]

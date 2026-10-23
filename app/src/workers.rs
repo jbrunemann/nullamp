@@ -741,8 +741,9 @@ fn run_tempo(dir: &Path, current: &AtomicU64, request: TempoRequest) -> Option<J
         return None;
     }
     // A track of a mix is cached under its own key, so editing its boundaries analyses it again.
+    // The `v2` marks readings from several windows of the span; those of the single window are not reused.
     let key = store::fingerprint(&path).ok().map(|fp| match span {
-        Some((from, to)) => format!("{fp}@{}-{}", (from * 1000.0).round(), (to * 1000.0).round()),
+        Some((from, to)) => format!("{fp}@{}-{}v2", (from * 1000.0).round(), (to * 1000.0).round()),
         None => fp,
     });
     if let Some(tempo) = key.as_deref().and_then(|k| waveform_cache::load_tempo(dir, k)) {
