@@ -26,6 +26,7 @@ pub struct EntryEdit {
     id: Option<EntryId>,
     artist: String,
     title: String,
+    /// Not editable, but carried through a save so a version or label from an import survives it.
     version: String,
     label: String,
     start: String,
@@ -1009,8 +1010,6 @@ fn editor(app: &mut App, ui: &mut Ui) {
             };
             row(ui, "Artist", &mut ed.artist);
             row(ui, "Title", &mut ed.title);
-            row(ui, "Version", &mut ed.version);
-            row(ui, "Label", &mut ed.label);
             ui.label(RichText::new("Start").color(theme::text_dim()));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut ed.start).desired_width(90.0).hint_text("m:ss"));
