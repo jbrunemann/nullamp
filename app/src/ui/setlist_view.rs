@@ -27,7 +27,7 @@ pub struct EntryEdit {
     id: Option<EntryId>,
     artist: String,
     title: String,
-    /// Not editable, but carried through a save so a version or label from an import survives it.
+    /// Not editable, but carried through a save so a version from an import survives it.
     version: String,
     label: String,
     start: String,
@@ -445,8 +445,10 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
     egui::Frame::new().fill(theme::raised()).corner_radius(4.0).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let mix = app.mix.setlist.as_ref().map(|s| s.mix.clone()).unwrap_or_default();
-        ui.label(RichText::new("MIX").size(10.0).color(theme::mix_tag()).monospace());
-        ui.add(egui::Label::new(RichText::new(mix.title.clone().unwrap_or(entry_title)).strong().size(14.0)).truncate());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("MIX").size(10.0).color(theme::mix_tag()).monospace());
+            ui.add(egui::Label::new(RichText::new(mix.title.clone().unwrap_or(entry_title)).strong().size(14.0)).truncate());
+        });
         let mut sub = Vec::new();
         if let Some(dj) = mix.dj.clone().or(entry_artist) {
             sub.push(dj);
@@ -1144,6 +1146,7 @@ fn editor(app: &mut App, ui: &mut Ui) {
             };
             row(ui, "Artist", &mut ed.artist);
             row(ui, "Title", &mut ed.title);
+            row(ui, "Label", &mut ed.label);
             ui.label(RichText::new("Start").color(theme::text_dim()));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut ed.start).desired_width(90.0).hint_text("m:ss"));

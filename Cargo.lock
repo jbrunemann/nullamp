@@ -3046,7 +3046,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-tracklists"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "regex",
  "thiserror 2.0.21",

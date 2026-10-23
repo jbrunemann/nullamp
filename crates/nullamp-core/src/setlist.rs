@@ -152,18 +152,19 @@ impl SetlistEntry {
         }
     }
 
-    /// "Title (Version)".
+    /// "Title (Version)"; "ID" for a title nobody has named, as tracklists write it.
     pub fn full_title(&self) -> String {
-        let title = if self.title.trim().is_empty() { "Unknown track" } else { self.title.trim() };
+        let title = if self.title.trim().is_empty() { "ID" } else { self.title.trim() };
         match self.version.as_deref().map(str::trim) {
             Some(v) if !v.is_empty() && !title.contains(v) => format!("{title} ({v})"),
             _ => title.to_owned(),
         }
     }
 
+    /// "ID" for an artist nobody has named.
     pub fn display_artist(&self) -> &str {
         let a = self.artist.trim();
-        if a.is_empty() { "Unknown artist" } else { a }
+        if a.is_empty() { "ID" } else { a }
     }
 
     pub fn is_unidentified(&self) -> bool {
