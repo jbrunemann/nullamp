@@ -810,16 +810,22 @@ fn entries(app: &mut App, ui: &mut Ui) {
             if active {
                 p.rect_filled(egui::Rect::from_min_size(rect.left_top(), vec2(3.0, rect.height())), 0.0, theme::now());
             }
+            let clock = |t: f64| if e.timing == Timing::Approximate { format!("≈{}", format_clock(t)) } else { format_clock(t) };
             let time_text = match e.start {
-                Some(s) if e.timing == Timing::Approximate => format!("≈{}", format_clock(s)),
-                Some(s) => format_clock(s),
+                Some(s) => clock(s),
                 None if e.provenance == Provenance::TagDescription => String::new(),
                 None => "--:--".into(),
             };
             let time_color = if e.start.is_none() { theme::warn() } else if active { theme::now() } else { theme::text_dim() };
-            p.text(rect.left_top() + vec2(10.0, 9.0), Align2::LEFT_CENTER, format!("{:>2}", i + 1), theme::mono(10.0), theme::text_faint());
-            p.text(rect.left_top() + vec2(10.0, 24.0), Align2::LEFT_CENTER, time_text, theme::mono(10.5), time_color);
-            let text_left = rect.left() + 70.0;
+            p.text(egui::pos2(rect.left() + 6.0, rect.top() + 9.0), Align2::LEFT_CENTER, format!("{:>2}", i + 1), theme::mono(11.0), theme::text_faint());
+            // The end sits under the start, a tint dimmer.
+            let end_text = e.start.and(e.end).map(clock);
+            p.text(egui::pos2(rect.left() + 72.0, rect.top() + 9.0), Align2::RIGHT_CENTER, time_text, theme::mono(10.5), time_color);
+            if let Some(end_text) = end_text {
+                let end_color = if active { theme::now().gamma_multiply(0.65) } else { theme::text_faint() };
+                p.text(egui::pos2(rect.left() + 72.0, rect.top() + 24.0), Align2::RIGHT_CENTER, end_text, theme::mono(10.5), end_color);
+            }
+            let text_left = rect.left() + 86.0;
             let asked = asking.filter(|(id, ..)| *id == e.id);
             // Room on the right for the mark, or for the spinner and clip count.
             let width = rect.right() - text_left - if asked.is_some() { 64.0 } else { 24.0 };
