@@ -77,6 +77,9 @@ pub struct Settings {
     /// or the field on the Settings General tab.
     #[serde(default)]
     pub rekordbox_key: String,
+    /// The `guid` cookie of 1001Tracklists.com, copied from the user's browser. Tracklist pages are
+    /// refused without it; the search does not need it. Set on the Settings Web tab.
+    pub tracklists_guid: String,
     /// Read what the DJ software (rekordbox or Mixxx) knows about the tracks (waveform, key, BPM,
     /// rating, colour) into the cache right after the chosen part of its library is added.
     #[serde(alias = "rekordbox_read_data")]
@@ -118,6 +121,7 @@ impl Default for Settings {
             online_artwork: true,
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
+            tracklists_guid: String::new(),
             mixxx: false,
             read_dj_data: true,
         }

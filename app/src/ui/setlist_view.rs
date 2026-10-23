@@ -10,10 +10,11 @@ use nullamp_core::setlist::{Issue, MixInfo, Provenance, Setlist, SetlistEntry, T
 use nullamp_core::time::{format_clock, format_precise, parse_timestamp};
 use nullamp_core::{EntryId, cue, tracklist_text};
 use nullamp_shazam::{Song, Verdict};
+use nullamp_tracklists::{Hit, Tracklist};
 
 use super::{App, dialogs, theme};
 use crate::store::SavedSetlist;
-use crate::workers::{IdentifyTrack, Job, NowPlayingInfo, SetlistOrigin};
+use crate::workers::{IdentifyTrack, Job, NowPlayingInfo, SetlistOrigin, SplitGap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -43,6 +44,33 @@ pub struct Paste {
     replace: bool,
 }
 
+/// The "Search 1001Tracklists" window.
+pub struct TracklistSearch {
+    query: String,
+    /// The year of the mix and the length of the file, by which the results are ranked.
+    year: Option<u16>,
+    seconds: Option<f64>,
+    /// The words the results are for, as sent.
+    asked: String,
+    /// The search being waited for.
+    searching: Option<u64>,
+    /// The best [`MAX_RESULTS`] of what the last search found, `None` before the first one.
+    hits: Option<Vec<Hit>>,
+    /// How many results the site gave, of which `hits` are the best.
+    found: usize,
+    replace: bool,
+    error: Option<String>,
+}
+
+/// Results shown; the ranking puts the likely ones first, the rest is noise.
+const MAX_RESULTS: usize = 5;
+
+/// A tracklist page being read, for the setlist.
+struct FetchingTracklist {
+    request: u64,
+    replace: bool,
+}
+
 #[derive(Default)]
 pub struct MixState {
     pub token: u64,
@@ -64,6 +92,8 @@ pub struct MixState {
     issues: Vec<Issue>,
     edit: EntryEdit,
     paste: Option<Paste>,
+    tracklist_search: Option<TracklistSearch>,
+    tracklist_fetch: Option<FetchingTracklist>,
     text_request: Option<u64>,
     scroll_to_active: bool,
     confirm_clear: bool,
@@ -81,6 +111,8 @@ struct Splitting {
     request: u64,
     /// The untimed entries the starts are for, 0 without a list (see [`untimed_count`]).
     listed: usize,
+    /// Filling gaps instead: the entries without a time of each gap, in the order of the request's gaps.
+    gaps: Vec<Vec<EntryId>>,
 }
 
 /// A running "Identify with Shazam" request.
@@ -403,6 +435,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         editor(app, ui);
     }
     paste_modal(app, ui.ctx());
+    tracklist_search_modal(app, ui.ctx());
     confirm_modals(app, ui.ctx());
 }
 
@@ -427,9 +460,6 @@ fn mix_card(app: &mut App, ui: &mut Ui) {
         if !sub.is_empty() {
             ui.label(RichText::new(sub.join(" · ")).color(theme::text_dim()));
         }
-        if let Some(url) = &mix.url {
-            ui.hyperlink_to(RichText::new(url).small(), url);
-        }
     });
 }
 
@@ -442,6 +472,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             }
             if ui.button("Paste tracklist…").on_hover_text("Paste a tracklist copied from a web page such as 1001Tracklists").clicked() {
                 app.mix.paste = Some(Paste { replace: true, ..Default::default() });
+                ui.close();
+            }
+            if ui.button("Search 1001Tracklists…").on_hover_text("Find this mix on 1001Tracklists and bring in its tracklist (needs your 1001Tracklists guid in Settings)").clicked() {
+                open_tracklist_search(app);
                 ui.close();
             }
             if ui.button("Scan file again").on_hover_text("Re-read chapters and cue sheets; your corrections are kept").clicked() {
@@ -637,7 +671,18 @@ fn find_tracks_button(app: &mut App, ui: &mut Ui) {
         }
         return;
     }
-    let Some(listed) = untimed_count(app) else { return };
+    let Some(listed) = untimed_count(app) else {
+        let gaps = gap_plan(app);
+        if gaps.is_empty() {
+            return;
+        }
+        let untimed: usize = gaps.iter().map(|(ids, _)| ids.len()).sum();
+        let hover = format!("Estimate from the audio where the {untimed} entries without a time start, looking only between the times the list has (offline, a few seconds per gap). Entries that have a time are not touched; correct the new times where needed.");
+        if ui.add_enabled(!app.mix.loading && app.mix.path.is_some(), egui::Button::new("Find missing times")).on_hover_text(hover).clicked() {
+            find_missing_times(app, gaps);
+        }
+        return;
+    };
     let hover = if listed > 0 {
         format!("Estimate from the audio where each of the {listed} listed tracks starts (offline, takes a few seconds). Correct the times where needed.")
     } else {
@@ -653,7 +698,83 @@ fn find_tracks(app: &mut App, listed: usize) {
     let Some(path) = app.mix.path.clone() else { return };
     let request = app.workers.request_id();
     app.workers.split(request, path, (listed > 0).then_some(listed));
-    app.mix.split = Some(Splitting { request, listed });
+    app.mix.split = Some(Splitting { request, listed, gaps: Vec::new() });
+}
+
+/// A stretch is not searched when it leaves fewer seconds than this for each track in it.
+const MIN_GAP_SECONDS_PER_TRACK: f64 = 30.0;
+
+/// The runs of entries without a time that lie between entries with one, as the entries and the
+/// stretch of the mix to look in. A run has the entry before it, which starts the stretch, and
+/// the entry after it, whose start ends it; at the head of the list the stretch starts at 0, at
+/// its tail it ends with the file. Runs whose stretch is too short for their tracks are left alone.
+fn gap_plan(app: &App) -> Vec<(Vec<EntryId>, SplitGap)> {
+    let Some(setlist) = app.mix.setlist.as_ref().filter(|s| s.has_times()) else { return Vec::new() };
+    let entries = &setlist.entries;
+    let duration = app.player.duration().filter(|d| *d > 0.0);
+    let mut plan = Vec::new();
+    let mut i = 0;
+    while i < entries.len() {
+        if entries[i].start.is_some() {
+            i += 1;
+            continue;
+        }
+        let end = i + entries[i..].iter().take_while(|e| e.start.is_none()).count();
+        let before = i.checked_sub(1).and_then(|k| entries[k].start);
+        let to = entries.get(end).map_or(duration, |e| e.start);
+        let ids: Vec<EntryId> = entries[i..end].iter().map(|e| e.id).collect();
+        let (from, tracks) = match before {
+            Some(start) => (start, ids.len() + 1),
+            None => (0.0, ids.len()),
+        };
+        if tracks > 1 && to.is_none_or(|to| to - from >= tracks as f64 * MIN_GAP_SECONDS_PER_TRACK) {
+            plan.push((ids, SplitGap { from, to, tracks }));
+        }
+        i = end;
+    }
+    plan
+}
+
+fn find_missing_times(app: &mut App, plan: Vec<(Vec<EntryId>, SplitGap)>) {
+    let Some(path) = app.mix.path.clone() else { return };
+    let request = app.workers.request_id();
+    let (gaps, ids): (Vec<_>, Vec<_>) = plan.into_iter().map(|(ids, gap)| (gap, ids)).unzip();
+    app.workers.split_gaps(request, path, gaps);
+    app.mix.split = Some(Splitting { request, listed: 0, gaps: ids });
+}
+
+/// Each gap's entries get the starts found in their stretch, as approximate times. Entries that
+/// have a time by now (typed in, or from another import) are left as they are, as is a gap
+/// whose entries are no longer the ones asked about.
+pub fn on_split_gaps(app: &mut App, request: u64, result: Result<Vec<Vec<f64>>, String>) {
+    let Some(gaps) = app.mix.split.take_if(|s| s.request == request).map(|s| s.gaps) else { return };
+    let found = match result {
+        Ok(found) if found.len() == gaps.len() => found,
+        Ok(_) => return app.warn("The answer does not fit the list; nothing was changed"),
+        Err(e) => return app.warn(e),
+    };
+    let Some(setlist) = app.mix.setlist.as_mut() else { return };
+    let (mut placed, mut skipped) = (0, 0);
+    for (ids, starts) in gaps.iter().zip(&found) {
+        // The stretch's own first start is the known time of the entry before it, unless the run opens the list.
+        let new = &starts[starts.len().saturating_sub(ids.len())..];
+        let entries: Vec<usize> = ids.iter().filter_map(|id| setlist.entries.iter().position(|e| e.id == *id)).collect();
+        if new.len() != ids.len() || entries.len() != ids.len() || entries.iter().any(|&k| setlist.entries[k].start.is_some()) {
+            skipped += ids.len();
+            continue;
+        }
+        for (&k, &t) in entries.iter().zip(new) {
+            (setlist.entries[k].start, setlist.entries[k].timing) = (Some(t), Timing::Approximate);
+        }
+        placed += ids.len();
+    }
+    app.mix.scroll_to_active = true;
+    changed(app);
+    app.info(match (placed, skipped) {
+        (p, 0) => format!("Found times for {p} entries between the listed ones; they are estimates (≈), correct them where needed"),
+        (0, _) => "The setlist changed while the times were being found; nothing was changed".to_owned(),
+        (p, s) => format!("Found times for {p} entries; {s} changed meanwhile and were left alone. The times are estimates (≈)"),
+    });
 }
 
 /// The listed entries get the starts in order, as approximate times; without a list each start
@@ -689,7 +810,7 @@ fn empty_hint(app: &mut App, ui: &mut Ui) {
     ui.add_space(6.0);
     ui.label(RichText::new("No setlist for this file.").color(theme::text_dim()));
     ui.label(
-        RichText::new("Nullamp looked for embedded chapters, a cue sheet in the tags, and a .cue file next to it. Import a cue sheet, paste a tracklist copied from a web page, add entries at the playhead, or let Find tracks estimate where the tracks change.")
+        RichText::new("Nullamp looked for embedded chapters, a cue sheet in the tags, and a .cue file next to it. Import a cue sheet, search 1001Tracklists, paste a tracklist copied from a web page, add entries at the playhead, or let Find tracks estimate where the tracks change.")
             .small()
             .color(theme::text_faint()),
     );
@@ -702,8 +823,15 @@ fn tracklist_links(app: &mut App, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Tracklist link in tags:").small().color(theme::text_dim()));
             ui.hyperlink_to(RichText::new(&url).small(), &url);
-            if url.contains("1001tracklists.com") && ui.small_button("Paste from it…").on_hover_text("1001Tracklists has no API: open the page, copy the list, paste it here").clicked() {
-                app.mix.paste = Some(Paste { url: url.clone(), replace: true, ..Default::default() });
+            if url.contains("1001tracklists.com") {
+                let guid = !app.settings.tracklists_guid.trim().is_empty();
+                let fetch = ui.add_enabled(guid && app.mix.tracklist_fetch.is_none(), egui::Button::new("Fetch it").small());
+                if fetch.on_hover_text("Read the tracklist from that page (needs your 1001Tracklists guid in Settings)").on_disabled_hover_text("Needs your 1001Tracklists guid in Settings").clicked() {
+                    fetch_tracklist(app, url.clone(), true);
+                }
+                if ui.small_button("Paste from it…").on_hover_text("Open the page, copy the list, paste it here").clicked() {
+                    app.mix.paste = Some(Paste { url: url.clone(), replace: true, ..Default::default() });
+                }
             }
         });
     }
@@ -1175,6 +1303,194 @@ fn paste_modal(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+// ----- 1001Tracklists -----
+
+/// The words to look for: the mix's DJ and title when the setlist has them, else the playing file's
+/// artist and title, else its file name, without the separators sites write differently.
+fn tracklist_query(app: &App, year: Option<u16>) -> String {
+    let mix = app.mix.setlist.as_ref().map(|s| s.mix.clone()).unwrap_or_default();
+    let entry = app.player.current_entry();
+    let title = mix.title.clone().or_else(|| entry.map(|e| e.info.display_title(&e.path))).unwrap_or_default();
+    let artist = mix.dj.clone().or_else(|| entry.and_then(|e| e.info.artist.clone())).unwrap_or_default();
+    let text = if artist.is_empty() || title.to_lowercase().contains(&artist.to_lowercase()) { title } else { format!("{artist} {title}") };
+    let mut query = text.replace(['@', '_'], " ").replace(" - ", " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some(year) = year.filter(|y| !query.contains(&y.to_string())) {
+        query.push_str(&format!(" {year}"));
+    }
+    query
+}
+
+/// The year the mix was played: the file's date tag, else the date the setlist knows.
+fn mix_year(app: &App) -> Option<u16> {
+    let tag = app.player.current_entry().and_then(|e| e.info.year);
+    let date = app.mix.setlist.as_ref().and_then(|s| s.mix.date.as_deref()).and_then(|d| d.get(..4)?.parse().ok());
+    tag.or(date).filter(|y| (1900..=2100).contains(y))
+}
+
+fn open_tracklist_search(app: &mut App) {
+    let year = mix_year(app);
+    let query = tracklist_query(app, year);
+    let seconds = app.player.duration().filter(|d| *d > 0.0);
+    app.mix.tracklist_search = Some(TracklistSearch { query, year, seconds, asked: String::new(), searching: None, hits: None, found: 0, replace: true, error: None });
+    search_tracklists(app);
+}
+
+fn search_tracklists(app: &mut App) {
+    let Some(search) = app.mix.tracklist_search.as_mut() else { return };
+    let query = search.query.trim().to_owned();
+    if query.is_empty() {
+        return;
+    }
+    let request = app.workers.request_id();
+    search.searching = Some(request);
+    search.error = None;
+    search.asked = query.clone();
+    app.workers.search_tracklists(request, query);
+}
+
+/// Read the tracklist page at `url`; the answer fills the setlist (see [`on_tracklist_page`]).
+fn fetch_tracklist(app: &mut App, url: String, replace: bool) {
+    let request = app.workers.request_id();
+    if let Some(search) = app.mix.tracklist_search.as_mut() {
+        search.error = None;
+    }
+    app.mix.tracklist_fetch = Some(FetchingTracklist { request, replace });
+    app.workers.fetch_tracklist(request, app.settings.tracklists_guid.trim().to_owned(), url);
+}
+
+pub fn on_tracklist_hits(app: &mut App, request: u64, result: Result<Vec<Hit>, String>) {
+    let Some(search) = app.mix.tracklist_search.as_mut().filter(|s| s.searching == Some(request)) else { return };
+    search.searching = None;
+    match result {
+        Ok(mut hits) => {
+            nullamp_tracklists::rank(&mut hits, &nullamp_tracklists::Wanted { query: &search.asked, year: search.year, seconds: search.seconds });
+            search.found = hits.len();
+            hits.truncate(MAX_RESULTS);
+            search.hits = Some(hits);
+        }
+        Err(e) => search.error = Some(e),
+    }
+}
+
+pub fn on_tracklist_page(app: &mut App, request: u64, result: Result<Tracklist, String>) {
+    let Some(fetching) = app.mix.tracklist_fetch.take_if(|f| f.request == request) else { return };
+    let list = match result {
+        Ok(list) => list,
+        Err(e) => {
+            return match app.mix.tracklist_search.as_mut() {
+                Some(search) => search.error = Some(e),
+                None => app.warn(e),
+            };
+        }
+    };
+    app.mix.tracklist_search = None;
+    let mut incoming = tracklist_text::parse(&list.text(), None).setlist;
+    // The times are the site's listeners' estimates, not marks in this file.
+    for entry in &mut incoming.entries {
+        entry.provenance = Provenance::Online { provider: "1001Tracklists".into(), url: Some(list.url.clone()) };
+        entry.timing = Timing::Approximate;
+    }
+    incoming.mix = MixInfo { title: Some(list.title.clone()).filter(|t| !t.is_empty()), dj: list.dj.clone(), event: None, date: list.date.clone(), url: Some(list.url.clone()) };
+    apply_incoming(app, incoming, fetching.replace);
+}
+
+fn tracklist_search_modal(app: &mut App, ctx: &egui::Context) {
+    let Some(mut search) = app.mix.tracklist_search.take() else { return };
+    let (mut keep, mut run, mut open_settings, mut chosen) = (true, false, false, None);
+    let has_guid = !app.settings.tracklists_guid.trim().is_empty();
+    let fetching = app.mix.tracklist_fetch.is_some();
+    let has_entries = app.mix.setlist.as_ref().is_some_and(|s| !s.entries.is_empty());
+    let file_length = app.player.duration().filter(|d| *d > 0.0);
+    egui::Modal::new(egui::Id::unique("search-tracklists")).show(ctx, |ui| {
+        ui.set_width(560.0);
+        ui.heading("Search 1001Tracklists");
+        ui.horizontal(|ui| {
+            let field = ui.add(egui::TextEdit::singleline(&mut search.query).desired_width(ui.available_width() - 70.0).hint_text("DJ and name of the mix"));
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.add_enabled(search.searching.is_none() && !search.query.trim().is_empty(), egui::Button::new("Search")).clicked() || enter) && search.searching.is_none() {
+                run = true;
+            }
+        });
+        if !has_guid {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Reading a tracklist needs your 1001Tracklists guid.").small().color(theme::warn()));
+                if ui.small_button("Open Settings").clicked() {
+                    open_settings = true;
+                }
+            });
+        }
+        if let Some(error) = &search.error {
+            ui.label(RichText::new(error).small().color(theme::err()));
+        }
+        if search.searching.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Searching…").small().color(theme::text_dim()));
+            });
+        }
+        if let Some(hits) = &search.hits {
+            let mut summary = if search.found > hits.len() { format!("Best {} of {} results", hits.len(), search.found) } else { format!("{} results", hits.len()) };
+            if let Some(year) = search.year {
+                summary.push_str(&format!(" · mix of {year}"));
+            }
+            if let Some(length) = file_length {
+                summary.push_str(&format!(" · file is {} long", format_clock(length)));
+            }
+            ui.label(RichText::new(summary).small().color(theme::text_dim()));
+            egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+                for hit in hits {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width() - 80.0);
+                            ui.add(egui::Label::new(RichText::new(&hit.title).strong()).truncate());
+                            let mut facts: Vec<String> = hit.date.iter().cloned().collect();
+                            facts.extend(hit.tracks.map(|n| format!("{n} tracks")));
+                            facts.extend(hit.duration.clone());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(facts.join(" · ")).small().color(theme::text_dim()));
+                                ui.hyperlink_to(RichText::new("open").small(), &hit.url);
+                                if hit.likely {
+                                    ui.label(RichText::new("likely match").small().color(theme::ok()));
+                                }
+                            });
+                        });
+                        if ui.add_enabled(has_guid && !fetching, egui::Button::new("Import")).on_hover_text("Bring in this tracklist").clicked() {
+                            chosen = Some(hit.url.clone());
+                        }
+                    });
+                    ui.separator();
+                }
+            });
+        }
+        if has_entries {
+            ui.checkbox(&mut search.replace, "Replace current entries (your corrections are kept)");
+        }
+        ui.horizontal(|ui| {
+            if fetching {
+                ui.spinner();
+                ui.label(RichText::new("Reading the tracklist…").small().color(theme::text_dim()));
+            }
+            if ui.button("Close").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                keep = false;
+            }
+        });
+    });
+    if open_settings {
+        app.dialogs.settings = Some(dialogs::SettingsTab::Web);
+        keep = false;
+    }
+    let replace = search.replace || !has_entries;
+    if keep {
+        app.mix.tracklist_search = Some(search);
+    }
+    if run {
+        search_tracklists(app);
+    }
+    if let Some(url) = chosen {
+        fetch_tracklist(app, url, replace);
+    }
+}
+
 fn confirm_modals(app: &mut App, ctx: &egui::Context) {
     if app.mix.confirm_clear {
         egui::Modal::new(egui::Id::unique("clear-setlist")).show(ctx, |ui| {
@@ -1330,7 +1646,7 @@ mod tests {
 
         app.mix.setlist = Some(tag_list(&["One", "Two", "Three"]));
         assert_eq!(untimed_count(app), Some(3));
-        app.mix.split = Some(Splitting { request: 5, listed: 3 });
+        app.mix.split = Some(Splitting { request: 5, listed: 3, gaps: Vec::new() });
         on_split(app, 4, Ok(vec![0.0, 1.0, 2.0]));
         assert!(app.mix.split.is_some(), "another request's answer is dropped");
         on_split(app, 5, Ok(vec![0.0, 64.0, 130.0]));
@@ -1342,7 +1658,7 @@ mod tests {
         assert_eq!(untimed_count(app), None, "a timed list is not offered again");
 
         app.mix.setlist = None;
-        app.mix.split = Some(Splitting { request: 6, listed: 0 });
+        app.mix.split = Some(Splitting { request: 6, listed: 0, gaps: Vec::new() });
         on_split(app, 6, Ok(vec![0.0, 300.0]));
         let entries = &app.mix.setlist.as_ref().unwrap().entries;
         assert_eq!(entries.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(300.0)]);
@@ -1350,11 +1666,101 @@ mod tests {
 
         // The user pasted a list while the mix was analysed without one.
         app.mix.setlist = Some(tag_list(&["One", "Two"]));
-        app.mix.split = Some(Splitting { request: 7, listed: 0 });
+        app.mix.split = Some(Splitting { request: 7, listed: 0, gaps: Vec::new() });
         on_split(app, 7, Ok(vec![0.0, 300.0]));
         assert!(app.mix.setlist.as_ref().unwrap().entries.iter().all(|e| e.start.is_none()));
         assert!(app.mix.split.is_none());
         h.state_mut().player.stop();
+    }
+
+    fn timed(names: &[(&str, Option<f64>)]) -> Setlist {
+        Setlist { entries: names.iter().map(|(n, t)| SetlistEntry::new("Artist", *n, *t, Provenance::Online { provider: "1001Tracklists".into(), url: None })).collect(), ..Default::default() }
+    }
+
+    /// The tracks without a time are looked for between the times their neighbours have, and
+    /// only they get the answer.
+    #[test]
+    fn missing_times_are_found_between_the_known_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        {
+            let app = h.state_mut();
+            let id = app.player.lists[0].playlist.entries()[5].id;
+            app.player.play_entry(0, id, 0.0);
+        }
+        settle(&mut h, 1500);
+        let app = h.state_mut();
+
+        // A leading run, a run in the middle, a run too short for its tracks, and a run at the tail
+        // (the fixture is 6 s long, so the tail has no room).
+        app.mix.setlist = Some(timed(&[("L1", None), ("L2", None), ("A", Some(300.0)), ("M1", None), ("M2", None), ("B", Some(900.0)), ("S1", None), ("C", Some(910.0)), ("T1", None)]));
+        let plan = gap_plan(app);
+        let ids = |plan: &[(Vec<EntryId>, SplitGap)], k: usize| plan[k].0.iter().map(|id| app.mix.setlist.as_ref().unwrap().entries.iter().find(|e| e.id == *id).unwrap().title.clone()).collect::<Vec<_>>();
+        assert_eq!(plan.len(), 2, "{plan:?}");
+        assert_eq!((ids(&plan, 0), plan[0].1), (vec!["L1".to_owned(), "L2".to_owned()], SplitGap { from: 0.0, to: Some(300.0), tracks: 2 }));
+        assert_eq!((ids(&plan, 1), plan[1].1), (vec!["M1".to_owned(), "M2".to_owned()], SplitGap { from: 300.0, to: Some(900.0), tracks: 3 }));
+
+        let gaps: Vec<Vec<EntryId>> = plan.iter().map(|(ids, _)| ids.clone()).collect();
+        app.mix.split = Some(Splitting { request: 3, listed: 0, gaps: gaps.clone() });
+        on_split_gaps(app, 2, Ok(vec![]));
+        assert!(app.mix.split.is_some(), "another request's answer is dropped");
+        on_split_gaps(app, 3, Ok(vec![vec![0.0, 140.0], vec![300.0, 520.0, 700.0]]));
+        let entries = &app.mix.setlist.as_ref().unwrap().entries;
+        assert_eq!(entries.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(140.0), Some(300.0), Some(520.0), Some(700.0), Some(900.0), None, Some(910.0), None]);
+        assert!(entries.iter().filter(|e| e.title.starts_with(['L', 'M'])).all(|e| e.timing == Timing::Approximate));
+        assert_eq!(entries[2].timing, Timing::Approximate, "untouched entries keep what they had");
+
+        // An entry that got a time meanwhile is left alone, and so is the rest of its gap.
+        app.mix.setlist = Some(timed(&[("A", Some(0.0)), ("M1", None), ("M2", None), ("B", Some(600.0))]));
+        let plan = gap_plan(app);
+        app.mix.split = Some(Splitting { request: 4, listed: 0, gaps: plan.iter().map(|(ids, _)| ids.clone()).collect() });
+        app.mix.setlist.as_mut().unwrap().entries[1].start = Some(111.0);
+        on_split_gaps(app, 4, Ok(vec![vec![0.0, 200.0, 400.0]]));
+        let entries = &app.mix.setlist.as_ref().unwrap().entries;
+        assert_eq!(entries.iter().map(|e| e.start).collect::<Vec<_>>(), [Some(0.0), Some(111.0), None, Some(600.0)]);
+
+        // Nothing is timed: the whole mix is the job, not gaps.
+        app.mix.setlist = Some(tag_list(&["One", "Two"]));
+        assert!(gap_plan(app).is_empty());
+        h.state_mut().player.stop();
+    }
+
+    fn sample_tracklist() -> Tracklist {
+        let track = |start, name: &str, label: Option<&str>| nullamp_tracklists::Track { start, name: name.into(), label: label.map(Into::into) };
+        Tracklist {
+            title: "Atlas Weekend (Virtual Festival), Ukraine".into(),
+            dj: Some("Miss Monique".into()),
+            date: Some("2020-07-10".into()),
+            url: "https://www.1001tracklists.com/tracklist/2ulfu5h9/x.html".into(),
+            tracks: vec![track(Some(0.0), "Jam & Spoon ft. Rea - Set Me Free (Pavel Khvaleev Remix)", Some("BLACK HOLE")), track(Some(382.0), "ID - ID", None), track(Some(663.0), "Cuprite - Sababa", Some("ALPHA BLACK"))],
+        }
+    }
+
+    /// A tracklist page becomes approximately timed entries from the site, and an answer nobody
+    /// is waiting for changes nothing.
+    #[test]
+    fn a_fetched_tracklist_fills_the_setlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        let app = h.state_mut();
+        app.mix.setlist = None;
+        on_tracklist_page(app, 5, Ok(sample_tracklist()));
+        assert!(app.mix.setlist.is_none(), "no request 5 was made");
+        app.mix.tracklist_fetch = Some(FetchingTracklist { request: 5, replace: true });
+        app.mix.tracklist_search = Some(TracklistSearch { query: String::new(), year: None, seconds: None, asked: String::new(), searching: None, hits: None, found: 0, replace: true, error: None });
+        on_tracklist_page(app, 5, Ok(sample_tracklist()));
+        assert!(app.mix.tracklist_fetch.is_none() && app.mix.tracklist_search.is_none());
+        let setlist = app.mix.setlist.as_ref().expect("imported");
+        assert_eq!(setlist.entries.len(), 3);
+        let first = &setlist.entries[0];
+        assert_eq!((first.artist.as_str(), first.title.as_str(), first.version.as_deref(), first.label.as_deref()), ("Jam & Spoon ft. Rea", "Set Me Free", Some("Pavel Khvaleev Remix"), Some("BLACK HOLE")));
+        assert_eq!((first.start, first.timing), (Some(0.0), Timing::Approximate));
+        assert_eq!(first.provenance, Provenance::Online { provider: "1001Tracklists".into(), url: Some("https://www.1001tracklists.com/tracklist/2ulfu5h9/x.html".into()) });
+        assert!(setlist.entries[1].is_unidentified());
+        assert_eq!(setlist.entries[2].start, Some(663.0));
+        assert_eq!((setlist.mix.dj.as_deref(), setlist.mix.date.as_deref()), (Some("Miss Monique"), Some("2020-07-10")));
     }
 
     #[test]
@@ -1442,7 +1848,7 @@ fn render_find_tracks() {
     h.state_mut().mix.setlist = Some(Setlist { entries: names.iter().map(|(a, t)| SetlistEntry::new(*a, *t, None, Provenance::TagDescription)).collect(), ..Default::default() });
     settle(&mut h, 300);
     save(&mut h, "15a-find-tracks-offered.png");
-    h.state_mut().mix.split = Some(Splitting { request: 9, listed: 4 });
+    h.state_mut().mix.split = Some(Splitting { request: 9, listed: 4, gaps: Vec::new() });
     settle(&mut h, 300);
     save(&mut h, "15b-find-tracks-running.png");
     on_split(h.state_mut(), 9, Ok(vec![0.0, 318.0, 432.0, 952.0]));
@@ -1451,5 +1857,45 @@ fn render_find_tracks() {
     h.state_mut().mix.confirm_cue_comment = true;
     settle(&mut h, 300);
     save(&mut h, "15d-write-cue-comment.png");
+    h.state_mut().player.stop();
+}
+
+/// The tracklist search window with results.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn render_tracklist_search() {
+    use egui_kittest::Harness;
+
+    use crate::ui_snapshots::{seeded_store, settle};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+        app.settings.tracklists_guid = "241036446203c".into();
+    }
+    settle(&mut h, 1500);
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/screenshots");
+    std::fs::create_dir_all(&out).unwrap();
+    let hit = |title: &str, date: &str, tracks, duration: &str| Hit { title: title.into(), url: "https://www.1001tracklists.com/tracklist/x/y.html".into(), date: Some(date.into()), tracks: Some(tracks), duration: Some(duration.into()), score: 0, likely: false };
+    let mut hits = vec![hit("Miss Monique @ Kiss FM Ukraine", "2020-12-17", 11, "1h"), hit("Miss Monique @ YearMix 2020 (Saxon Club Kiev, Ukraine)", "2021-01-29", 24, "2h 1m"), hit("Miss Monique @ Atlas Weekend (Virtual Festival), Ukraine", "2020-07-10", 11, "59m")];
+    nullamp_tracklists::rank(&mut hits, &nullamp_tracklists::Wanted { query: "Miss Monique Live Atlas Weekend 2020", year: Some(2020), seconds: Some(3540.0) });
+    h.state_mut().mix.tracklist_search = Some(TracklistSearch {
+        query: "Miss Monique Live Atlas Weekend 2020".into(),
+        year: Some(2020),
+        seconds: Some(3540.0),
+        asked: "Miss Monique Live Atlas Weekend 2020".into(),
+        searching: None,
+        found: hits.len(),
+        hits: Some(hits),
+        replace: true,
+        error: None,
+    });
+    settle(&mut h, 300);
+    h.render().expect("render").save(out.join("16a-tracklist-search.png")).unwrap();
     h.state_mut().player.stop();
 }

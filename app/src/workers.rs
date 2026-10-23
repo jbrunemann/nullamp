@@ -152,6 +152,17 @@ struct SplitRequest {
     path: PathBuf,
     /// How many tracks the mix has, when a track list says so.
     tracks: Option<usize>,
+    /// Stretches to look in instead of the whole mix, each between two known times.
+    gaps: Vec<SplitGap>,
+}
+
+/// A stretch of a mix whose tracks are to be found: `tracks` of them play from `from` to `to` (the
+/// end of the file when `None`), the first one starting at `from`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SplitGap {
+    pub from: f64,
+    pub to: Option<f64>,
+    pub tracks: usize,
 }
 
 /// One track of a mix to name: its setlist entry and where it plays in the file.
@@ -159,6 +170,12 @@ pub struct IdentifyTrack {
     pub entry: EntryId,
     pub start: f64,
     pub end: f64,
+}
+
+/// A request to 1001Tracklists, made on the user's behalf.
+enum TracklistRequest {
+    Search { request: u64, query: String },
+    Fetch { request: u64, guid: String, url: String },
 }
 
 enum OnlineRequest {
@@ -236,6 +253,12 @@ pub enum JobResult {
     IdentifyDone { request: u64, result: Result<(), String> },
     /// The answer to [`Workers::split`]: where each track starts, the first at 0. A cancelled request sends nothing.
     Split { request: u64, result: Result<Vec<f64>, String> },
+    /// The answer to [`Workers::split_gaps`]: for each gap, where its tracks start, the first at the gap's `from`.
+    SplitGaps { request: u64, result: Result<Vec<Vec<f64>>, String> },
+    /// The answer to [`Workers::search_tracklists`].
+    TracklistHits { request: u64, result: Result<Vec<nullamp_tracklists::Hit>, String> },
+    /// The answer to [`Workers::fetch_tracklist`].
+    TracklistPage { request: u64, result: Result<nullamp_tracklists::Tracklist, String> },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -254,6 +277,7 @@ pub struct Workers {
     split: Sender<SplitRequest>,
     /// The split request that may run; any other one stops at its next packet or step.
     split_current: Arc<AtomicU64>,
+    tracklists: Sender<TracklistRequest>,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -444,6 +468,34 @@ impl Workers {
                             continue;
                         }
                         let started = std::time::Instant::now();
+                        if !request.gaps.is_empty() {
+                            let mut found = Vec::with_capacity(request.gaps.len());
+                            let mut failure = None;
+                            for gap in &request.gaps {
+                                match nullamp_audio::find_track_starts_between(&request.path, gap.from, gap.to, gap.tracks, &|| !alive()) {
+                                    Ok(starts) => found.push(starts),
+                                    Err(nullamp_audio::SplitError::Cancelled) => break,
+                                    Err(e) => {
+                                        failure = Some(format!("Cannot read the mix: {e}"));
+                                        break;
+                                    }
+                                }
+                            }
+                            if !alive() {
+                                continue;
+                            }
+                            let result = match failure {
+                                Some(e) => Err(e),
+                                None => {
+                                    log::info!("Found the tracks of {} gaps in {} in {:.1} s", found.len(), request.path.display(), started.elapsed().as_secs_f64());
+                                    Ok(found)
+                                }
+                            };
+                            if tx.send(JobResult::SplitGaps { request: id, result }).is_ok() {
+                                w();
+                            }
+                            continue;
+                        }
                         let result = match nullamp_audio::find_track_starts(&request.path, request.tracks, &|| !alive()) {
                             Err(nullamp_audio::SplitError::Cancelled) => continue,
                             Ok(starts) => {
@@ -462,6 +514,40 @@ impl Workers {
                 .expect("spawn split worker");
         }
 
+        let (tracklists, tracklists_rx) = crossbeam_channel::unbounded::<TracklistRequest>();
+        {
+            let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
+            std::thread::Builder::new()
+                .name("nullamp-tracklists".into())
+                .spawn(move || {
+                    while let Ok(request) = tracklists_rx.recv() {
+                        let result = match request {
+                            TracklistRequest::Search { request, query } => {
+                                let result = nullamp_tracklists::search(&query).map_err(|e| e.to_string());
+                                match &result {
+                                    Ok(hits) => log::info!("1001Tracklists: {} results for \"{query}\"", hits.len()),
+                                    Err(e) => log::warn!("1001Tracklists search for \"{query}\": {e}"),
+                                }
+                                JobResult::TracklistHits { request, result }
+                            }
+                            TracklistRequest::Fetch { request, guid, url } => {
+                                let result = nullamp_tracklists::fetch(&guid, &url).map_err(|e| e.to_string());
+                                match &result {
+                                    Ok(list) => log::info!("1001Tracklists: {} tracks in {url}", list.tracks.len()),
+                                    Err(e) => log::warn!("1001Tracklists page {url}: {e}"),
+                                }
+                                JobResult::TracklistPage { request, result }
+                            }
+                        };
+                        if tx.send(result).is_err() {
+                            return;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn tracklists worker");
+        }
+
         Workers {
             interactive,
             bulk,
@@ -474,6 +560,7 @@ impl Workers {
             identify_current,
             split,
             split_current,
+            tracklists,
             results,
             scan_generation,
             cover_generation,
@@ -519,12 +606,30 @@ impl Workers {
     /// when known. Answered with [`JobResult::Split`] under `request`. A newer request replaces this one.
     pub fn split(&self, request: u64, path: PathBuf, tracks: Option<usize>) {
         self.split_current.store(request, Ordering::SeqCst);
-        let _ = self.split.send(SplitRequest { request, path, tracks });
+        let _ = self.split.send(SplitRequest { request, path, tracks, gaps: Vec::new() });
+    }
+
+    /// Find the tracks inside each of `gaps` (stretches between two known times) instead of
+    /// splitting the whole mix. Answered with [`JobResult::SplitGaps`]; cancelled like [`Workers::split`].
+    pub fn split_gaps(&self, request: u64, path: PathBuf, gaps: Vec<SplitGap>) {
+        self.split_current.store(request, Ordering::SeqCst);
+        let _ = self.split.send(SplitRequest { request, path, tracks: None, gaps });
     }
 
     /// Stop the running split request at its next packet or step.
     pub fn cancel_split(&self) {
         self.split_current.store(0, Ordering::SeqCst);
+    }
+
+    /// Search 1001Tracklists for `query`; answered with [`JobResult::TracklistHits`] under `request`.
+    pub fn search_tracklists(&self, request: u64, query: String) {
+        let _ = self.tracklists.send(TracklistRequest::Search { request, query });
+    }
+
+    /// Read the tracklist page at `url` with the user's `guid` cookie; answered with
+    /// [`JobResult::TracklistPage`] under `request`.
+    pub fn fetch_tracklist(&self, request: u64, guid: String, url: String) {
+        let _ = self.tracklists.send(TracklistRequest::Fetch { request, guid, url });
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with

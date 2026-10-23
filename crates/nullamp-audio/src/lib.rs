@@ -39,7 +39,7 @@ pub use crate::fingerprint::{Fingerprint, FingerprintError, MAX_SECONDS as FINGE
 pub use crate::kind::OutputKind;
 pub use crate::mono::{MonoError, decode_clips};
 pub use crate::output::OutputDevice;
-pub use crate::split::{SplitError, find_starts as find_track_starts};
+pub use crate::split::{SplitError, find_starts as find_track_starts, find_starts_between as find_track_starts_between};
 pub use crate::tempo::{Tempo, TempoError, compute as compute_tempo};
 pub use crate::waveform::{BUCKETS as WAVEFORM_BUCKETS, Waveform, WaveformError, compute as compute_waveform};
 

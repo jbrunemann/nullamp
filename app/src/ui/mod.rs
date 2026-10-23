@@ -769,6 +769,9 @@ impl App {
             JobResult::Identified { request, entry, verdict } => setlist_view::on_identified(self, request, entry, verdict),
             JobResult::IdentifyDone { request, result } => setlist_view::on_identify_done(self, request, result),
             JobResult::Split { request, result } => setlist_view::on_split(self, request, result),
+            JobResult::SplitGaps { request, result } => setlist_view::on_split_gaps(self, request, result),
+            JobResult::TracklistHits { request, result } => setlist_view::on_tracklist_hits(self, request, result),
+            JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
             JobResult::TextWritten { path, result } => match result {
                 Ok(()) => self.info(format!("Saved {}", path.display())),
                 Err(e) => self.error(format!("Cannot write {}: {e}", path.display())),
