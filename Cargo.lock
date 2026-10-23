@@ -2941,6 +2941,7 @@ dependencies = [
  "nullamp-rekordbox",
  "nullamp-shazam",
  "nullamp-sysmedia",
+ "nullamp-tracklists",
  "nullamp-update",
  "pollster 0.4.0",
  "raw-window-handle",
@@ -2974,6 +2975,7 @@ dependencies = [
  "rubato 5.0.1",
  "rusty-chromaprint",
  "symphonia",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
@@ -3040,6 +3042,14 @@ dependencies = [
  "log",
  "nullamp-core",
  "souvlaki",
+]
+
+[[package]]
+name = "nullamp-tracklists"
+version = "1.8.0"
+dependencies = [
+ "regex",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

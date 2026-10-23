@@ -1,0 +1,10 @@
+[package]
+name = "nullamp-tracklists"
+description = "Finds the tracklist of a DJ mix on 1001Tracklists: the site's search page and a tracklist page, read with curl and the user's own guid cookie"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+regex = "1"
+thiserror.workspace = true

@@ -1,2 +1,3 @@
 target/
 *.nullamp-tmp
+.playwright-mcp/

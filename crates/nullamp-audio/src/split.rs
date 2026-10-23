@@ -93,6 +93,37 @@ pub fn find_starts(path: &Path, tracks: Option<usize>, cancel: &(dyn Fn() -> boo
     starts(finder, tracks, cancel)
 }
 
+/// Where the `tracks` tracks that play between `from` and `to` (the end of the file when `None`)
+/// start, in seconds of the file. The first is the track already playing at `from`, so its start is
+/// `from` itself: the caller knows where it begins and wants where the next ones do. Only that
+/// stretch is decoded, and the tracks it holds and its two ends are known, which is far less to
+/// guess than for a whole mix.
+pub fn find_starts_between(path: &Path, from: f64, to: Option<f64>, tracks: usize, cancel: &(dyn Fn() -> bool + Sync)) -> Result<Vec<f64>, SplitError> {
+    let mut dec = Decoding::open(0, path, RATE, 1)?;
+    let from = dec.seek(from.max(0.0)).map_err(SplitError::Decode)?;
+    let want = to.map(|to| ((to - from).max(0.0) * f64::from(RATE)) as usize);
+    let mut finder = PeakFinder::new();
+    loop {
+        if cancel() {
+            return Err(SplitError::Cancelled);
+        }
+        let produced = dec.produce().map_err(SplitError::Decode)?;
+        let mut pending = &dec.ready[dec.ready_pos..];
+        let mut done = false;
+        if let Some(want) = want {
+            let room = want.saturating_sub(finder.total);
+            done = pending.len() >= room;
+            pending = &pending[..pending.len().min(room)];
+        }
+        finder.push(pending);
+        dec.ready_pos = dec.ready.len();
+        if done || matches!(produced, Produced::Eof) {
+            break;
+        }
+    }
+    Ok(starts(finder, Some(tracks), cancel)?.into_iter().map(|s| from + s).collect())
+}
+
 fn starts(finder: PeakFinder, tracks: Option<usize>, cancel: &(dyn Fn() -> bool + Sync)) -> Result<Vec<f64>, SplitError> {
     let blocks = {
         let (peaks, samples) = finder.finish();
@@ -491,6 +522,44 @@ mod tests {
                 assert!((s - 80.0 * k as f64).abs() <= 2.0 * BLOCK_SECONDS, "{tracks:?}: {starts:?}");
             }
         }
+    }
+
+    /// A 16-bit mono WAV of `samples` at [`RATE`].
+    fn write_wav(path: &Path, samples: &[f32]) {
+        let data: Vec<u8> = samples.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&[1, 0, 1, 0]);
+        wav.extend_from_slice(&RATE.to_le_bytes());
+        wav.extend_from_slice(&(RATE * 2).to_le_bytes());
+        wav.extend_from_slice(&[2, 0, 16, 0]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        wav.extend_from_slice(&data);
+        std::fs::write(path, wav).unwrap();
+    }
+
+    #[test]
+    fn finds_the_tracks_inside_a_stretch_of_a_mix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mix.wav");
+        write_wav(&path, &mix(8, 80.0));
+        // Tracks 1 to 4 start at 80, 160, 240 and 320 s; the stretch ends where track 5 begins.
+        let starts = find_starts_between(&path, 80.0, Some(400.0), 4, &|| false).unwrap();
+        assert_eq!(starts.len(), 4, "{starts:?}");
+        for (k, s) in starts.iter().enumerate() {
+            assert!((s - (80.0 + 80.0 * k as f64)).abs() <= 2.0 * BLOCK_SECONDS, "{starts:?}");
+        }
+        // To the end of the file: tracks 5, 6 and 7 (the last one) from 400 s.
+        let starts = find_starts_between(&path, 400.0, None, 3, &|| false).unwrap();
+        assert_eq!(starts.len(), 3, "{starts:?}");
+        for (k, s) in starts.iter().enumerate() {
+            assert!((s - (400.0 + 80.0 * k as f64)).abs() <= 2.0 * BLOCK_SECONDS, "{starts:?}");
+        }
+        assert_eq!(find_starts_between(&path, 80.0, Some(400.0), 4, &|| true), Err(SplitError::Cancelled));
     }
 
     #[test]

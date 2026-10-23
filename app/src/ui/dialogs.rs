@@ -36,10 +36,11 @@ pub enum SettingsTab {
     Updates,
     Cache,
     Rekordbox,
+    Web,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 8] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
+    const ALL: [SettingsTab; 9] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -51,6 +52,7 @@ impl SettingsTab {
             SettingsTab::Updates => "Updates",
             SettingsTab::Cache => "Cache",
             SettingsTab::Rekordbox => "rekordbox",
+            SettingsTab::Web => "Web",
         }
     }
 }
@@ -588,6 +590,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::Updates => updates_body(app, ui),
                     SettingsTab::Cache => cache_body(app, ui),
                     SettingsTab::Rekordbox => rekordbox_body(app, ui),
+                    SettingsTab::Web => web_body(app, ui),
                 }
             });
         });
@@ -614,6 +617,20 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     });
+}
+
+/// What Nullamp reads from websites on the user's behalf, when the user asks.
+fn web_body(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(RichText::new("1001Tracklists").small().weak());
+    ui.horizontal(|ui| {
+        ui.label("guid cookie:");
+        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.tracklists_guid).password(true).hint_text("cookie value").desired_width(240.0));
+        if field.changed() {
+            app.settings.tracklists_guid = app.settings.tracklists_guid.trim().to_owned();
+            app.mark_settings_dirty();
+        }
+    });
+    ui.label(RichText::new("For Import > Search 1001Tracklists in the setlist. 1001Tracklists answers tracklist pages only to a browser it knows: open the site in your browser and copy the value of its \"guid\" cookie here (Web Inspector, Storage, Cookies). It is sent to 1001Tracklists only.").small().weak());
 }
 
 /// What Nullamp reads from rekordbox: the analysis behind the waveform, and the desktop library.
