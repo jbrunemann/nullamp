@@ -24,7 +24,7 @@ mod ui_snapshots;
 fn main() -> eframe::Result {
     // lofty warns on every UTF-8 frame it rewrites as UTF-16 when saving ID3v2.3; the output is correct.
     // symphonia warns about a missing bit reservoir and resync junk after coarse MP3 seeks; a frame is dropped, nothing audible.
-    logbuf::init("warn,lofty::util::text=error,symphonia_bundle_mp3::layer3=error,symphonia_bundle_mp3::demuxer=error,nullamp=info,nullamp_audio=info");
+    logbuf::init("warn,lofty::util::text=error,lofty::mpeg::properties=error,symphonia_bundle_mp3::layer3=error,symphonia_bundle_mp3::demuxer=error,nullamp=info,nullamp_audio=info");
     let paths = paths::AppPaths::detect();
     log::info!("config: {}", paths.config.display());
     let store = store::Store::new(paths.clone());
