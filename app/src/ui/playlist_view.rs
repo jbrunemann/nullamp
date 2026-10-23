@@ -291,7 +291,7 @@ fn cell(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32, align: Al
 }
 
 pub fn show(app: &mut App, ui: &mut Ui) {
-    egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
         ui.horizontal(|ui| {
             playlist_tabs(app, ui);
         });
