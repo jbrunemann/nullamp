@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-artwork"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-audio"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "audioadapter-buffers",
  "base64",
@@ -2979,7 +2979,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-core"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "percent-encoding",
  "regex",
@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-meta"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "id3",
  "lofty",
@@ -3002,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-mixxx"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "flate2",
  "rusqlite",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-rekordbox"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "nullamp-audio",
  "rusqlite",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-shazam"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "base64",
  "nullamp-audio",
@@ -3035,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-sysmedia"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "log",
  "nullamp-core",
@@ -3044,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-update"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "serde_json",
 ]
