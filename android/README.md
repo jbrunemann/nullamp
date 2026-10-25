@@ -16,6 +16,26 @@ android/build.sh install                      # builds target/release/apk/nullam
 adb shell am start -n dev.nullamp.player/android.app.NativeActivity
 ```
 
+## Releasing
+
+`android/build.sh` signs with Android Studio's debug key unless `CARGO_APK_RELEASE_KEYSTORE` names a keystore, and then
+it needs `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` too. The release key is made once and never changes, because Android
+refuses to update an app with an APK signed by another key:
+
+```sh
+keytool -genkeypair -v -keystore nullamp-release.jks -alias nullamp -keyalg RSA -keysize 4096 -validity 36500
+```
+
+Keep the file and its password somewhere safe and out of the repository (losing it means every user must uninstall).
+The release workflow (`.github/workflows/release.yml`, on a `v*` tag) builds `Nullamp-<version>-android-arm64.apk` with a
+`.sha256` file and attaches them to the release. It reads the key from two repository secrets:
+`ANDROID_KEYSTORE_BASE64` (`base64 -i nullamp-release.jks`) and `ANDROID_KEYSTORE_PASSWORD`. `apksigner` takes the only key in the keystore, and
+reads its password from the store's, so give both the same password (`keytool` offers that by default).
+
+`cargo-apk` takes the version name from the workspace version and makes the version code from it
+(`1 << 24 | major << 16 | minor << 8 | patch`, so 2.0.0 is 16973824), which grows with every release; the TOML must not set
+either.
+
 ## Getting music in
 
 Android has no native file dialog that Rust can reach (the system picker hands its answer back through Java), so

@@ -71,9 +71,46 @@ jobs:
           name: Nullamp-windows-x86_64
           path: Nullamp-*-windows-x86_64.zip
 
+  # Signed with the project's release key, kept in the repository secrets (see "Releasing" in android/README.md).
+  # The SDK and an NDK come with the hosted Ubuntu image.
+  android-arm64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: cargo-apk
+        run: cargo install cargo-apk --locked --version 0.10.0
+      - name: Build
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::the repository secret ANDROID_KEYSTORE_BASE64 is not set"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks" \
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD" \
+          android/build.sh
+          rm "$RUNNER_TEMP/release.jks"
+      - name: Name and checksum
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          APK="Nullamp-${VERSION}-android-arm64.apk"
+          cp target/release/apk/nullamp.apk "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Nullamp-android-arm64
+          path: Nullamp-*-android-arm64.apk*
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos-arm64, linux-x86_64, windows-x86_64]
+    needs: [macos-arm64, linux-x86_64, windows-x86_64, android-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
