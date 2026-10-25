@@ -8,11 +8,9 @@
 //! not documented and can change, in which case [`parse_hits`] and [`parse_tracklist`] come up
 //! empty or fail with [`Error::Reply`].
 //!
-//! Pages are fetched with `curl`, like the update check, so this crate needs no TLS stack.
+//! Pages are fetched by `nullamp-http` (`curl`, or ureq on Android), like the update check, so this crate needs no TLS stack.
 //! [`search`] and [`fetch`] block for up to [`TIMEOUT_SECS`] seconds: call them from a worker thread.
 
-use std::io::Read;
-use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -335,58 +333,23 @@ fn decode(text: &str) -> String {
     out.trim().to_owned()
 }
 
-/// The status and body of `url`, by running curl: a form post when `form` is given. Redirects
-/// are followed, but only to `https`.
+/// The status and body of `url`: a form post when `form` is given. Redirects are followed, but only to `https`.
 fn request(url: &str, guid: Option<&str>, form: Option<&[(&str, &str)]>) -> Result<(u16, String), Error> {
-    let mut command = Command::new("curl");
-    command
-        .args(["--silent", "--show-error", "--location"])
-        .args(["--proto", "=https", "--proto-redir", "=https"])
-        .args(["--connect-timeout", "8", "--max-time", &TIMEOUT_SECS.to_string()])
-        .args(["--user-agent", USER_AGENT, "--header", "Accept: text/html,application/xhtml+xml", "--header", "Accept-Language: en-US,en;q=0.9"])
-        .args(["--write-out", "\n%{http_code}"]);
-    if let Some(guid) = guid {
-        command.args(["--header", &format!("Cookie: guid={guid}")]);
+    let cookie = guid.map(|guid| format!("guid={guid}"));
+    let mut headers = vec![("Accept", "text/html,application/xhtml+xml"), ("Accept-Language", "en-US,en;q=0.9")];
+    if let Some(cookie) = &cookie {
+        headers.push(("Cookie", cookie));
     }
-    for (name, value) in form.unwrap_or_default() {
-        command.args(["--data-urlencode", &format!("{name}={value}")]);
+    let mut request = nullamp_http::Request::get(url, USER_AGENT).headers(&headers).max_bytes(MAX_BYTES).timeout_secs(TIMEOUT_SECS);
+    if let Some(form) = form {
+        request = request.body(nullamp_http::Body::Form(form));
     }
-    let mut child = command
-        .args(["--url", url])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { Error::NoCurl } else { Error::Fetch(e.to_string()) })?;
-    let mut body = Vec::new();
-    let read = child.stdout.take().map(|out| out.take(MAX_BYTES + 1).read_to_end(&mut body));
-    if body.len() as u64 > MAX_BYTES {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(Error::Reply("The answer is too long".into()));
-    }
-    let mut message = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut message);
-    }
-    let exit = child.wait().map_err(|e| Error::Fetch(e.to_string()))?;
-    if !exit.success() {
-        return Err(Error::Fetch(curl_message(&message)));
-    }
-    if let Some(Err(e)) = read {
-        return Err(Error::Fetch(e.to_string()));
-    }
-    let body = String::from_utf8_lossy(&body);
-    let (page, status) = body.rsplit_once('\n').ok_or_else(|| Error::Reply("The answer has no status".into()))?;
-    let status = status.trim().parse().map_err(|_| Error::Reply("The answer has no status".into()))?;
-    Ok((status, page.to_owned()))
-}
-
-fn curl_message(stderr: &str) -> String {
-    let line = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("The request failed").trim();
-    let line = line.strip_prefix("curl:").map_or(line, str::trim_start);
-    let line = line.strip_prefix('(').and_then(|rest| rest.split_once(')')).map_or(line, |(_, rest)| rest.trim_start());
-    line.to_owned()
+    let reply = nullamp_http::send(&request).map_err(|e| match e {
+        nullamp_http::Error::NoCurl => Error::NoCurl,
+        nullamp_http::Error::Fetch(message) => Error::Fetch(message),
+        nullamp_http::Error::TooLong => Error::Reply(e.to_string()),
+    })?;
+    Ok((reply.status, reply.text()))
 }
 
 #[cfg(test)]
@@ -538,9 +501,4 @@ mod tests {
         assert!(matches!(fetch("abc123", "http://www.1001tracklists.com/tracklist/x"), Err(Error::Address(_))));
     }
 
-    #[test]
-    fn curl_messages_lose_their_prefix() {
-        assert_eq!(curl_message("curl: (6) Could not resolve host: example.org"), "Could not resolve host: example.org");
-        assert_eq!(curl_message(""), "The request failed");
-    }
 }

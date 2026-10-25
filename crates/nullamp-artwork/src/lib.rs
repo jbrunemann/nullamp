@@ -6,12 +6,9 @@
 //! accepted when one of its artists is one of ours. iTunes is limited to about 20
 //! requests a minute, which is why it only fills in.
 //!
-//! Requests go through `curl`, like the update check, so this crate needs no TLS stack.
+//! Requests go through `nullamp-http`: `curl`, or ureq on Android, so this crate needs no TLS stack.
 //! [`find`] and [`download`] block for up to [`TIMEOUT_SECS`] seconds per request, so
 //! call them from a worker thread.
-
-use std::io::Read;
-use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
@@ -288,45 +285,20 @@ fn sorted(versions: &[String]) -> Vec<String> {
     out
 }
 
-/// The body at `url`, by running curl. Redirects are followed, but only to `https`.
+/// The body at `url`. Redirects are followed, but only to `https`.
 fn fetch(url: &str, program: &str, max_bytes: u64) -> Result<Vec<u8>, Error> {
-    let mut child = Command::new("curl")
-        .args(["--silent", "--show-error", "--fail", "--location"])
-        .args(["--proto", "=https", "--proto-redir", "=https"])
-        .args(["--connect-timeout", "8", "--max-time", &TIMEOUT_SECS.to_string()])
-        .args(["--user-agent", program, "--url", url])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { Error::NoCurl } else { Error::Fetch(e.to_string()) })?;
-    let mut body = Vec::new();
-    let read = child.stdout.take().map(|out| out.take(max_bytes + 1).read_to_end(&mut body));
-    if body.len() as u64 > max_bytes {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(Error::Reply("The answer is too long".to_owned()));
-    }
-    let mut message = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut message);
-    }
-    let status = child.wait().map_err(|e| Error::Fetch(e.to_string()))?;
-    if !status.success() {
-        return Err(Error::Fetch(curl_message(&message)));
-    }
-    if let Some(Err(e)) = read {
-        return Err(Error::Fetch(e.to_string()));
-    }
-    Ok(body)
+    let request = nullamp_http::Request::get(url, program).max_bytes(max_bytes).timeout_secs(TIMEOUT_SECS);
+    Ok(nullamp_http::send(&request)?.ok()?.body)
 }
 
-/// curl's last line without its `curl: (22) ` prefix.
-fn curl_message(stderr: &str) -> String {
-    let line = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("The request failed").trim();
-    let line = line.strip_prefix("curl:").map_or(line, str::trim_start);
-    let line = line.strip_prefix('(').and_then(|rest| rest.split_once(')')).map_or(line, |(_, rest)| rest.trim_start());
-    line.to_owned()
+impl From<nullamp_http::Error> for Error {
+    fn from(e: nullamp_http::Error) -> Self {
+        match e {
+            nullamp_http::Error::NoCurl => Error::NoCurl,
+            nullamp_http::Error::Fetch(message) => Error::Fetch(message),
+            nullamp_http::Error::TooLong => Error::Reply(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]

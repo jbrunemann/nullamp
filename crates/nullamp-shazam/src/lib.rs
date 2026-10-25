@@ -12,14 +12,13 @@
 //! or two answers naming some other song, each such song only once. [`agree`] therefore names
 //! a track only when several clips name the same song at positions that move with the mix.
 //!
-//! Requests go through `curl`, like the update check and the artwork lookup. [`recognise`]
+//! Requests go through `nullamp-http`, like the update check and the artwork lookup. [`recognise`]
 //! blocks for up to [`TIMEOUT_SECS`] seconds, so call it from a worker thread, and leave
 //! [`PAUSE`] between requests: 2 seconds got "too many requests" (HTTP 429), 5 did not.
 
 mod signature;
 
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::io::Read;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -96,43 +95,23 @@ pub fn recognise(clip: &[f32]) -> Result<Option<Song>, Error> {
     parse(&reply)
 }
 
-/// The body of the answer. No `--fail`: the status comes after the body, so 429 can be told apart.
+/// The body of the answer. The status is read here, so 429 can be told apart.
 fn post(url: &str, body: &str) -> Result<String, Error> {
-    let mut child = Command::new("curl")
-        .args(["--silent", "--show-error", "--proto", "=https", "--connect-timeout", "8", "--max-time", &TIMEOUT_SECS.to_string()])
-        .args(["--write-out", "\n%{http_code}"])
-        .args(["--header", "Content-Type: application/json", "--header", "Content-Language: en_US"])
-        .args(["--user-agent", "Dalvik/2.1.0 (Linux; U; Android 10; Pixel 3 Build/QP1A.190711.020)"])
-        .args(["--data-binary", "@-", "--url", url])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { Error::NoCurl } else { Error::Fetch(e.to_string()) })?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(body.as_bytes()).map_err(|e| Error::Fetch(e.to_string()))?;
-    }
-    let mut out = Vec::new();
-    let read = child.stdout.take().map(|o| o.take(MAX_REPLY_BYTES + 1).read_to_end(&mut out));
-    let mut message = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut message);
-    }
-    let status = child.wait().map_err(|e| Error::Fetch(e.to_string()))?;
-    if !status.success() {
-        return Err(Error::Fetch(message.lines().last().unwrap_or("curl failed").trim_start_matches(|c: char| c != ')').trim_start_matches(") ").to_owned()));
-    }
-    if let Some(Err(e)) = read {
-        return Err(Error::Fetch(e.to_string()));
-    }
-    if out.len() as u64 > MAX_REPLY_BYTES {
-        return Err(Error::Reply("The answer is too long".into()));
-    }
-    let text = String::from_utf8_lossy(&out).into_owned();
-    let (reply, code) = text.rsplit_once('\n').unwrap_or(("", &text));
-    match code.trim() {
-        "200" => Ok(reply.to_owned()),
-        "429" => Err(Error::TooMany),
+    let headers = [("Content-Type", "application/json"), ("Content-Language", "en_US")];
+    let request = nullamp_http::Request::get(url, "Dalvik/2.1.0 (Linux; U; Android 10; Pixel 3 Build/QP1A.190711.020)")
+        .headers(&headers)
+        .body(nullamp_http::Body::Raw(body.as_bytes()))
+        .follow(false)
+        .max_bytes(MAX_REPLY_BYTES)
+        .timeout_secs(TIMEOUT_SECS);
+    let reply = nullamp_http::send(&request).map_err(|e| match e {
+        nullamp_http::Error::NoCurl => Error::NoCurl,
+        nullamp_http::Error::Fetch(message) => Error::Fetch(message),
+        nullamp_http::Error::TooLong => Error::Reply(e.to_string()),
+    })?;
+    match reply.status {
+        200 => Ok(reply.text()),
+        429 => Err(Error::TooMany),
         code => Err(Error::Fetch(format!("Shazam answered HTTP {code}"))),
     }
 }
