@@ -516,6 +516,9 @@ impl Actor {
     }
 }
 
+/// The most results of a bot that are offered to choose from.
+pub const MAX_RESULTS: usize = 5;
+
 /// How often a waiting ask looks at whether it was cancelled.
 const TICK: Duration = Duration::from_millis(250);
 
@@ -553,7 +556,7 @@ async fn start(conn: &mut Conn, ask: &Ask, alive: &dyn Fn() -> bool, emit: &dyn 
     let request = tl::functions::messages::GetInlineBotResults { bot: bot_ref.into(), peer: bot_ref.into(), geo_point: None, query: ask.text.clone(), offset: String::new() };
     let query = client.invoke(&request);
     tokio::pin!(query);
-    let tl::enums::messages::BotResults::Results(results) = loop {
+    let tl::enums::messages::BotResults::Results(mut results) = loop {
         tokio::select! {
             answer = &mut query => break answer?,
             _ = tick.tick() => {
@@ -582,6 +585,11 @@ async fn start(conn: &mut Conn, ask: &Ask, alive: &dyn Fn() -> bool, emit: &dyn 
     }
     if results.results.is_empty() {
         return Ok(Started::Finished(Some(Outcome::NoResults)));
+    }
+    // The best come first; a longer list only makes the choice harder.
+    if results.results.len() > MAX_RESULTS {
+        log::info!("Telegram: keeping the first {MAX_RESULTS} results");
+        results.results.truncate(MAX_RESULTS);
     }
     Ok(Started::Results(Search { bot_id: bot.id(), bot_ref, updates, results, ask: ask.clone() }))
 }

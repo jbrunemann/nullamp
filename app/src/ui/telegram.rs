@@ -54,7 +54,12 @@ pub struct Asking {
 /// The results the bot offered, while the user chooses.
 pub struct Choosing {
     request: u64,
+    /// The entry of the setlist the query is about.
+    entry: EntryId,
+    /// What was asked for these results.
     query: String,
+    /// The query as the user is editing it, to ask again when the results are not good.
+    pub(crate) edited: String,
     choices: Vec<Choice>,
     /// The pictures that have arrived, by the index of the result.
     pub(crate) pictures: HashMap<usize, egui::TextureHandle>,
@@ -136,12 +141,24 @@ pub fn ask_entry(app: &mut App, entry: EntryId) {
         app.warn("The track has no name to ask for");
         return;
     };
+    send_ask(app, entry, text);
+}
+
+/// Ask the bot for `text` on behalf of `entry`.
+fn send_ask(app: &mut App, entry: EntryId, text: String) {
     let Some(credentials) = credentials(&app.settings) else { return };
     let request = app.workers.request_id();
     let (bot, dir) = (bot(&app.settings).to_owned(), download_dir(app));
     app.info(format!("Asking @{bot} for {text}…"));
     app.workers.telegram.ask(request, credentials, Ask { bot, text: text.clone(), wait: WAIT, dir });
     app.telegram.asking = Some(Asking { request, entry, query: text });
+}
+
+/// Ask again with the query the user edited, dropping the results that were not good enough.
+fn ask_again(app: &mut App, entry: EntryId, text: String) {
+    app.workers.telegram.cancel_ask();
+    app.telegram.choosing = None;
+    send_ask(app, entry, text);
 }
 
 pub fn cancel_ask(app: &mut App) {
@@ -225,8 +242,9 @@ fn on_progress(app: &mut App, request: u64, progress: Progress) {
         Progress::Sent => app.info(format!("Asked @{bot}, waiting up to {} s for its results…", WAIT.as_secs())),
         Progress::Choose(choices) => {
             app.info(format!("@{bot} offers {} results: choose one", choices.len()));
-            let query = app.telegram.asking.as_ref().map(|a| a.query.clone()).unwrap_or_default();
-            app.telegram.choosing = Some(Choosing { request, query, choices, pictures: HashMap::new() });
+            if let Some(Asking { entry, query, .. }) = &app.telegram.asking {
+                app.telegram.choosing = Some(Choosing { request, entry: *entry, query: query.clone(), edited: query.clone(), choices, pictures: HashMap::new() });
+            }
         }
         // The pictures come as `TelegramThumb`, decoded; see `on_thumb`.
         Progress::Thumb { .. } => {}
@@ -234,14 +252,20 @@ fn on_progress(app: &mut App, request: u64, progress: Progress) {
         Progress::Reply(_) => {}
         Progress::Downloading(name) => app.info(format!("Downloading {name} from @{bot}…")),
         Progress::Done(result) => {
-            app.telegram.asking = None;
+            let asked = app.telegram.asking.take();
             app.telegram.choosing = None;
             match result {
                 Ok(Outcome::File(path)) => {
                     app.info(format!("Saved {}", path.display()));
                     add_to_list(app, path);
                 }
-                Ok(Outcome::NoResults) => app.warn(format!("@{bot} has nothing for that track")),
+                // The picker opens with no results, to edit the query and try again.
+                Ok(Outcome::NoResults) => {
+                    app.warn(format!("@{bot} has nothing for that track"));
+                    if let Some(Asking { entry, query, .. }) = asked {
+                        app.telegram.choosing = Some(Choosing { request, entry, query: query.clone(), edited: query, choices: Vec::new(), pictures: HashMap::new() });
+                    }
+                }
                 Ok(Outcome::NoFile { replies: 0 }) => app.warn(format!("@{bot} did not answer within {} s", WAIT.as_secs())),
                 Ok(Outcome::NoFile { replies }) => app.warn(format!("@{bot} sent no sound file within {} s ({replies} other replies, see Settings > Logs)", WAIT.as_secs())),
                 Err(e) => app.error(format!("Telegram: {e}")),
@@ -265,15 +289,30 @@ fn add_to_list(app: &mut App, path: PathBuf) {
     app.add_paths(list, vec![path], None);
 }
 
-/// The list of results the bot offered, for the user to choose one to download.
+/// The list of results the bot offered, for the user to choose one to request, with the query to
+/// edit and ask again when none of them is right.
 pub fn chooser_modal(app: &mut App, ctx: &egui::Context) {
-    let Some(choosing) = app.telegram.choosing.as_ref() else { return };
-    let (mut pick, mut close) = (None, false);
-    let height = (ctx.content_rect().height() - 230.0).clamp(80.0, 380.0);
+    let Some(mut choosing) = app.telegram.choosing.take() else { return };
+    let (mut pick, mut search, mut close) = (None, false, false);
+    let height = (ctx.content_rect().height() - 290.0).clamp(80.0, 380.0);
+    let bot = bot(&app.settings).to_owned();
     egui::Modal::new(egui::Id::unique("telegram-choose")).show(ctx, |ui| {
         ui.set_width(520.0);
-        ui.heading("Choose a result");
-        ui.label(RichText::new(format!("@{} offers {} results for \"{}\"", bot(&app.settings), choosing.choices.len(), choosing.query)).small().color(theme::text_dim()));
+        ui.heading(if choosing.choices.is_empty() { "No results" } else { "Choose a result" });
+        let count = match choosing.choices.len() {
+            0 => format!("@{bot} has nothing for \"{}\"", choosing.query),
+            n => format!("@{bot} offers {n} results for \"{}\"", choosing.query),
+        };
+        ui.label(RichText::new(count).small().color(theme::text_dim()));
+        // The query as it would be typed in a chat, to correct when the title is a little off.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("@{bot}")).color(theme::text_dim()));
+            let field = ui.add(egui::TextEdit::singleline(&mut choosing.edited).desired_width(ui.available_width() - 80.0));
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.add_enabled(!choosing.edited.trim().is_empty(), egui::Button::new("Search")).on_hover_text("Ask the bot again with this text").clicked() || enter) && !choosing.edited.trim().is_empty() {
+                search = true;
+            }
+        });
         ui.separator();
         egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
             for (i, c) in choosing.choices.iter().enumerate() {
@@ -303,12 +342,14 @@ pub fn chooser_modal(app: &mut App, ctx: &egui::Context) {
         }
     });
     if let Some(index) = pick {
-        let request = choosing.request;
-        app.telegram.choosing = None;
-        app.workers.telegram.choose(request, index);
+        app.workers.telegram.choose(choosing.request, index);
         app.info("Requesting the file…");
+    } else if search {
+        ask_again(app, choosing.entry, choosing.edited.trim().to_owned());
     } else if close {
         cancel_ask(app);
+    } else {
+        app.telegram.choosing = Some(choosing);
     }
 }
 
@@ -556,9 +597,16 @@ mod tests {
         on_thumb(app, 2, 0, picture());
         on_thumb(app, 3, 1, picture());
         assert_eq!(app.telegram.choosing.as_ref().map(|c| c.pictures.keys().copied().collect::<Vec<_>>()), Some(vec![1]));
+        // No results: the list opens empty, with the query to edit and ask again.
         on_event(app, Event::Ask { request: 3, progress: Progress::Done(Ok(Outcome::NoResults)) });
-        assert!(app.telegram.choosing.is_none() && app.telegram.asking.is_none());
+        assert!(app.telegram.asking.is_none());
+        let empty = app.telegram.choosing.as_ref().expect("the editor opens");
+        assert_eq!((empty.choices.len(), empty.edited.as_str(), empty.entry), (0, "A - B", entry));
         assert!(app.message.as_ref().is_some_and(|m| m.text.contains("nothing for that track")));
+        // Any other end closes it.
+        app.telegram.asking = Some(Asking { request: 4, entry, query: "A - B".into() });
+        on_event(app, Event::Ask { request: 4, progress: Progress::Done(Ok(Outcome::NoFile { replies: 0 })) });
+        assert!(app.telegram.choosing.is_none() && app.telegram.asking.is_none());
     }
 
     /// The menu item waits for the setup and for the sign-in; a wrong code leaves the code step open.

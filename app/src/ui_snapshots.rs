@@ -728,6 +728,11 @@ fn render_telegram_chooser() {
     crate::ui::telegram::on_thumb(app, 9, 2, cover(64, 64, 0));
     settle(&mut h, 300);
     save(&mut h, "06j-telegram-chooser.png");
+    // Nothing found: the query is there to edit.
+    h.state_mut().telegram.asking = Some(crate::ui::telegram::Asking { request: 2, entry, query: "Locklead - Huntin".into() });
+    crate::ui::telegram::on_event(h.state_mut(), Event::Ask { request: 2, progress: Progress::Done(Ok(nullamp_telegram::Outcome::NoResults)) });
+    settle(&mut h, 300);
+    save(&mut h, "06k-telegram-no-results.png");
 }
 
 /// The rekordbox settings page, which takes over the deck.
