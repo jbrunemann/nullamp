@@ -31,6 +31,9 @@ icon = "@mipmap/ic_launcher"
 config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode"
 
 [[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_permission]]
 name = "android.permission.READ_MEDIA_AUDIO"
 
 [[package.metadata.android.uses_permission]]

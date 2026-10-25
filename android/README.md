@@ -2,7 +2,9 @@
 
 The desktop UI in `app/`, run as a NativeActivity through eframe and wgpu (Vulkan). Only pure Rust goes in: no system file
 picker, no media session, no SQLite, no `curl`. That leaves out the rekordbox desktop library and the Mixxx library
-(C, SQLite), online lookups (`curl`), and the lock screen controls (need Java).
+(C, SQLite), and the lock screen controls (need Java).
+The online features (cover lookup, update check, Shazam, 1001Tracklists) ask over HTTPS through `nullamp-http`, which uses
+`ureq` and rustls here (`ring` is C, built by the NDK) because Android has no `curl`. They need the INTERNET permission.
 
 ## Build and run
 
