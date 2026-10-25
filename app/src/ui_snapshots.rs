@@ -676,6 +676,60 @@ fn render_settings_web() {
     save(&mut h, "06f-settings-web.png");
 }
 
+/// The Telegram settings page in each step of the sign-in, which takes over the deck.
+#[test]
+#[ignore]
+fn render_settings_telegram() {
+    use crate::ui::telegram::{Account, Step};
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 520.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    h.state_mut().dialogs.settings = Some(crate::ui::dialogs::SettingsTab::Telegram);
+    settle(&mut h, 300);
+    save(&mut h, "06g-settings-telegram-empty.png");
+    {
+        let s = &mut h.state_mut().settings;
+        (s.telegram_api_id, s.telegram_api_hash, s.telegram_phone) = ("12345678".into(), "0123456789abcdef0123456789abcdef".into(), "+49 170 1234567".into());
+    }
+    h.state_mut().telegram.step = Step::Code;
+    h.state_mut().telegram.error = Some("Telegram did not accept that code".into());
+    settle(&mut h, 300);
+    save(&mut h, "06h-settings-telegram-code.png");
+    h.state_mut().telegram.step = Step::Idle;
+    h.state_mut().telegram.error = None;
+    h.state_mut().telegram.account = Account::SignedIn("Jan Brünemann".into());
+    settle(&mut h, 300);
+    save(&mut h, "06i-settings-telegram-signed-in.png");
+}
+
+/// The list of results a Telegram bot offered, for the user to choose from.
+#[test]
+#[ignore]
+fn render_telegram_chooser() {
+    use nullamp_telegram::{Choice, Event, Progress};
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(820.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let entry = h.state().player.lists[0].playlist.entries()[0].id;
+    let app = h.state_mut();
+    app.settings.telegram_bot = "inreach_to_telegram_bot".into();
+    app.telegram.asking = Some(crate::ui::telegram::Asking { request: 1, entry, query: "Locklead - Hunting".into() });
+    let choice = |title: &str, description: &str, kind: &str, file: Option<&str>| Choice { title: title.into(), description: description.into(), kind: kind.into(), file: file.map(Into::into) };
+    let choices = vec![
+        choice("Hunting", "Artist: Locklead Album: Square One", "audio", Some("MP3, 9.8 MB, 4:07")),
+        choice("Hunting (Extended Mix)", "Artist: Locklead Album: Square One (Remixes)", "audio", Some("FLAC, 31.2 MB, 6:21")),
+        choice("Square One (Album)", "Locklead", "article", None),
+    ];
+    crate::ui::telegram::on_event(app, Event::Ask { request: 1, progress: Progress::Choose(choices) });
+    // Two of the three pictures have arrived: made-up covers, the second not square.
+    let cover = |w: usize, h: usize, hue: u8| crate::workers::Thumb { size: [w, h], rgba: (0..w * h).flat_map(|i| [hue.wrapping_add((i % w) as u8 * 2), 90, (i / w) as u8 * 3, 255]).collect() };
+    crate::ui::telegram::on_thumb(app, 1, 0, cover(64, 64, 20));
+    crate::ui::telegram::on_thumb(app, 1, 1, cover(96, 54, 140));
+    crate::ui::telegram::on_thumb(app, 9, 2, cover(64, 64, 0));
+    settle(&mut h, 300);
+    save(&mut h, "06j-telegram-chooser.png");
+}
+
 /// The rekordbox settings page, which takes over the deck.
 #[test]
 #[ignore]

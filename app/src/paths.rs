@@ -44,6 +44,11 @@ impl AppPaths {
         self.data.join("tag-backups")
     }
 
+    /// The Telegram login. Whoever has this file is signed in as the user, so it stays private to them.
+    pub fn telegram_session(&self) -> PathBuf {
+        self.data.join("telegram.session")
+    }
+
     pub fn artwork_cache(&self) -> PathBuf {
         self.cache.join("artwork")
     }

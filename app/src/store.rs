@@ -17,6 +17,9 @@ use crate::paths::AppPaths;
 /// The release the update check asks about unless settings.json says otherwise.
 pub const DEFAULT_UPDATE_URL: &str = "https://api.github.com/repos/jbrunemann/nullamp/releases/latest";
 
+/// The bot a setlist track is sent to unless the Telegram tab says otherwise.
+pub const DEFAULT_TELEGRAM_BOT: &str = "inreach_to_telegram_bot";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -80,6 +83,16 @@ pub struct Settings {
     /// The `guid` cookie of 1001Tracklists.com, copied from the user's browser. Tracklist pages are
     /// refused without it; the search does not need it. Set on the Settings Web tab.
     pub tracklists_guid: String,
+    /// From my.telegram.org, for asking a Telegram bot for a track as the user's own account. Set on
+    /// the Settings Telegram tab; the id is kept as typed and parsed when used.
+    pub telegram_api_id: String,
+    pub telegram_api_hash: String,
+    /// The phone number of the Telegram account, with country code, to sign in with.
+    pub telegram_phone: String,
+    /// The bot a setlist track is sent to, without the `@`.
+    pub telegram_bot: String,
+    /// Where the sound files the bot sends are saved. `None` is the default (see `telegram::default_dir`).
+    pub telegram_dir: Option<PathBuf>,
     /// Read what the DJ software (rekordbox or Mixxx) knows about the tracks (waveform, key, BPM,
     /// rating, colour) into the cache right after the chosen part of its library is added.
     #[serde(alias = "rekordbox_read_data")]
@@ -122,6 +135,11 @@ impl Default for Settings {
             rekordbox_waveform: true,
             rekordbox_key: String::new(),
             tracklists_guid: String::new(),
+            telegram_api_id: String::new(),
+            telegram_api_hash: String::new(),
+            telegram_phone: String::new(),
+            telegram_bot: DEFAULT_TELEGRAM_BOT.into(),
+            telegram_dir: None,
             mixxx: false,
             read_dj_data: true,
         }

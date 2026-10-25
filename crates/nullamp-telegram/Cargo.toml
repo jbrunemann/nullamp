@@ -1,0 +1,21 @@
+[package]
+name = "nullamp-telegram"
+description = "Asks a Telegram bot for a track as the user's own account (MTProto) and downloads the sound file it answers with"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The default session storage is libsql, a second SQLite that would clash with the SQLCipher build
+# of nullamp-rekordbox; the session is kept in a small JSON file instead (session.rs).
+grammers-client = "0.11"
+grammers-session = { version = "0.11", default-features = false, features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }

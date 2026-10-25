@@ -7,6 +7,7 @@ mod menu;
 mod playlist_view;
 pub mod sections;
 mod setlist_view;
+pub mod telegram;
 pub mod theme;
 mod visualizer;
 pub(crate) mod widgets;
@@ -224,6 +225,7 @@ pub struct App {
     /// The bulk read of rekordbox data that is running, if any.
     dj_data_read: Option<ReadProgress>,
     pub dialogs: dialogs::Dialogs,
+    pub telegram: telegram::State,
     pub show_remaining: bool,
     /// `None` while no output device is open.
     pub output: Option<OutputState>,
@@ -269,6 +271,7 @@ impl App {
             player.set_shuffle(true);
         }
 
+        let telegram = telegram::State::new(&store.paths);
         let workers = Workers::start(store.paths.clone(), waker);
         workers.set_rekordbox_key(&settings.rekordbox_key);
         workers.set_mixxx_enabled(settings.mixxx);
@@ -313,6 +316,7 @@ impl App {
             message: None,
             dj_data_read: None,
             dialogs: dialogs::Dialogs::new(),
+            telegram,
             show_remaining: false,
             output: None,
             output_devices: Vec::new(),
@@ -772,6 +776,8 @@ impl App {
             JobResult::SplitGaps { request, result } => setlist_view::on_split_gaps(self, request, result),
             JobResult::TracklistHits { request, result } => setlist_view::on_tracklist_hits(self, request, result),
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
+            JobResult::Telegram(event) => telegram::on_event(self, event),
+            JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),
             JobResult::TextWritten { path, result } => match result {
                 Ok(()) => self.info(format!("Saved {}", path.display())),
                 Err(e) => self.error(format!("Cannot write {}: {e}", path.display())),

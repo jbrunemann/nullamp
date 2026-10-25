@@ -13,6 +13,8 @@
 //!   they were asked;
 //! - *identify* (naming the tracks of a mix with Shazam) runs for minutes, mostly waiting
 //!   between requests, so it has a thread of its own and must not hold up the artwork lookups;
+//! - *telegram* (the login and asking a bot for a track) waits on the network for up to half a
+//!   minute, so its thread, which `nullamp-telegram` runs itself, answers through the same results;
 //! - *split* (finding where the tracks of a mix start, offline) decodes and analyses the whole
 //!   mix for several seconds, so it has a thread of its own as well.
 //!
@@ -259,6 +261,10 @@ pub enum JobResult {
     TracklistHits { request: u64, result: Result<Vec<nullamp_tracklists::Hit>, String> },
     /// The answer to [`Workers::fetch_tracklist`].
     TracklistPage { request: u64, result: Result<nullamp_tracklists::Tracklist, String> },
+    /// Something the Telegram thread reports: a sign-in step, or progress of a track being asked for.
+    Telegram(nullamp_telegram::Event),
+    /// The picture of result `index` of the list the bot offered to ask `request`.
+    TelegramThumb { request: u64, index: usize, thumb: Thumb },
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -278,6 +284,8 @@ pub struct Workers {
     /// The split request that may run; any other one stops at its next packet or step.
     split_current: Arc<AtomicU64>,
     tracklists: Sender<TracklistRequest>,
+    /// The login to Telegram and the questions to its bot; its answers come as [`JobResult::Telegram`].
+    pub telegram: nullamp_telegram::Telegram,
     pub results: Receiver<JobResult>,
     scan_generation: Arc<AtomicU64>,
     cover_generation: Arc<AtomicU64>,
@@ -548,6 +556,27 @@ impl Workers {
                 .expect("spawn tracklists worker");
         }
 
+        let telegram = {
+            let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
+            nullamp_telegram::Telegram::start(paths.telegram_session(), move |event| {
+                // The pictures of a bot's results arrive as files; they are decoded here, on the
+                // Telegram thread, so the UI only has to make textures of them.
+                let result = match event {
+                    nullamp_telegram::Event::Ask { request, progress: nullamp_telegram::Progress::Thumb { index, bytes } } => match decode_thumb(&bytes, 192) {
+                        Some(thumb) => JobResult::TelegramThumb { request, index, thumb },
+                        None => {
+                            log::info!("Telegram: the picture of result {} is not an image we can read", index + 1);
+                            return;
+                        }
+                    },
+                    event => JobResult::Telegram(event),
+                };
+                if tx.send(result).is_ok() {
+                    w();
+                }
+            })
+        };
+
         Workers {
             interactive,
             bulk,
@@ -561,6 +590,7 @@ impl Workers {
             split,
             split_current,
             tracklists,
+            telegram,
             results,
             scan_generation,
             cover_generation,

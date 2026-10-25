@@ -18,6 +18,8 @@ pub enum DialogResult {
     ImportSetlist(PathBuf),
     ExportSetlist { format: setlist_view::ExportFormat, path: PathBuf },
     Artwork(PathBuf),
+    /// The folder chosen on the Telegram tab for the files the bot sends.
+    TelegramDir(PathBuf),
     UpdateChecked(Result<nullamp_update::Status, nullamp_update::Error>),
     /// What the cache folder holds, after a scan or a clear.
     CacheUsage(Vec<(Kind, Usage)>),
@@ -37,10 +39,11 @@ pub enum SettingsTab {
     Cache,
     Rekordbox,
     Web,
+    Telegram,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 9] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
+    const ALL: [SettingsTab; 10] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Telegram, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
     fn label(self) -> &'static str {
         match self {
@@ -53,6 +56,7 @@ impl SettingsTab {
             SettingsTab::Cache => "Cache",
             SettingsTab::Rekordbox => "rekordbox",
             SettingsTab::Web => "Web",
+            SettingsTab::Telegram => "Telegram",
         }
     }
 }
@@ -198,6 +202,18 @@ fn scan_cache(app: &mut App, clear: Vec<Kind>) {
         }
         let _ = tx.send(DialogResult::CacheUsage(cache::scan(&paths)));
         ctx.request_repaint();
+    });
+}
+
+/// Choose the folder the files from Telegram are saved in.
+pub fn choose_telegram_dir(app: &mut App) {
+    let start = app.settings.telegram_dir.clone().filter(|d| d.is_dir()).or_else(|| start_dir(app));
+    spawn(app, move || async move {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Save files from Telegram in");
+        if let Some(dir) = start {
+            d = d.set_directory(dir);
+        }
+        Some(DialogResult::TelegramDir(d.pick_folder().await?.path().to_path_buf()))
     });
 }
 
@@ -347,6 +363,10 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
+        DialogResult::TelegramDir(dir) => {
+            app.settings.telegram_dir = Some(dir);
+            app.mark_settings_dirty();
+        }
     }
 }
 
@@ -414,6 +434,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     }
 
     library_import_modal(app, ctx, escape);
+    super::telegram::chooser_modal(app, ctx);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
@@ -591,6 +612,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::Cache => cache_body(app, ui),
                     SettingsTab::Rekordbox => rekordbox_body(app, ui),
                     SettingsTab::Web => web_body(app, ui),
+                    SettingsTab::Telegram => super::telegram::body(app, ui),
                 }
             });
         });

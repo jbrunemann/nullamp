@@ -1040,6 +1040,26 @@ fn entries(app: &mut App, ui: &mut Ui) {
                         ui.close();
                     }
                 }
+                let telegram_asked = app.telegram.asking.as_ref().map(|a| a.entry);
+                if telegram_asked == Some(e.id) {
+                    if ui.button("Cancel Telegram").clicked() {
+                        menu_action = Some((e.id, "cancel-telegram"));
+                        ui.close();
+                    }
+                } else {
+                    let why_not = if e.is_unidentified() {
+                        Some("The track needs a name to ask for")
+                    } else if telegram_asked.is_some() {
+                        Some("Telegram is being asked about another track; wait for it, or cancel it from that track's menu")
+                    } else {
+                        super::telegram::unavailable(app)
+                    };
+                    let hover = why_not.unwrap_or("Asks the Telegram bot for \"Artist - Title\" as you, like typing @bot Artist - Title in a chat, and saves the result you choose");
+                    if ui.add_enabled(why_not.is_none(), egui::Button::new("Request on Telegram")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+                        menu_action = Some((e.id, "telegram"));
+                        ui.close();
+                    }
+                }
                 if ui.button("Delete entry").clicked() {
                     menu_action = Some((e.id, "delete"));
                     ui.close();
@@ -1070,6 +1090,8 @@ fn entries(app: &mut App, ui: &mut Ui) {
         Some((id, "edit")) => select(app, Some(id)),
         Some((id, "identify")) => identify_one(app, id),
         Some((_, "cancel-identify")) => cancel_identify(app),
+        Some((id, "telegram")) => super::telegram::ask_entry(app, id),
+        Some((_, "cancel-telegram")) => super::telegram::cancel_ask(app),
         Some((id, "delete")) => delete_entry(app, id),
         _ => {}
     }

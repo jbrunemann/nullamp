@@ -363,7 +363,7 @@ Right-click the LCD and pick a page. The settings page has these tabs:
 | **rekordbox** | The waveform setting and the desktop library key (see [section 8](#8-rekordbox-and-mixxx)). |
 | **Updates** | Your version and **Check for updates**. Nullamp only contacts the update address when you press the button. |
 | **Cache** | What the cache holds, by kind, with a **Clear** button for each, **Clear all** and **Show in Finder**. Everything is made again when needed, except data from a rekordbox stick that is not plugged in. |
-| **Logs** | The last 50 lines of Nullamp's log, with **Copy**. Useful when reporting a problem. |
+| **Logs** | The last 300 lines of Nullamp's log, with **Copy**. Useful when reporting a problem. |
 | **About** | Version and licence. The **Nullamp ▸ About** menu opens it too. |
 
 ### Settings file

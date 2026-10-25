@@ -7,7 +7,7 @@ use std::time::Instant;
 use log::{Log, Metadata, Record};
 
 /// Lines kept for the About window.
-const KEEP: usize = 50;
+const KEEP: usize = 300;
 
 static TAIL: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static START: OnceLock<Instant> = OnceLock::new();
