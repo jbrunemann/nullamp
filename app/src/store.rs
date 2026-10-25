@@ -49,6 +49,8 @@ pub struct Settings {
     pub visualizer_brightness: f32,
     /// Long titles rest at their start instead of scrolling.
     pub marquee_paused: bool,
+    /// The strip along the bottom with the track count and messages.
+    pub show_status_bar: bool,
     /// The playlist table. Hidden, the window shrinks to just the player.
     pub playlist_open: bool,
     /// "dark", "light" or "system" (follow the OS).
@@ -122,6 +124,7 @@ impl Default for Settings {
             visualizer: "spectrum".into(),
             visualizer_brightness: 1.0,
             marquee_paused: false,
+            show_status_bar: true,
             playlist_open: true,
             appearance: "dark".into(),
             dim: 0,

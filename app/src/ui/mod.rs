@@ -1272,7 +1272,7 @@ impl App {
     fn fit_window(&mut self, ctx: &egui::Context, deck_height: f32) {
         let compact = !self.plan.any();
         let before = self.compact.replace(compact);
-        let height = (deck_height + STATUS_HEIGHT).ceil();
+        let height = (deck_height + if self.settings.show_status_bar { STATUS_HEIGHT } else { 0.0 }).ceil();
         if before == Some(compact) && (!compact || height == self.compact_height) {
             return;
         }
@@ -1431,11 +1431,19 @@ impl eframe::App for App {
             .resizable(false)
             .show(ui, |ui| theme::with_dark(ui, |ui| deck::show(self, ui)));
         self.fit_window(&ctx, deck.response.rect.height());
-        egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin { left: 10, right: 10, top: 3, bottom: 3 + bars_bottom as i8 }))
-            .exact_size(STATUS_HEIGHT + bars_bottom)
-            .resizable(false)
-            .show(ui, |ui| self.status_bar(ui));
+        // Hidden, the strip still keeps clear of the gesture bar where there is one.
+        let status_height = if self.settings.show_status_bar { STATUS_HEIGHT } else { 0.0 };
+        if status_height + bars_bottom > 0.0 {
+            egui::Panel::bottom("status")
+                .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin { left: 10, right: 10, top: 3, bottom: 3 + bars_bottom as i8 }))
+                .exact_size(status_height + bars_bottom)
+                .resizable(false)
+                .show(ui, |ui| {
+                    if self.settings.show_status_bar {
+                        self.status_bar(ui)
+                    }
+                });
+        }
         // The setlist and the inspector sit right of the playlist. Without the playlist the first of them
         // fills the window and the other is a panel beside it. Panels are added from the outermost in.
         let plan = self.plan;

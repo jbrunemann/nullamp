@@ -637,6 +637,9 @@ fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
     }
 }
 
+/// Narrower than this, the settings tabs wrap onto more rows (all of them take about 640 points).
+const SETTINGS_TABS_WIDTH: f32 = 680.0;
+
 /// The settings page takes over the deck instead of floating over the window: in the compact
 /// layout the window is only as tall as the deck, and a free window would be cut off.
 pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
@@ -651,21 +654,35 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
             egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
-                ui.horizontal(|ui| {
-                    for t in SettingsTab::ALL {
-                        if widgets::tab(ui, tab == t, t.label()).clicked() {
-                            tab = t;
+                if ui.available_width() < SETTINGS_TABS_WIDTH {
+                    // A phone: the tabs wrap onto more rows, and Close ends the last.
+                    ui.horizontal_wrapped(|ui| {
+                        for t in SettingsTab::ALL {
+                            if widgets::tab(ui, tab == t, t.label()).clicked() {
+                                tab = t;
+                            }
                         }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Close").clicked() {
                             close = true;
                         }
-                        if tab == SettingsTab::Shortcuts {
-                            ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
-                        }
                     });
-                });
+                } else {
+                    ui.horizontal(|ui| {
+                        for t in SettingsTab::ALL {
+                            if widgets::tab(ui, tab == t, t.label()).clicked() {
+                                tab = t;
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Close").clicked() {
+                                close = true;
+                            }
+                            if tab == SettingsTab::Shortcuts {
+                                ui.label(RichText::new("Hardware media keys work while Nullamp is in the background.").small().color(theme::text_dim()));
+                            }
+                        });
+                    });
+                }
                 ui.separator();
                 match tab {
                     SettingsTab::General => general_body(app, ui),
@@ -691,6 +708,10 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
 /// Appearance, as a pick-one list like the audio outputs. The deck stays dark in every theme, so
 /// the rest of the window shows the change.
 fn general_body(app: &mut App, ui: &mut egui::Ui) {
+    if ui.checkbox(&mut app.settings.show_status_bar, "Show the status bar").on_hover_text("The strip along the bottom with the track count and messages").changed() {
+        app.mark_settings_dirty();
+    }
+    ui.add_space(4.0);
     let current = theme::Appearance::from_setting(&app.settings.appearance);
     ui.label(RichText::new("Appearance").small().weak());
     ui.vertical(|ui| {
