@@ -118,14 +118,13 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     // The playlist's bitrate (from the file's headers) wins over the engine's size-based estimate, which also counts
     // artwork and tags, so the two places show the same number.
     let entry_kbps = app.player.current_entry().and_then(|e| e.info.bitrate);
-    let fmt = app.player.current.as_ref().and_then(|c| c.info.as_ref()).map(|i| {
-        let ch = match i.channels {
-            1 => "MONO".to_owned(),
-            2 => "STEREO".to_owned(),
-            n => format!("{n} CH"),
-        };
+    let info = app.player.current.as_ref().and_then(|c| c.info.as_ref());
+    let channels = info.map(|i| i.channels);
+    let fmt = info.map(|i| {
+        // Mono and stereo are the symbol after the line; only more channels than that are spelled out.
+        let ch = if i.channels > 2 { format!(" · {} CH", i.channels) } else { String::new() };
         let kbps = entry_kbps.or(i.bitrate).map(|b| format!("{b} KBPS · ")).unwrap_or_default();
-        format!("{} · {kbps}{:.1} KHZ · {ch}", i.codec, i.sample_rate as f64 / 1000.0)
+        format!("{} · {kbps}{:.1} KHZ{ch}", i.codec, i.sample_rate as f64 / 1000.0)
     });
     let fmt_rect = p.text(
         pos2(inner.left(), inner.bottom()),
@@ -134,6 +133,19 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
         theme::mono(10.0),
         theme::LCD_MID,
     );
+    let mut fmt_right = fmt_rect.right();
+    if let Some(channels) = channels {
+        // As bright as the line it ends for stereo, unlit like the clock's spare segments for mono.
+        let icon = Rect::from_min_size(pos2(fmt_rect.right() + 8.0, fmt_rect.center().y - 4.5), vec2(15.0, 9.0));
+        widgets::paint_stereo_icon(&p, icon, if channels >= 2 { theme::LCD_MID } else { theme::LCD_OFF });
+        let tip = match channels {
+            1 => "Mono".to_owned(),
+            2 => "Stereo".to_owned(),
+            n => format!("{n} channels"),
+        };
+        ui.interact(icon.expand(3.0), egui::Id::unique("lcd-stereo"), Sense::hover()).on_hover_text(tip);
+        fmt_right = icon.right();
+    }
 
     // Visualiser between the time and the format line.
     let viz = Rect::from_min_max(pos2(inner.left(), time_origin.y + digits_h + 7.0), pos2(time_origin.x + w, inner.bottom() - 17.0));
@@ -172,18 +184,22 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
         (match app.player.nav.repeat { RepeatMode::One => "RPT 1", _ => "RPT" }, app.player.nav.repeat != RepeatMode::Off),
         ("SHUF", app.player.nav.shuffle()),
     ];
-    for (label, on) in indicators {
-        let g = p.layout_no_wrap(label.to_owned(), theme::mono(10.0), if on { theme::LCD_FG } else { theme::LCD_OFF });
-        x -= g.size().x;
-        p.galley(pos2(x, inner.bottom() - g.size().y), g, theme::LCD_FG);
-        x -= 10.0;
+    let galleys: Vec<_> = indicators.iter().map(|(label, on)| p.layout_no_wrap((*label).to_owned(), theme::mono(10.0), if *on { theme::LCD_FG } else { theme::LCD_OFF })).collect();
+    // Beside a long format line there is no room for them: they are the buttons' state again anyway.
+    let widest = galleys.iter().map(|g| g.size().x + 10.0).sum::<f32>();
+    if text_rect.right() - widest > fmt_right + 8.0 {
+        for g in galleys {
+            x -= g.size().x;
+            p.galley(pos2(x, inner.bottom() - g.size().y), g.clone(), theme::LCD_FG);
+            x -= 10.0;
+        }
     }
 
     // File name, quietly, in the space left of the indicators.
     if let Some(path) = app.player.current_entry().map(|e| e.path.clone()) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         // The format line can run under the text column; start after it.
-        let left = text_rect.left().max(fmt_rect.right() + 14.0);
+        let left = text_rect.left().max(fmt_right + 14.0);
         let width = x - 6.0 - left;
         if width > 30.0 {
             let mut job = egui::text::LayoutJob::simple_singleline(name, theme::mono(10.0), theme::LCD_MID.gamma_multiply(0.75));
