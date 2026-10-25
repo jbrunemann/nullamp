@@ -117,6 +117,10 @@ pub enum Job {
     /// Look for chapters / cue sheets again (user-initiated rescan).
     Rediscover { request: u64, path: PathBuf },
     WriteText { path: PathBuf, text: String },
+    /// Write the data pack (setlists, rekordbox and Mixxx data) for another device to `path`.
+    ExportData { path: PathBuf },
+    /// Bring in a data pack made by another copy of Nullamp.
+    ImportData { path: PathBuf },
     /// Chromaprint of the file's first two minutes, written to the log only (nothing consumes it yet).
     LogFingerprint { path: PathBuf },
 }
@@ -240,6 +244,7 @@ pub enum JobResult {
     Rediscovered { request: u64, setlist: Option<Setlist> },
     Restored { request: u64, target: PathBuf, result: Result<(), String> },
     TextWritten { path: PathBuf, result: Result<(), String> },
+    DataPack { export: bool, path: PathBuf, result: Result<crate::datapack::Summary, String> },
     /// Overview of the track loaded under `token`. Abandoned requests send nothing.
     /// `colors` (one per bucket, red to blue by pitch) only for a waveform that came from rekordbox.
     Waveform { token: u64, result: Result<Waveform, String>, colors: Option<Vec<[u8; 3]>> },
@@ -1121,6 +1126,14 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::WriteText { path, text } => {
             let result = store_text(&path, &text);
             vec![JobResult::TextWritten { path, result }]
+        }
+        Job::ExportData { path } => {
+            let result = crate::datapack::export(&ctx.paths, &path);
+            vec![JobResult::DataPack { export: true, path, result }]
+        }
+        Job::ImportData { path } => {
+            let result = crate::datapack::import(&ctx.paths, &path);
+            vec![JobResult::DataPack { export: false, path, result }]
         }
     }
 }

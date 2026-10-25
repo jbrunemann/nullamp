@@ -113,6 +113,10 @@ impl NowState {
 }
 
 /// Whether the lookup that failed `failed_for` ago is repeated now.
+fn plural(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
 fn retry_due(failed_for: Duration, track_reactivated: bool) -> bool {
     track_reactivated || failed_for >= ENTRY_ART_RETRY
 }
@@ -781,6 +785,29 @@ impl App {
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
             JobResult::Telegram(event) => telegram::on_event(self, event),
             JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),
+            JobResult::DataPack { export, path, result } => match result {
+                Ok(s) if export => self.info(format!(
+                    "Saved {}: {}, {} and {}",
+                    path.display(),
+                    plural(s.setlists, "setlist"),
+                    plural(s.waveforms, "waveform"),
+                    plural(s.records, "record")
+                )),
+                Ok(s) => {
+                    let mut text = format!("Imported {}, {} and {}", plural(s.setlists + s.merged, "setlist"), plural(s.waveforms, "waveform"), plural(s.records, "record"));
+                    if s.present > 0 {
+                        text.push_str(&format!("; {} already here", s.present));
+                    }
+                    if s.rejected > 0 {
+                        text.push_str(&format!("; {} skipped as not valid", s.rejected));
+                    }
+                    if s.setlists + s.merged > 0 {
+                        text.push_str(". Open a mix again to see its setlist");
+                    }
+                    self.info(text);
+                }
+                Err(e) => self.error(format!("{}: {e}", path.display())),
+            },
             JobResult::TextWritten { path, result } => match result {
                 Ok(()) => self.info(format!("Saved {}", path.display())),
                 Err(e) => self.error(format!("Cannot write {}: {e}", path.display())),

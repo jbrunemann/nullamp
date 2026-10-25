@@ -17,6 +17,8 @@ pub enum DialogResult {
     ExportPlaylist { list: String, path: PathBuf },
     ImportSetlist(PathBuf),
     ExportSetlist { format: setlist_view::ExportFormat, path: PathBuf },
+    ExportData(PathBuf),
+    ImportData(PathBuf),
     Artwork(PathBuf),
     /// The folder chosen on the Telegram tab for the files the bot sends.
     TelegramDir(PathBuf),
@@ -308,6 +310,20 @@ pub fn export_setlist(app: &mut App, format: setlist_view::ExportFormat) {
     });
 }
 
+pub fn export_data(app: &mut App) {
+    spawn(app, move || async move {
+        let f = rfd::AsyncFileDialog::new().set_title("Export data for another device").set_file_name("Nullamp data.zip").add_filter("Nullamp data", &["zip"]).save_file().await?;
+        Some(DialogResult::ExportData(f.path().to_path_buf()))
+    });
+}
+
+pub fn import_data(app: &mut App) {
+    spawn(app, move || async move {
+        let f = rfd::AsyncFileDialog::new().set_title("Import data from another device").add_filter("Nullamp data", &["zip"]).pick_file().await?;
+        Some(DialogResult::ImportData(f.path().to_path_buf()))
+    });
+}
+
 pub fn pick_artwork(app: &mut App) {
     let dir = start_dir(app);
     spawn(app, move || async move {
@@ -362,6 +378,8 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
         DialogResult::Python(found) => app.dialogs.python = found.map_or(PythonState::Missing, PythonState::Found),
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
+        DialogResult::ExportData(path) => app.workers.submit(Job::ExportData { path }),
+        DialogResult::ImportData(path) => app.workers.submit(Job::ImportData { path }),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
         DialogResult::TelegramDir(dir) => {
             app.settings.telegram_dir = Some(dir);
@@ -648,18 +666,31 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(4.0);
     let current = theme::Appearance::from_setting(&app.settings.appearance);
-    ui.label(RichText::new("Appearance").small().weak());
-    ui.vertical(|ui| {
-        ui.set_width(260.0);
-        let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, "System (follow macOS)")];
-        for (appearance, label) in rows {
-            if super::deck::choice_row(ui, label, true, current == appearance, |p, rect, color| widgets::paint_appearance_icon(p, rect, appearance, color)) && current != appearance {
-                app.settings.appearance = appearance.setting().into();
-                theme::set_appearance(ui.ctx(), appearance);
-                app.mark_settings_dirty();
+    let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, "System (follow macOS)")];
+    ui.horizontal(|ui| {
+        ui.label("Appearance:");
+        let shown = rows.iter().find(|(a, _)| *a == current).map_or("Dark", |(_, label)| *label);
+        egui::ComboBox::from_id_salt("appearance").selected_text(shown).show_ui(ui, |ui| {
+            for (appearance, label) in rows {
+                if ui.selectable_label(current == appearance, label).clicked() && current != appearance {
+                    app.settings.appearance = appearance.setting().into();
+                    theme::set_appearance(ui.ctx(), appearance);
+                    app.mark_settings_dirty();
+                }
             }
+        });
+    });
+    ui.add_space(8.0);
+    ui.label(RichText::new("Another device").small().weak());
+    ui.horizontal(|ui| {
+        if ui.button("Export data…").on_hover_text("Your setlists and what rekordbox and Mixxx know about your files, in one file").clicked() {
+            export_data(app);
+        }
+        if ui.button("Import data…").on_hover_text("Bring in a file made by Nullamp on another device").clicked() {
+            import_data(app);
         }
     });
+    ui.label(RichText::new("For a copy of Nullamp that has no rekordbox or Mixxx, such as on a phone. Waveforms, tempo and covers are made again there.").small().color(theme::text_dim()));
 }
 
 /// What Nullamp reads from websites on the user's behalf, when the user asks.

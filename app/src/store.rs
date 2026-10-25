@@ -310,10 +310,7 @@ pub fn save_setlist(paths: &AppPaths, fingerprint: &str, saved: Option<&SavedSet
 /// path. Safe to call from worker threads.
 pub fn find_setlist(paths: &AppPaths, fingerprint: &str, path: &Path) -> Option<SavedSetlist> {
     let dir = paths.setlists();
-    if valid_fingerprint(fingerprint)
-        && let Ok(bytes) = fs::read(dir.join(format!("{fingerprint}.json")))
-        && let Ok(saved) = serde_json::from_slice::<SavedSetlist>(&bytes)
-    {
+    if let Some(saved) = load_setlist(paths, fingerprint) {
         return Some(saved);
     }
     fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
@@ -322,7 +319,15 @@ pub fn find_setlist(paths: &AppPaths, fingerprint: &str, path: &Path) -> Option<
     })
 }
 
-fn valid_fingerprint(f: &str) -> bool {
+/// The setlist saved under exactly this fingerprint.
+pub fn load_setlist(paths: &AppPaths, fingerprint: &str) -> Option<SavedSetlist> {
+    if !valid_fingerprint(fingerprint) {
+        return None;
+    }
+    serde_json::from_slice(&fs::read(paths.setlists().join(format!("{fingerprint}.json"))).ok()?).ok()
+}
+
+pub(crate) fn valid_fingerprint(f: &str) -> bool {
     !f.is_empty() && f.len() <= 64 && f.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 

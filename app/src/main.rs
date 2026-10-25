@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod cache;
+mod datapack;
 mod entry_art;
 mod logbuf;
 mod mixxx;
