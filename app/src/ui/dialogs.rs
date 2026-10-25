@@ -499,7 +499,7 @@ fn library_import_modal(app: &mut App, ctx: &egui::Context, escape: bool) {
     let mut read_data = app.settings.read_dj_data;
     let height = (ctx.content_rect().height() - 230.0).clamp(80.0, 380.0);
     egui::Modal::new(egui::Id::unique("rekordbox-import")).show(ctx, |ui| {
-        ui.set_width(380.0);
+        ui.set_width(widgets::modal_width(ctx, 380.0));
         ui.heading(if mixxx { "Add from Mixxx" } else { "Add from rekordbox" });
         ui.checkbox(&mut choice.all, format!("Entire {} ({} tracks)", if mixxx { "library" } else { "collection" }, choice.overview.tracks)).on_hover_text("One list with every track of the library");
         ui.separator();
