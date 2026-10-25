@@ -110,4 +110,4 @@ The full list is in the [user manual](docs/USER_MANUAL.md#9-keyboard-shortcuts).
 
 ## License
 
-MIT or Apache-2.0, at your option.
+MIT or Apache-2.0, at your option. The texts are in `LICENSE-MIT` and `LICENSE-APACHE`.
