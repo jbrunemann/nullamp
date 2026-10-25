@@ -412,6 +412,15 @@ pub fn paint_appearance_icon(painter: &Painter, rect: Rect, appearance: theme::A
     }
 }
 
+/// Two overlapping rings, the sign of a stereo signal; unlit for mono.
+pub fn paint_stereo_icon(painter: &Painter, rect: Rect, color: Color32) {
+    let r = rect.height() * 0.5 - 0.7;
+    let stroke = Stroke::new(1.3, color);
+    let dx = r * 0.62;
+    painter.circle_stroke(pos2(rect.center().x - dx, rect.center().y), r, stroke);
+    painter.circle_stroke(pos2(rect.center().x + dx, rect.center().y), r, stroke);
+}
+
 pub fn paint_output_icon(painter: &Painter, rect: Rect, kind: nullamp_audio::OutputKind, color: Color32) {
     use nullamp_audio::OutputKind;
     let c = rect.center();
