@@ -35,7 +35,7 @@ fn read_entry(path: &Path) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn write_entry(path: &Path, bytes: &[u8]) {
+pub(crate) fn write_entry(path: &Path, bytes: &[u8]) {
     let Some(dir) = path.parent() else { return };
     if fs::create_dir_all(dir).is_err() {
         return;
@@ -63,7 +63,11 @@ const RECORDBOX_MAGIC: &[u8; 4] = b"NRW1";
 /// that turning rekordbox off brings the decoded waveform back: magic, bucket count (u32 LE), peaks,
 /// RMS values, then optionally the three colour bytes of every bucket.
 pub fn load_rekordbox(dir: &Path, fingerprint: &str) -> Option<crate::rekordbox::Analysed> {
-    let bytes = read_entry(&entry_as(dir, fingerprint, "rwf"))?;
+    parse_rekordbox(&read_entry(&entry_as(dir, fingerprint, "rwf"))?)
+}
+
+/// The bytes of a `.rwf` entry, `None` unless they are well formed (also what a data pack is checked with).
+pub fn parse_rekordbox(bytes: &[u8]) -> Option<crate::rekordbox::Analysed> {
     let (head, body) = bytes.split_at_checked(8)?;
     if &head[..4] != RECORDBOX_MAGIC {
         return None;
