@@ -92,7 +92,8 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 
     // Big time readout (click toggles elapsed / remaining).
-    let digits_h = 34.0;
+    // On a very narrow display the clock gives up some height, and so width, to keep room for the tempo and the output.
+    let digits_h = (34.0_f32).min(((inner.width() - 18.0 - COMPACT_COLUMN) / widgets::seven_segment_width("-188:88", 1.0)).max(22.0));
     let (time_text, shown_secs) = match (app.show_remaining, dur) {
         (true, Some(d)) => (format!("-{}", lcd_clock(d - pos)), d - pos),
         _ => (format!(" {}", lcd_clock(pos)), pos),
@@ -154,7 +155,9 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     // Text area to the right of the time.
     let text_left = time_origin.x + w + 18.0;
     let text_rect = Rect::from_min_max(pos2(text_left, inner.top()), inner.right_bottom());
-    if text_rect.width() < 60.0 {
+    if text_rect.width() < COMPACT_BELOW {
+        // Too little room for a title worth reading: the tempo and the output take the column beside the clock instead.
+        compact_readouts(app, ui, &p, text_rect);
         return;
     }
     let time = ui.input(|i| i.time);
@@ -212,6 +215,12 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 }
 
+/// The column `compact_readouts` needs beside the clock: the output label's icon and a few letters, plus a margin.
+const COMPACT_COLUMN: f32 = 56.0;
+
+/// Narrower than this the title lines give way to the compact readouts: about ten letters of the title fit.
+const COMPACT_BELOW: f32 = 120.0;
+
 /// Width over which text running under the tempo box fades out.
 const TEXT_FADE: f32 = 26.0;
 
@@ -241,16 +250,12 @@ fn fade_out_right(p: &egui::Painter, lcd: Rect, edge: Rect) {
 /// of a nineties stereo. Unlit digits show while a track is loaded and no tempo is known
 /// (yet). Returns the width taken from line 1, 0 when nothing is drawn.
 fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
+    let Some(Tempo { off, bpm, tip }) = tempo(app) else { return 0.0 };
     const PAD: f32 = 4.0;
     // Space between the digits, paid for out of the padding so the frame keeps its width.
     const DIGIT_GAP: f32 = 1.2;
     // The frame is as tall as the row it sits in.
     let digits = row.height() - 6.0;
-    if app.player.current_entry().is_none() {
-        return 0.0;
-    }
-    let off = app.current_bpm_off();
-    let bpm = app.current_bpm();
     let text = if off { "---".to_owned() } else { bpm.map(|(bpm, _)| super::format_bpm(bpm)).unwrap_or_default() };
     // Room for three digits, and a decimal when there is one.
     let ghost: String = if text.contains('.') { "888.8".into() } else { "888".into() };
@@ -278,14 +283,64 @@ fn bpm_display(app: &App, ui: &Ui, p: &egui::Painter, row: Rect) -> f32 {
             p.galley(pos2(digits_x - tilde.size().x, frame.center().y - tilde.size().y / 2.0), tilde, theme::LCD_MID);
         }
     }
+    ui.interact(frame, ui.scope_id().with("lcd-bpm"), Sense::hover()).on_hover_text(tip);
+    width + 8.0
+}
+
+/// What the tempo box shows for the playing track.
+struct Tempo {
+    /// Switched off in the file's tags.
+    off: bool,
+    /// The tempo and whether it was found by listening, else it is from the tags.
+    bpm: Option<(f32, bool)>,
+    tip: &'static str,
+}
+
+/// `None` while nothing is loaded.
+fn tempo(app: &App) -> Option<Tempo> {
+    app.player.current_entry()?;
+    let off = app.current_bpm_off();
+    let bpm = app.current_bpm();
     let tip = match bpm {
         _ if off => "Tempo switched off in the file's tags (BPM -1)",
         Some((_, true)) => "Tempo found by listening to the audio",
         Some((_, false)) => "Tempo from the file's tags",
         None => "Tempo: none found yet",
     };
-    ui.interact(frame, ui.scope_id().with("lcd-bpm"), Sense::hover()).on_hover_text(tip);
-    width + 8.0
+    Some(Tempo { off, bpm, tip })
+}
+
+/// The tempo and the audio output, stacked in the column right of the clock when a narrow player has no room for
+/// the title lines they otherwise sit beside. The tempo is a whole number here, to fit three small digits.
+fn compact_readouts(app: &mut App, ui: &mut Ui, p: &egui::Painter, column: Rect) {
+    const PAD: f32 = 4.0;
+    const DIGIT_GAP: f32 = 1.2;
+    const FRAME_HEIGHT: f32 = 34.0;
+    if column.width() < 40.0 {
+        return;
+    }
+    let mut y = column.top() + 2.0;
+    if let Some(Tempo { off, bpm, tip }) = tempo(app) {
+        let frame = Rect::from_min_size(pos2(column.left(), y), vec2(column.width(), FRAME_HEIGHT));
+        let mut digits = 16.0;
+        while digits > 9.0 && widgets::seven_segment_width_spaced("888", digits, DIGIT_GAP) > frame.width() - 2.0 * PAD {
+            digits -= 1.0;
+        }
+        let digits_w = widgets::seven_segment_width_spaced("888", digits, DIGIT_GAP);
+        p.rect_stroke(frame, 3.0, Stroke::new(1.0, theme::LCD_FG.gamma_multiply(0.55)), StrokeKind::Inside);
+        let label = p.layout_no_wrap("BPM".into(), theme::mono(9.0), theme::LCD_MID);
+        p.galley(pos2(frame.left() + PAD, frame.top() + 3.0), label, theme::LCD_MID);
+        let origin = pos2(frame.right() - PAD - digits_w, frame.bottom() - 3.0 - digits);
+        widgets::seven_segment_spaced(p, origin, digits, "888", theme::LCD_OFF, Color32::TRANSPARENT, DIGIT_GAP);
+        let text = if off { "---".to_owned() } else { bpm.map(|(bpm, _)| format!("{}", bpm.round())).unwrap_or_default() };
+        if !text.is_empty() {
+            let used = widgets::seven_segment_width_spaced(&text, digits, DIGIT_GAP);
+            widgets::seven_segment_spaced(p, pos2(origin.x + digits_w - used, origin.y), digits, &text, theme::LCD_FG, Color32::TRANSPARENT, DIGIT_GAP);
+        }
+        ui.interact(frame, ui.scope_id().with("lcd-bpm"), Sense::hover()).on_hover_text(tip);
+        y = frame.bottom() + 8.0;
+    }
+    output_label(app, ui, p, pos2(column.right(), y), column.width());
 }
 
 /// The audio output in small print at the right end of line 3; click to choose another.
