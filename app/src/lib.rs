@@ -116,8 +116,82 @@ pub(crate) fn system_bar_insets(_ppp: f32) -> (f32, f32) {
     (0.0, 0.0)
 }
 
+/// Whether the app may use every file of the shared storage ("All files access"): without it Android lists only some
+/// folders and refuses writes to files other apps made, tags included. Asked over JNI, remembered for a second.
+#[cfg(target_os = "android")]
+pub(crate) fn all_files_access() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let Some(app) = ANDROID_APP.get() else { return true };
+    let Ok(mut last) = LAST.lock() else { return true };
+    if let Some((at, granted)) = *last
+        && at.elapsed() < Duration::from_secs(1)
+    {
+        return granted;
+    }
+    let granted = storage_manager(app).unwrap_or_else(|e| {
+        log::warn!("all files access: {e}");
+        true
+    });
+    *last = Some((Instant::now(), granted));
+    granted
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn all_files_access() -> bool {
+    true
+}
+
+/// `Environment.isExternalStorageManager()`; before Android 11 (API 30) there is no such permission.
+#[cfg(target_os = "android")]
+fn storage_manager(app: &android_activity::AndroidApp) -> jni::errors::Result<bool> {
+    use jni::{jni_sig, jni_str};
+    // SAFETY: the pointer is the VM the activity runs in, valid for the life of the process.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        let sdk = env.get_static_field(jni_str!("android/os/Build$VERSION"), jni_str!("SDK_INT"), jni_sig!("I"))?.i()?;
+        if sdk < 30 {
+            return Ok(true);
+        }
+        env.call_static_method(jni_str!("android/os/Environment"), jni_str!("isExternalStorageManager"), jni_sig!("()Z"), &[])?.z()
+    })
+}
+
+/// Open the system page where the user allows "All files access" for this app.
+#[cfg(target_os = "android")]
+pub(crate) fn request_all_files_access() {
+    let Some(app) = ANDROID_APP.get() else { return };
+    if let Err(e) = open_all_files_page(app) {
+        log::warn!("all files access page: {e}");
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn request_all_files_access() {}
+
+#[cfg(target_os = "android")]
+fn open_all_files_page(app: &android_activity::AndroidApp) -> jni::errors::Result<()> {
+    use jni::objects::JObject;
+    use jni::{jni_sig, jni_str};
+    // SAFETY: the pointer is the VM the activity runs in, valid for the life of the process.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        // SAFETY: the activity is a global reference android-activity owns, so it is never deleted here.
+        let activity = std::mem::ManuallyDrop::new(unsafe { JObject::from_raw(env, app.activity_as_ptr() as jni::sys::jobject) });
+        let package = env.call_method(&*activity, jni_str!("getPackageName"), jni_sig!("()Ljava/lang/String;"), &[])?.l()?;
+        let package = env.cast_local::<jni::objects::JString>(package)?.try_to_string(env)?;
+        let uri_text = env.new_string(format!("package:{package}"))?;
+        let uri = env.call_static_method(jni_str!("android/net/Uri"), jni_str!("parse"), jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"), &[(&uri_text).into()])?.l()?;
+        let action = env.new_string("android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION")?;
+        let intent = env.new_object(jni_str!("android/content/Intent"), jni_sig!("(Ljava/lang/String;Landroid/net/Uri;)V"), &[(&action).into(), (&uri).into()])?;
+        env.call_method(&*activity, jni_str!("startActivity"), jni_sig!("(Landroid/content/Intent;)V"), &[(&intent).into()])?;
+        Ok(())
+    })
+}
+
 /// The Android app: the `android` crate hands its activity in. Everything lives in the app's private folder.
-/// There is no file dialog yet, so "Add folder" adds the music folders that `rfd` below names instead.
+/// Files are picked in the app's own file browser (`ui::file_browser`), which needs the "All files access" permission.
 #[cfg(target_os = "android")]
 pub fn run_android(android_app: android_activity::AndroidApp) {
     logbuf::init(LOG_FILTER);

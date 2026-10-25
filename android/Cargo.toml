@@ -36,3 +36,7 @@ name = "android.permission.READ_MEDIA_AUDIO"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.READ_EXTERNAL_STORAGE"
 max_sdk_version = 32
+
+# Lists any folder and writes tags to files other apps made. A prototype's shortcut: Play does not allow it for most apps.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.MANAGE_EXTERNAL_STORAGE"

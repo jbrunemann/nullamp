@@ -121,20 +121,24 @@ pub struct Dialogs {
     pub cache: CacheState,
     pub python: PythonState,
     pub library_import: Option<LibraryImport>,
+    /// The in-window file browser that stands in for the native dialog where there is none.
+    pub browser: Option<super::file_browser::Browser>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, browser: None }
     }
 }
 
-/// Android has no file dialog yet. This stands in for `rfd` there: it picks nothing, except that "Add folder"
-/// yields the music folders: the app's own `Music` folder (`adb push` files into it) and the shared one.
+/// Android has no native file dialog Rust can reach. This stands in for `rfd` there and asks the in-window
+/// file browser instead; the helper thread that runs the dialog waits for the answer.
 #[cfg(target_os = "android")]
 mod rfd {
     use std::path::{Path, PathBuf};
+
+    use super::super::file_browser::{self, Mode, Request};
 
     pub struct FileHandle(PathBuf);
 
@@ -144,53 +148,65 @@ mod rfd {
         }
     }
 
-    pub struct AsyncFileDialog;
+    pub struct AsyncFileDialog {
+        title: String,
+        extensions: Vec<String>,
+        dir: Option<PathBuf>,
+        name: String,
+    }
 
     impl AsyncFileDialog {
         pub fn new() -> Self {
-            AsyncFileDialog
+            AsyncFileDialog { title: String::new(), extensions: Vec::new(), dir: None, name: String::new() }
         }
 
-        pub fn set_title(self, _: impl Into<String>) -> Self {
+        pub fn set_title(mut self, title: impl Into<String>) -> Self {
+            self.title = title.into();
             self
         }
 
-        pub fn add_filter(self, _: impl Into<String>, _: &[&str]) -> Self {
+        /// The filters of a desktop dialog are alternatives to choose from; here they add up.
+        pub fn add_filter(mut self, _: impl Into<String>, extensions: &[&str]) -> Self {
+            self.extensions.extend(extensions.iter().map(|e| e.to_lowercase()));
             self
         }
 
-        pub fn set_directory(self, _: impl AsRef<Path>) -> Self {
+        pub fn set_directory(mut self, dir: impl AsRef<Path>) -> Self {
+            self.dir = Some(dir.as_ref().to_path_buf());
             self
         }
 
-        pub fn set_file_name(self, _: impl Into<String>) -> Self {
+        pub fn set_file_name(mut self, name: impl Into<String>) -> Self {
+            self.name = name.into();
             self
+        }
+
+        async fn ask(self, mode: Mode) -> Option<Vec<FileHandle>> {
+            let (reply, answer) = crossbeam_channel::bounded(1);
+            file_browser::submit(Request { title: self.title, extensions: self.extensions, dir: self.dir, name: self.name, mode, reply });
+            // This runs on a helper thread of its own, so waiting blocks nothing else.
+            let paths = answer.recv().ok()??;
+            Some(paths.into_iter().map(FileHandle).collect())
         }
 
         pub async fn pick_folders(self) -> Option<Vec<FileHandle>> {
-            let own = std::env::var_os("NULLAMP_MUSIC").map(PathBuf::from);
-            let dirs: Vec<FileHandle> = own.into_iter().chain([PathBuf::from("/storage/emulated/0/Music")]).filter(|d| {
-                let found = d.is_dir();
-                log::info!("music folder {}: {}", d.display(), if found { "found" } else { "missing or unreadable" });
-                found
-            }).map(FileHandle).collect();
-            (!dirs.is_empty()).then_some(dirs)
+            self.ask(Mode::Folder).await
         }
 
         pub async fn pick_folder(self) -> Option<FileHandle> {
-            None
+            self.ask(Mode::Folder).await?.pop()
         }
 
         pub async fn pick_files(self) -> Option<Vec<FileHandle>> {
-            None
+            self.ask(Mode::Files { multi: true }).await
         }
 
         pub async fn pick_file(self) -> Option<FileHandle> {
-            None
+            self.ask(Mode::Files { multi: false }).await?.pop()
         }
 
         pub async fn save_file(self) -> Option<FileHandle> {
-            None
+            self.ask(Mode::Save).await?.pop()
         }
     }
 }
@@ -707,11 +723,31 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
     app.dialogs.settings = if close { None } else { Some(tab) };
 }
 
+/// The in-window file browser, over everything else while it is open.
+pub fn show_browser(app: &mut App, ctx: &egui::Context) {
+    if let Some(mut browser) = app.dialogs.browser.take()
+        && browser.show(ctx)
+    {
+        app.dialogs.browser = Some(browser);
+    }
+}
+
 /// Appearance, as a pick-one list like the audio outputs. The deck stays dark in every theme, so
 /// the rest of the window shows the change.
 fn general_body(app: &mut App, ui: &mut egui::Ui) {
     if ui.checkbox(&mut app.settings.show_status_bar, "Show the status bar").on_hover_text("The strip along the bottom with the track count and messages").changed() {
         app.mark_settings_dirty();
+    }
+    if cfg!(target_os = "android") {
+        ui.add_space(4.0);
+        if crate::all_files_access() {
+            ui.label(RichText::new("Access to all files is allowed: Nullamp can list your music and save tags to it.").small().weak());
+        } else {
+            ui.label(RichText::new("Nullamp needs access to all files to list your music and to save tags to it.").small().color(theme::LCD_AMBER));
+            if ui.button("Open the permission page").clicked() {
+                crate::request_all_files_access();
+            }
+        }
     }
     ui.add_space(4.0);
     let current = theme::Appearance::from_setting(&app.settings.appearance);

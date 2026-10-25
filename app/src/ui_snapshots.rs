@@ -1343,3 +1343,44 @@ fn render_narrow_windows() {
         h.state_mut().player.stop();
     }
 }
+
+/// The in-window file browser (what Android uses instead of a file dialog), at phone size.
+#[test]
+#[ignore]
+fn render_file_browser() {
+    let dir = tempfile::tempdir().unwrap();
+    let music = dir.path().join("Music");
+    for sub in ["Albums", "Mixes", "Podcasts"] {
+        std::fs::create_dir_all(music.join(sub)).unwrap();
+    }
+    for name in ["01 Opening.mp3", "02 A Very Long Track Name That Does Not Fit On One Line.flac", "cover.jpg", "notes.txt"] {
+        std::fs::write(music.join(name), b"x").unwrap();
+    }
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(360.0, 780.0)).with_pixels_per_point(3.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 500);
+    let (reply, answer) = crossbeam_channel::bounded(1);
+    crate::ui::file_browser::submit(crate::ui::file_browser::Request {
+        title: "Add audio files".into(),
+        extensions: ["mp3", "flac", "m3u"].map(String::from).to_vec(),
+        dir: Some(music.clone()),
+        name: String::new(),
+        mode: crate::ui::file_browser::Mode::Files { multi: true },
+        reply,
+    });
+    settle(&mut h, 800);
+    save(&mut h, "40-file-browser.png");
+    h.state_mut().dialogs.browser.take();
+    drop(answer);
+    let (reply, _answer) = crossbeam_channel::bounded(1);
+    crate::ui::file_browser::submit(crate::ui::file_browser::Request {
+        title: "Export playlist".into(),
+        extensions: ["m3u8".to_owned()].to_vec(),
+        dir: Some(music),
+        name: "Default.m3u8".into(),
+        mode: crate::ui::file_browser::Mode::Save,
+        reply,
+    });
+    settle(&mut h, 800);
+    save(&mut h, "41-file-browser-save.png");
+}

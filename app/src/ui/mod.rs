@@ -2,6 +2,7 @@
 
 pub mod deck;
 pub mod dialogs;
+pub mod file_browser;
 mod inspector;
 mod menu;
 mod playlist_view;
@@ -252,6 +253,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, mut store: Store) -> Self {
         let ctx = cc.egui_ctx.clone();
+        file_browser::init(&ctx);
         let waker = {
             let ctx = ctx.clone();
             Arc::new(move || ctx.request_repaint())
@@ -609,6 +611,13 @@ impl App {
         }
         while let Ok(r) = self.dialogs.results.try_recv() {
             dialogs::on_dialog_result(self, r);
+        }
+        while let Some(request) = file_browser::next_request() {
+            if self.dialogs.browser.is_none() {
+                self.dialogs.browser = Some(file_browser::Browser::open(request, &self.ctx));
+            } else {
+                let _ = request.reply.send(None);
+            }
         }
         for note in self.player.drain_notes() {
             match note {
@@ -1499,6 +1508,7 @@ impl eframe::App for App {
 
         dialogs::show_modals(self, &ctx);
         dialogs::show_deck_overlay(self, &ctx, deck.response.rect);
+        dialogs::show_browser(self, &ctx);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
