@@ -36,6 +36,12 @@ reads its password from the store's, so give both the same password (`keytool` o
 (`1 << 24 | major << 16 | minor << 8 | patch`, so 2.0.0 is 16973824), which grows with every release; the TOML must not set
 either.
 
+## Store build
+
+`android/build.sh store` builds with `--no-default-features`: no Identify with Shazam, Search 1001Tracklists, Request on
+Telegram and no Settings > Updates, for an app store that does its own updates (F-Droid). The code is still in the
+library, only the menus and tabs that reach it are left out; the cover lookup of a mix (Deezer, iTunes) stays.
+
 ## Getting music in
 
 Android has no native file dialog that Rust can reach (the system picker hands its answer back through Java), so

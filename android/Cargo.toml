@@ -9,8 +9,14 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# The same switches as the app's. `--no-default-features` is the build for an app store (android/build.sh store).
+[features]
+default = ["online-extras", "update-check"]
+online-extras = ["nullamp/online-extras"]
+update-check = ["nullamp/update-check"]
+
 [target.'cfg(target_os = "android")'.dependencies]
-nullamp = { path = "../app" }
+nullamp = { path = "../app", default-features = false }
 android-activity = { version = "0.6", features = ["native-activity"] }
 
 [package.metadata.android]

@@ -4,6 +4,7 @@
 #
 #   android/build.sh            build
 #   android/build.sh install    build, then install on the connected device or emulator
+#   android/build.sh store      build without Shazam, 1001Tracklists, Telegram and the update check (for F-Droid)
 #
 # Signing: without CARGO_APK_RELEASE_KEYSTORE the APK is signed with Android Studio's debug key, which is fine for
 # trying it out but not for handing to anyone: an update signed with another key cannot replace it. A release is signed
@@ -24,7 +25,11 @@ elif [ -z "$CARGO_APK_RELEASE_KEYSTORE_PASSWORD" ]; then
     echo "error: CARGO_APK_RELEASE_KEYSTORE_PASSWORD is not set" >&2
     exit 1
 fi
-cargo apk build -p nullamp-android --release
+if [ "$1" = store ]; then
+    cargo apk build -p nullamp-android --release --no-default-features
+else
+    cargo apk build -p nullamp-android --release
+fi
 if [ "$1" = install ]; then
     "$ANDROID_HOME/platform-tools/adb" install -r target/release/apk/nullamp.apk
 fi
