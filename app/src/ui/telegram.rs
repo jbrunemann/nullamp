@@ -11,7 +11,7 @@ use egui::RichText;
 use nullamp_core::EntryId;
 use nullamp_telegram::{Ask, Choice, Credentials, Event, LoginStep, Outcome, Progress};
 
-use super::{App, dialogs, playlist_view, theme};
+use super::{App, dialogs, playlist_view, theme, widgets};
 use crate::paths::AppPaths;
 use crate::store::Settings;
 
@@ -297,7 +297,7 @@ pub fn chooser_modal(app: &mut App, ctx: &egui::Context) {
     let height = (ctx.content_rect().height() - 290.0).clamp(80.0, 380.0);
     let bot = bot(&app.settings).to_owned();
     egui::Modal::new(egui::Id::unique("telegram-choose")).show(ctx, |ui| {
-        ui.set_width(520.0);
+        ui.set_width(widgets::modal_width(ctx, 520.0));
         ui.heading(if choosing.choices.is_empty() { "No results" } else { "Choose a result" });
         let count = match choosing.choices.len() {
             0 => format!("@{bot} has nothing for \"{}\"", choosing.query),
@@ -305,8 +305,15 @@ pub fn chooser_modal(app: &mut App, ctx: &egui::Context) {
         };
         ui.label(RichText::new(count).small().color(theme::text_dim()));
         // The query as it would be typed in a chat, to correct when the title is a little off.
-        ui.horizontal(|ui| {
+        // The bot's name takes the room of the field on a phone, so it goes on a line of its own there.
+        let narrow = ui.available_width() < 420.0;
+        if narrow {
             ui.label(RichText::new(format!("@{bot}")).color(theme::text_dim()));
+        }
+        ui.horizontal(|ui| {
+            if !narrow {
+                ui.label(RichText::new(format!("@{bot}")).color(theme::text_dim()));
+            }
             let field = ui.add(egui::TextEdit::singleline(&mut choosing.edited).desired_width(ui.available_width() - 80.0));
             let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if (ui.add_enabled(!choosing.edited.trim().is_empty(), egui::Button::new("Search")).on_hover_text("Ask the bot again with this text").clicked() || enter) && !choosing.edited.trim().is_empty() {

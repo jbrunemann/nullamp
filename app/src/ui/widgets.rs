@@ -307,6 +307,13 @@ pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color
     resp.clicked()
 }
 
+/// The width for a window that wants `wanted` points: all of it on a computer, less on a phone, where the
+/// window's frame and a gutter on each side still have to fit.
+pub fn modal_width(ctx: &egui::Context, wanted: f32) -> f32 {
+    const FRAME_AND_GUTTERS: f32 = 56.0;
+    wanted.min((ctx.content_rect().width() - FRAME_AND_GUTTERS).max(200.0))
+}
+
 /// Small pill-shaped toggle for panel tabs and filters.
 pub fn tab(ui: &mut Ui, selected: bool, label: &str) -> Response {
     let text = egui::RichText::new(label).size(12.0).color(if selected { theme::text() } else { theme::text_dim() });

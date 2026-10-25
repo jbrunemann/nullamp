@@ -12,7 +12,7 @@ use nullamp_core::{EntryId, cue, tracklist_text};
 use nullamp_shazam::{Song, Verdict};
 use nullamp_tracklists::{Hit, Tracklist};
 
-use super::{App, dialogs, theme};
+use super::{App, dialogs, theme, widgets};
 use crate::store::SavedSetlist;
 use crate::workers::{IdentifyTrack, Job, NowPlayingInfo, SetlistOrigin, SplitGap};
 
@@ -1283,16 +1283,18 @@ fn apply_edit(app: &mut App, id: EntryId) -> bool {
 fn paste_modal(app: &mut App, ctx: &egui::Context) {
     let Some(mut paste) = app.mix.paste.take() else { return };
     let mut keep = true;
+    // The box for the text gives way on a short screen: the buttons below it must stay in reach.
+    let height = (ctx.content_rect().height() - 330.0).clamp(60.0, 260.0);
     egui::Modal::new(egui::Id::unique("paste-tracklist")).show(ctx, |ui| {
-        ui.set_width(560.0);
+        ui.set_width(widgets::modal_width(ctx, 560.0));
         ui.heading("Paste tracklist");
         ui.label(
             RichText::new("Copy a tracklist from a web page (1001Tracklists, Mixcloud, a forum post…) and paste it below. Lines like “[12:30] Artist - Title (Remix)” are recognised; timestamps are treated as approximate.")
                 .small()
                 .color(theme::text_dim()),
         );
-        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-            ui.add(egui::TextEdit::multiline(&mut paste.text).desired_rows(12).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+        egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+            ui.add(egui::TextEdit::multiline(&mut paste.text).desired_rows(((height / 20.0) as usize).clamp(3, 12)).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
         });
         ui.horizontal(|ui| {
             ui.label("Source page");
@@ -1428,8 +1430,9 @@ fn tracklist_search_modal(app: &mut App, ctx: &egui::Context) {
     let fetching = app.mix.tracklist_fetch.is_some();
     let has_entries = app.mix.setlist.as_ref().is_some_and(|s| !s.entries.is_empty());
     let file_length = app.player.duration().filter(|d| *d > 0.0);
+    let height = (ctx.content_rect().height() - 300.0).clamp(80.0, 300.0);
     egui::Modal::new(egui::Id::unique("search-tracklists")).show(ctx, |ui| {
-        ui.set_width(560.0);
+        ui.set_width(widgets::modal_width(ctx, 560.0));
         ui.heading("Search 1001Tracklists");
         ui.horizontal(|ui| {
             let field = ui.add(egui::TextEdit::singleline(&mut search.query).desired_width(ui.available_width() - 70.0).hint_text("DJ and name of the mix"));
@@ -1439,7 +1442,7 @@ fn tracklist_search_modal(app: &mut App, ctx: &egui::Context) {
             }
         });
         if !has_guid {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Reading a tracklist needs your 1001Tracklists guid.").small().color(theme::warn()));
                 if ui.small_button("Open Settings").clicked() {
                     open_settings = true;
@@ -1464,7 +1467,7 @@ fn tracklist_search_modal(app: &mut App, ctx: &egui::Context) {
                 summary.push_str(&format!(" · file is {} long", format_clock(length)));
             }
             ui.label(RichText::new(summary).small().color(theme::text_dim()));
-            egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
                 for hit in hits {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
@@ -1473,7 +1476,7 @@ fn tracklist_search_modal(app: &mut App, ctx: &egui::Context) {
                             let mut facts: Vec<String> = hit.date.iter().cloned().collect();
                             facts.extend(hit.tracks.map(|n| format!("{n} tracks")));
                             facts.extend(hit.duration.clone());
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new(facts.join(" · ")).small().color(theme::text_dim()));
                                 ui.hyperlink_to(RichText::new("open").small(), &hit.url);
                                 if hit.likely {
@@ -1890,6 +1893,66 @@ fn render_identify() {
     crate::ui::select_setlist_entry(h.state_mut(), 1);
     settle(&mut h, 300);
     save(&mut h, "14c-identify-candidates.png");
+    h.state_mut().player.stop();
+}
+
+/// The windows for a Telegram result, a 1001Tracklists search and a pasted tracklist on a phone (360 points wide).
+#[cfg(test)]
+#[test]
+#[ignore]
+fn render_narrow_modals() {
+    use egui_kittest::Harness;
+    use nullamp_telegram::{Choice, Event, Progress};
+
+    use crate::ui_snapshots::{seeded_store, settle};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(360.0, 700.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 500);
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/screenshots");
+    std::fs::create_dir_all(&out).unwrap();
+    let save = |h: &mut Harness<'_, App>, name: &str| h.render().expect("render").save(out.join(name)).unwrap();
+    {
+        let app = h.state_mut();
+        let entry = app.player.lists[0].playlist.entries()[0].id;
+        app.settings.telegram_bot = "inreach_to_telegram_bot".into();
+        app.telegram.asking = Some(crate::ui::telegram::Asking { request: 1, entry, query: "Locklead - Hunting".into() });
+        let choice = |title: &str, description: &str, kind: &str, file: Option<&str>| Choice { title: title.into(), description: description.into(), kind: kind.into(), file: file.map(Into::into) };
+        let choices = vec![
+            choice("Hunting", "Artist: Locklead Album: Square One", "audio", Some("MP3, 9.8 MB, 4:07")),
+            choice("Hunting (Extended Mix)", "Artist: Locklead Album: Square One (Remixes)", "audio", Some("FLAC, 31.2 MB, 6:21")),
+        ];
+        crate::ui::telegram::on_event(app, Event::Ask { request: 1, progress: Progress::Choose(choices) });
+    }
+    settle(&mut h, 300);
+    save(&mut h, "33-narrow-telegram.png");
+    {
+        let app = h.state_mut();
+        crate::ui::telegram::cancel_ask(app);
+        // The other two windows belong to the setlist panel.
+        let id = app.player.lists[0].playlist.entries()[5].id;
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1500);
+    h.state_mut().toggle_side(crate::ui::sections::Section::Setlist);
+    settle(&mut h, 300);
+    {
+        let app = h.state_mut();
+        let hit = |title: &str, date: &str, tracks: u32, duration: &str, likely: bool| Hit { title: title.into(), url: "https://www.1001tracklists.com/tracklist/x".into(), date: Some(date.into()), tracks: Some(tracks), duration: Some(duration.into()), score: 0, likely };
+        let hits = vec![
+            hit("Miss Monique @ Live Atlas Weekend, Ukraine 2020-07-10", "2020-07-10", 31, "1h 12m", true),
+            hit("Miss Monique - Radio Show 150", "2019-03-02", 18, "59m", false),
+        ];
+        app.mix.tracklist_search = Some(TracklistSearch { query: "Miss Monique Live Atlas Weekend 2020".into(), year: Some(2020), seconds: Some(4320.0), asked: "Miss Monique Live Atlas Weekend 2020".into(), searching: None, hits: Some(hits), found: 12, replace: true, error: None });
+    }
+    settle(&mut h, 300);
+    save(&mut h, "34-narrow-tracklist-search.png");
+    h.state_mut().mix.tracklist_search = None;
+    h.state_mut().mix.paste = Some(Paste { replace: true, ..Default::default() });
+    settle(&mut h, 300);
+    save(&mut h, "35-narrow-paste.png");
+    h.state_mut().mix.paste = None;
     h.state_mut().player.stop();
 }
 
