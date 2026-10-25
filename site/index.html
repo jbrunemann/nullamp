@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nullamp: a fast music player for DJ mixes</title>
+<meta name="description" content="Nullamp is a fast, retro-inspired music player for macOS that knows which track inside a one-hour DJ mix is playing right now. Gapless, offline, with a safe tag editor. Written in Rust.">
+<meta name="color-scheme" content="dark light">
+<meta property="og:title" content="Nullamp">
+<meta property="og:description" content="A fast, retro-inspired music player with first-class DJ mix support and a safe metadata editor.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="screenshots/main.png">
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top"><img src="icon.png" width="28" height="28" alt="">Nullamp</a>
+    <nav aria-label="Main">
+      <a href="#download">Download</a>
+      <a href="https://github.com/jbrunemann/nullamp" class="gh">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap">
+    <img class="hero-icon" src="icon.png" width="96" height="96" alt="Nullamp icon">
+    <h1>The music player that knows<br><span class="hl">which track is playing inside your mix.</span></h1>
+    <p class="lede">Nullamp is a fast, retro-inspired player for the music on your disk. It opens files in milliseconds, plays gapless, and shows the current track of a one-hour DJ mix.</p>
+    <p class="cta">
+      <a class="btn primary" href="https://github.com/jbrunemann/nullamp/releases/latest">Download for macOS</a>
+      <a class="btn" href="https://github.com/jbrunemann/nullamp">View on GitHub</a>
+    </p>
+    <p class="fine">Free and open source. Apple silicon. Written in Rust.</p>
+
+    <figure class="shot hero-shot">
+      <img src="screenshots/main.png" width="1095" height="752" alt="Nullamp playing a DJ mix: the LCD shows the track inside the mix, the timeline is split into its tracks, and the setlist panel lists them">
+    </figure>
+  </div>
+</section>
+
+<section class="strip" aria-label="Highlights">
+  <div class="wrap strip-in">
+    <div><b>~40 ms</b><span>to first sound from a warm file</span></div>
+    <div><b>Gapless</b><span>playback, shuffle and repeat</span></div>
+    <div><b>Offline</b><span>no accounts, no streaming</span></div>
+    <div><b>7 formats</b><span>MP3, AAC, ALAC, FLAC, Ogg, WAV, AIFF</span></div>
+  </div>
+</section>
+
+<section class="wrap intro">
+  <h2>Built for people with a folder of music<br>and a pile of long mixes</h2>
+  <p>Most players treat a two-hour mix as one big track. Nullamp reads the track list that comes with it and follows along, so you can see what you are hearing, jump to the next track, and fix the list when it is wrong. It is not a streaming client and not a library manager. It plays your files and never moves or renames them.</p>
+</section>
+
+<section class="wrap feature" id="mixes">
+  <div class="text">
+    <p class="kicker">DJ mixes</p>
+    <h2>A setlist for every mix</h2>
+    <p>A mix is one file with a <em>setlist</em>. Nullamp finds it in a cue sheet beside the file, in ID3 chapters, in a cue sheet inside the tags, or in a plain track list in the comment.</p>
+    <ul class="ticks">
+      <li>The LCD, the timeline and the setlist always show the current track.</li>
+      <li>Double-click an entry to jump to it, or step between tracks with <kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd>.</li>
+      <li>Paste a tracklist from a web page or a video description and the timestamps are parsed.</li>
+      <li>Rough times are drawn dashed and marked <b>≈</b> until you correct them with one click.</li>
+      <li>Setlists follow the audio, not the file name, so they survive renaming and retagging.</li>
+    </ul>
+  </div>
+  <figure class="shot">
+    <img src="screenshots/setlist.png" width="2360" height="1480" alt="The deck, the timeline cut into six tracks, and the setlist of a DJ mix with exact times" loading="lazy">
+  </figure>
+</section>
+
+<section class="wrap demo-wrap" aria-label="Interactive demo">
+  <div class="demo" id="demo">
+    <div class="lcd">
+      <div class="lcd-time" id="demo-time">0:00</div>
+      <div class="lcd-body">
+        <div class="lcd-title" id="demo-title">Night Shift (Extended Mix)</div>
+        <div class="lcd-sub">MIX ▸ DJ Example, Sunday Session</div>
+        <div class="lcd-sub dim">TRACK <span id="demo-n">1</span>/6</div>
+      </div>
+    </div>
+    <div class="timeline" id="demo-tl" role="slider" aria-label="Demo timeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+      <div class="played" id="demo-played"></div>
+      <div class="head" id="demo-head"></div>
+    </div>
+    <p class="demo-hint">Click the timeline. The title follows the track under the playhead, as it does in the app.</p>
+  </div>
+</section>
+
+<section class="wrap feature flip" id="find">
+  <div class="text">
+    <p class="kicker">When there is no tracklist</p>
+    <h2>Find the tracks, then name them</h2>
+    <p>Got a mix of your own with no list anywhere? Nullamp can work out from the audio where the tracks change, then help you name them.</p>
+    <ul class="ticks">
+      <li><b>Find tracks</b> estimates the start of every track offline, in a few seconds. It is most accurate when you know how many tracks there are.</li>
+      <li><b>Set start to playhead</b> corrects a boundary by ear. The time becomes exact.</li>
+      <li><b>Identify with Shazam</b> names a track from five short clips taken away from the blends, and only when the clips agree. Only a fingerprint of each clip leaves your machine, never the audio.</li>
+    </ul>
+  </div>
+  <figure class="shot">
+    <img src="screenshots/identify.png" width="2360" height="1800" alt="A setlist where Shazam has named three tracks, is unsure about a fourth and is asking about a fifth" loading="lazy">
+  </figure>
+</section>
+
+<section class="grid-sec" id="player">
+  <div class="wrap">
+    <p class="kicker center">The player</p>
+    <h2 class="center">Fast, plain, and a little bit retro</h2>
+    <div class="grid">
+      <article>
+        <h3>Instant response</h3>
+        <p>A warm file is audible in about 40 ms. Seeks land in a few milliseconds and opening files never blocks the window.</p>
+      </article>
+      <article>
+        <h3>Gapless, always</h3>
+        <p>Gapless playback, shuffle, repeat, and volume ramps without clicks. It recovers when headphones, Bluetooth or sleep change the output.</p>
+      </article>
+      <article>
+        <h3>Seven-segment LCD</h3>
+        <p>Elapsed or remaining time, a spectrum or oscilloscope aligned to what you actually hear, and a tempo readout for the track inside the mix.</p>
+      </article>
+      <article>
+        <h3>Waveform timeline</h3>
+        <p>See breaks, builds and drops before you get there. For a mix the timeline is cut into one segment per track.</p>
+      </article>
+      <article>
+        <h3>Playlists in tabs</h3>
+        <p>A fast table with artwork, drag to reorder, sorting by key on the Camelot wheel, and columns you can hide and rearrange.</p>
+      </article>
+      <article>
+        <h3>Media keys</h3>
+        <p>Hardware keys and the macOS Now Playing widget work from the background, and show the track inside the mix.</p>
+      </article>
+      <article>
+        <h3>Covers per track</h3>
+        <p>While a mix plays, the artwork follows the track, found once by artist and title and cached. Or switch it off.</p>
+      </article>
+      <article>
+        <h3>Dark and light</h3>
+        <p>Follow the system or pick one. The LCD stays dark either way.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="wrap feature" id="metadata">
+  <div class="text">
+    <p class="kicker">Metadata</p>
+    <h2>Edit tags without the fear</h2>
+    <p>The inspector shows tags, technical details, chapters and artwork for the playing track, and edits up to 500 files at once.</p>
+    <ul class="ticks">
+      <li>Every write goes to a temporary copy first, is read back and verified, and only then swapped in atomically.</li>
+      <li>Chapters, artwork you did not touch and unknown frames survive. The audio is never rewritten.</li>
+      <li>Optional backups, with a one-click restore right after a save.</li>
+      <li>Write a finished setlist into the file as MP3 chapters or as a cue sheet in the comment, so it travels with the mix.</li>
+    </ul>
+  </div>
+  <figure class="shot">
+    <img src="screenshots/inspector.png" width="2360" height="1480" alt="Nine tracks selected and edited together in the inspector, with the fields that differ marked as multiple values" loading="lazy">
+  </figure>
+</section>
+
+<section class="wrap feature flip" id="library">
+  <div class="text">
+    <p class="kicker">DJ software</p>
+    <h2>Read rekordbox USB sticks and your Mixxx library</h2>
+    <p>Add playlists straight from a rekordbox USB stick or from Mixxx, and use what those programs already know about your tracks.</p>
+    <ul class="ticks">
+      <li>Key, BPM, year and the like fill in what a file's own tags lack.</li>
+      <li>rekordbox waveforms in colour on the timeline.</li>
+      <li>Read only. Nullamp never changes another program's library.</li>
+    </ul>
+  </div>
+  <figure class="shot">
+    <img src="screenshots/dj-software.png" width="2360" height="1480" alt="The Add from Mixxx window listing crates, playlists and play history, over a playlist with BPM and Camelot keys" loading="lazy">
+  </figure>
+</section>
+
+<section class="wrap privacy">
+  <div class="card">
+    <h2>Your files, your machine</h2>
+    <p>Nullamp has no account, no telemetry and no streaming. Three things use the network, and each is visible and can be left alone: the update check when you press the button, the cover lookup for the track playing inside a mix (switch it off with one setting), and Identify with Shazam when you ask for it.</p>
+  </div>
+</section>
+
+<section class="wrap shortcuts-sec">
+  <h2 class="center">Keyboard first</h2>
+  <div class="keys">
+    <div><kbd>Space</kbd><span>Play or pause</span></div>
+    <div><kbd>Z</kbd> <kbd>B</kbd><span>Previous, next track</span></div>
+    <div><kbd>←</kbd> <kbd>→</kbd><span>Seek 5 seconds</span></div>
+    <div><kbd>⇧</kbd><kbd>←</kbd> <kbd>→</kbd><span>Previous, next setlist entry</span></div>
+    <div><kbd>⌘L</kbd><span>Setlist</span></div>
+    <div><kbd>⌘I</kbd><span>Inspector</span></div>
+    <div><kbd>⌘J</kbd><span>Scroll to the playing track</span></div>
+    <div><kbd>F1</kbd><span>All shortcuts</span></div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <div class="wrap">
+    <h2>Get Nullamp</h2>
+    <p class="lede">Download the latest build, unzip, and drag <code>Nullamp.app</code> to Applications.</p>
+    <p class="cta">
+      <a class="btn primary" href="https://github.com/jbrunemann/nullamp/releases/latest">Download the latest release</a>
+      <a class="btn" href="https://github.com/jbrunemann/nullamp/blob/main/docs/USER_MANUAL.md">Read the user manual</a>
+    </p>
+    <div class="platforms">
+      <div><b>macOS</b><span>Apple silicon. Supported and tested.<br>Not signed or notarised yet: the first time, right-click the app, choose Open, and confirm.</span></div>
+      <div><b>Linux</b><span>x86_64 tarball built by CI.<br>Not tested yet.</span></div>
+      <div><b>Windows</b><span>x86_64 zip built by CI.<br>Not tested yet, and the exe is unsigned.</span></div>
+    </div>
+    <p class="fine">Prefer to build it yourself? You need Rust 1.88 or newer, then <code>cargo run --release</code>.</p>
+  </div>
+</section>
+
+<section class="wrap faq">
+  <h2 class="center">Good to know</h2>
+  <details>
+    <summary>Is it a library manager?</summary>
+    <p>No. Nullamp never scans, moves or renames your folders on its own. You add files and folders, and it plays them.</p>
+  </details>
+  <details>
+    <summary>Which formats does it play?</summary>
+    <p>MP3, AAC and M4A, ALAC, FLAC, Ogg Vorbis, WAV and AIFF.</p>
+  </details>
+  <details>
+    <summary>Does seeking work in long MP3 mixes?</summary>
+    <p>Constant bit rate files, which covers most DJ mixes, seek exactly. Seeking far into a variable bit rate MP3 without a seek table is approximate.</p>
+  </details>
+  <details>
+    <summary>Does it detect musical keys?</summary>
+    <p>No. It shows keys from your tags, rekordbox or Mixxx, coloured by their place on the Camelot wheel.</p>
+  </details>
+  <details>
+    <summary>What is it written in, and under which licence?</summary>
+    <p>Rust, with an egui interface. The licence is MIT or Apache-2.0, at your option.</p>
+  </details>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div class="brand"><img src="icon.png" width="24" height="24" alt="">Nullamp</div>
+    <nav aria-label="Footer">
+      <a href="https://github.com/jbrunemann/nullamp">GitHub</a>
+      <a href="https://github.com/jbrunemann/nullamp/releases">Releases</a>
+      <a href="https://github.com/jbrunemann/nullamp/blob/main/docs/USER_MANUAL.md">User manual</a>
+      <a href="https://github.com/jbrunemann/nullamp/issues">Report a problem</a>
+    </nav>
+    <p>MIT or Apache-2.0. Not affiliated with Shazam, rekordbox or Mixxx.</p>
+  </div>
+</footer>
+
+<script src="demo.js"></script>
+</body>
+</html>
