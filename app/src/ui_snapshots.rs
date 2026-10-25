@@ -1317,3 +1317,29 @@ fn render_three_sections() {
         h.state_mut().player.stop();
     }
 }
+
+#[test]
+#[ignore]
+fn render_narrow_windows() {
+    // A phone (1080 px wide at 3x) and the narrowest a Retina window can now be.
+    for (width, ppp, name) in [(360.0, 3.0, "phone"), (540.0, 2.0, "narrow")] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(width, 780.0)).with_pixels_per_point(ppp).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 800);
+        save(&mut h, &format!("30-{name}-idle.png"));
+        {
+            let app = h.state_mut();
+            let id = app.player.lists[0].playlist.entries()[5].id;
+            app.player.play_entry(0, id, 0.0);
+        }
+        settle(&mut h, 1500);
+        h.state_mut().player.seek_to(2.6);
+        settle(&mut h, 800);
+        save(&mut h, &format!("31-{name}-mix.png"));
+        h.state_mut().toggle_side(crate::ui::sections::Section::Setlist);
+        settle(&mut h, 300);
+        save(&mut h, &format!("32-{name}-setlist.png"));
+        h.state_mut().player.stop();
+    }
+}

@@ -799,108 +799,131 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
     p.add(egui::Shape::mesh(mesh));
 }
 
+/// Below this width the volume and the tabs move to a second row.
+const TRANSPORT_WRAP_WIDTH: f32 = 560.0;
+
 fn transport(app: &mut App, ui: &mut Ui) {
-    let size = vec2(38.0, 28.0);
+    let wrap = ui.available_width() < TRANSPORT_WRAP_WIDTH;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let status = app.player.status;
-        let run = |app: &mut App, c: Command| app.player.command(c, CommandSource::Ui);
-        if widgets::icon_button(ui, Icon::Prev, size, false, "Previous (Z)").clicked() {
-            run(app, Command::Previous);
-        }
-        if widgets::icon_button(ui, Icon::Play, size, status == Status::Playing, "Play (X)").clicked() {
-            match status {
-                Status::Playing => {}
-                Status::Paused => run(app, Command::Play),
-                _ => {
-                    // Play the selected entry if there is one, else resume / start.
-                    if let Some(id) = app.selection.cursor.filter(|_| status == Status::Stopped && app.selection.ids.len() == 1) {
-                        let list = app.player.viewing;
-                        app.player.play_entry(list, id, 0.0);
-                    } else {
-                        run(app, Command::Play);
-                    }
-                }
-            }
-        }
-        if widgets::icon_button(ui, Icon::Pause, size, status == Status::Paused, "Pause (C / Space)").clicked() {
-            run(app, Command::PlayPause);
-        }
-        if widgets::icon_button(ui, Icon::Stop, size, false, "Stop (V)").clicked() {
-            run(app, Command::Stop);
-        }
-        if widgets::icon_button(ui, Icon::Next, size, false, "Next (B)").clicked() {
-            run(app, Command::Next);
-        }
-        ui.add_space(10.0);
-        let small = vec2(32.0, 28.0);
-        if widgets::icon_button(ui, Icon::Shuffle, small, app.player.nav.shuffle(), "Shuffle (S)").clicked() {
-            let on = !app.player.nav.shuffle();
-            app.player.set_shuffle(on);
-            app.mark_settings_dirty();
-        }
-        let repeat = app.player.nav.repeat;
-        let (icon, tip) = match repeat {
-            RepeatMode::One => (Icon::RepeatOne, "Repeat: current track (R)"),
-            RepeatMode::All => (Icon::Repeat, "Repeat: playlist (R)"),
-            RepeatMode::Off => (Icon::Repeat, "Repeat: off (R)"),
-        };
-        if widgets::icon_button(ui, icon, small, repeat != RepeatMode::Off, tip).clicked() {
-            app.player.set_repeat(repeat.cycle());
-            app.mark_settings_dirty();
-        }
-        ui.add_space(10.0);
-        let muted = app.player.muted;
-        if widgets::icon_button(ui, if muted { Icon::Muted } else { Icon::Speaker }, small, muted, "Mute (M)").clicked() {
-            app.player.command(Command::ToggleMute, CommandSource::Ui);
-            app.mark_settings_dirty();
-        }
-        let mut v = app.player.volume;
-        let volume = widgets::level_slider(ui, &mut v, 120.0, muted);
-        if volume.changed() {
-            app.player.command(Command::SetVolume(v), CommandSource::Ui);
-            app.mark_settings_dirty();
-        }
-
-        let mut tabs_left = f32::INFINITY;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let ins = app.plan.inspector;
-            if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
-                app.toggle_side(Section::Inspector);
-            }
-            // Single tracks hide it; ⌘L still opens it to add a setlist. It also yields to the volume meter when the window is too narrow.
-            let label = match &app.mix.setlist {
-                Some(s) => format!("Setlist · {}", s.entries.len()),
-                None => "Setlist".into(),
-            };
-            let gap = ui.spacing().item_spacing.x;
-            // The Inspector tab is already placed, so only the Playlist tab still needs room besides this one.
-            let needed = widgets::tab_width(ui, &label) + gap + widgets::tab_width(ui, "Playlist");
-            let fits = ui.available_width() >= needed + 10.0;
-            if app.mix.is_mix && fits {
-                let set = app.plan.setlist;
-                if widgets::tab(ui, set, &label).on_hover_text(format!("DJ mix setlist ({})", widgets::cmd_key('L', false))).clicked() {
-                    app.toggle_side(Section::Setlist);
-                }
-            }
-            let playlist = widgets::tab(ui, app.plan.playlist, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false)));
-            tabs_left = playlist.rect.left();
-            if playlist.clicked() {
-                app.toggle_playlist();
-            }
-        });
-
-        // Right of the volume meter, but only while it clears the tabs; the D key still works when the window is too narrow.
-        let dim = Rect::from_min_size(pos2(volume.rect.right() + 10.0, volume.rect.center().y - 11.0), vec2(62.0, 22.0));
-        if dim.right() + 10.0 <= tabs_left {
-            let clicked = ui.scope_builder(egui::UiBuilder::new().max_rect(dim), |ui| {
-                widgets::dim_button(ui, app.settings.dim, "Dim everything but the display and artwork (D)").clicked()
-            });
-            if clicked.inner {
-                app.cycle_dim();
-            }
+        play_buttons(app, ui);
+        if !wrap {
+            ui.add_space(10.0);
+            controls(app, ui, 120.0);
         }
     });
+    if wrap {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            controls(app, ui, 60.0);
+        });
+    }
+}
+
+fn play_buttons(app: &mut App, ui: &mut Ui) {
+    let size = vec2(38.0, 28.0);
+    let status = app.player.status;
+    let run = |app: &mut App, c: Command| app.player.command(c, CommandSource::Ui);
+    if widgets::icon_button(ui, Icon::Prev, size, false, "Previous (Z)").clicked() {
+        run(app, Command::Previous);
+    }
+    if widgets::icon_button(ui, Icon::Play, size, status == Status::Playing, "Play (X)").clicked() {
+        match status {
+            Status::Playing => {}
+            Status::Paused => run(app, Command::Play),
+            _ => {
+                // Play the selected entry if there is one, else resume / start.
+                if let Some(id) = app.selection.cursor.filter(|_| status == Status::Stopped && app.selection.ids.len() == 1) {
+                    let list = app.player.viewing;
+                    app.player.play_entry(list, id, 0.0);
+                } else {
+                    run(app, Command::Play);
+                }
+            }
+        }
+    }
+    if widgets::icon_button(ui, Icon::Pause, size, status == Status::Paused, "Pause (C / Space)").clicked() {
+        run(app, Command::PlayPause);
+    }
+    if widgets::icon_button(ui, Icon::Stop, size, false, "Stop (V)").clicked() {
+        run(app, Command::Stop);
+    }
+    if widgets::icon_button(ui, Icon::Next, size, false, "Next (B)").clicked() {
+        run(app, Command::Next);
+    }
+    ui.add_space(10.0);
+    let small = vec2(32.0, 28.0);
+    if widgets::icon_button(ui, Icon::Shuffle, small, app.player.nav.shuffle(), "Shuffle (S)").clicked() {
+        let on = !app.player.nav.shuffle();
+        app.player.set_shuffle(on);
+        app.mark_settings_dirty();
+    }
+    let repeat = app.player.nav.repeat;
+    let (icon, tip) = match repeat {
+        RepeatMode::One => (Icon::RepeatOne, "Repeat: current track (R)"),
+        RepeatMode::All => (Icon::Repeat, "Repeat: playlist (R)"),
+        RepeatMode::Off => (Icon::Repeat, "Repeat: off (R)"),
+    };
+    if widgets::icon_button(ui, icon, small, repeat != RepeatMode::Off, tip).clicked() {
+        app.player.set_repeat(repeat.cycle());
+        app.mark_settings_dirty();
+    }
+}
+
+/// Mute, volume and the panel tabs.
+fn controls(app: &mut App, ui: &mut Ui, volume_width: f32) {
+    let small = vec2(32.0, 28.0);
+    let muted = app.player.muted;
+    if widgets::icon_button(ui, if muted { Icon::Muted } else { Icon::Speaker }, small, muted, "Mute (M)").clicked() {
+        app.player.command(Command::ToggleMute, CommandSource::Ui);
+        app.mark_settings_dirty();
+    }
+    let mut v = app.player.volume;
+    let volume = widgets::level_slider(ui, &mut v, volume_width, muted);
+    if volume.changed() {
+        app.player.command(Command::SetVolume(v), CommandSource::Ui);
+        app.mark_settings_dirty();
+    }
+
+    let mut tabs_left = f32::INFINITY;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let ins = app.plan.inspector;
+        if widgets::tab(ui, ins, "Inspector").on_hover_text(format!("Metadata inspector ({})", widgets::cmd_key('I', false))).clicked() {
+            app.toggle_side(Section::Inspector);
+        }
+        // Single tracks hide it; ⌘L still opens it to add a setlist. It also yields to the volume meter when the window is too narrow.
+        let label = match &app.mix.setlist {
+            Some(s) => format!("Setlist · {}", s.entries.len()),
+            None => "Setlist".into(),
+        };
+        let gap = ui.spacing().item_spacing.x;
+        // The Inspector tab is already placed, so only the Playlist tab still needs room besides this one.
+        let needed = widgets::tab_width(ui, &label) + gap + widgets::tab_width(ui, "Playlist");
+        let fits = ui.available_width() >= needed + 10.0;
+        if app.mix.is_mix && fits {
+            let set = app.plan.setlist;
+            if widgets::tab(ui, set, &label).on_hover_text(format!("DJ mix setlist ({})", widgets::cmd_key('L', false))).clicked() {
+                app.toggle_side(Section::Setlist);
+            }
+        }
+        let playlist = widgets::tab(ui, app.plan.playlist, "Playlist").on_hover_text(format!("Playlist ({})", widgets::cmd_key('P', false)));
+        tabs_left = playlist.rect.left();
+        if playlist.clicked() {
+            app.toggle_playlist();
+        }
+    });
+
+    // Right of the volume meter, but only while it clears the tabs; the D key still works when the window is too narrow.
+    let dim = Rect::from_min_size(pos2(volume.rect.right() + 10.0, volume.rect.center().y - 11.0), vec2(62.0, 22.0));
+    if dim.right() + 10.0 <= tabs_left {
+        let clicked = ui.scope_builder(egui::UiBuilder::new().max_rect(dim), |ui| {
+            widgets::dim_button(ui, app.settings.dim, "Dim everything but the display and artwork (D)").clicked()
+        });
+        if clicked.inner {
+            app.cycle_dim();
+        }
+    }
 }
 
 #[cfg(test)]

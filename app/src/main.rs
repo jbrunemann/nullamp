@@ -34,7 +34,7 @@ fn main() -> eframe::Result {
             .with_title("Nullamp")
             .with_app_id("nullamp")
             .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([640.0, 420.0])
+            .with_min_inner_size([360.0, 420.0])
             .with_drag_and_drop(true)
             .with_icon(app_icon()),
         persist_window: true,

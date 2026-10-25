@@ -287,7 +287,7 @@ pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color
         painter.galley(pos2(rect.left(), y), galley, color);
         return false;
     }
-    let resp = ui.interact(rect, egui::Id::unique("lcd-marquee"), Sense::click());
+    let resp = ui.interact(rect, egui::Id::unique(("lcd-marquee", rect.top().to_bits())), Sense::click());
     let resp = resp.on_hover_text(if paused { "Click: scroll the text" } else { "Click: stop scrolling" });
     if paused {
         painter.galley(pos2(rect.left(), y), galley, color);
