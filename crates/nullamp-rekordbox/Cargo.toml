@@ -8,7 +8,10 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 unicode-normalization = "0.1"
+
 # SQLCipher, statically built, so reading the desktop library's encrypted master.db needs no system library.
+# It is C, so Android builds leave it out and cannot open the desktop library.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [dev-dependencies]

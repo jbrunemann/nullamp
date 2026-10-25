@@ -8,12 +8,18 @@
 //! extract or store it ourselves). Opening while rekordbox runs is fine: a read-only connection sees
 //! a consistent snapshot through the WAL and never writes.
 
+#[cfg(not(target_os = "android"))]
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_os = "android"))]
+use std::path::PathBuf;
 
+#[cfg(not(target_os = "android"))]
 use rusqlite::{Connection, OpenFlags};
 
-use crate::{Color, Error, Track};
+#[cfg(not(target_os = "android"))]
+use crate::Color;
+use crate::{Error, Track};
 
 /// A playlist (or folder) of the desktop library. `tracks` are indices into [`Collection::tracks`];
 /// a folder has none of its own. `parent` is `None` for a top-level entry (`ParentID` "root").
@@ -33,6 +39,7 @@ pub struct Collection {
     pub playlists: Vec<Playlist>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Error {
         Error::Sql(e.to_string())
@@ -41,6 +48,7 @@ impl From<rusqlite::Error> for Error {
 
 /// The analysis files a desktop track points at are named relative to the `share` folder
 /// (`/PIONEER/USBANLZ/...`); on a stick the same path is relative to the stick's root.
+#[cfg(not(target_os = "android"))]
 fn under_share(share: &Path, path: &str) -> Option<PathBuf> {
     crate::under(share, path)
 }
@@ -49,6 +57,7 @@ fn under_share(share: &Path, path: &str) -> Option<PathBuf> {
 /// effect sounds (MERGE FX, GROOVE CIRCUIT, OSC_SAMPLER) in a `Sampler` folder, in its own music
 /// folder or under `PioneerDJ`, and its demo tracks in `PioneerDJ/Demo Tracks`. None of it is the
 /// user's music, so the library leaves it out.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn is_bundled_file(path: &str) -> bool {
     let mut parts: Vec<&str> = path.split(['/', '\\']).collect();
     parts.pop();
@@ -56,6 +65,7 @@ pub(crate) fn is_bundled_file(path: &str) -> bool {
         || parts.windows(2).any(|w| w[0].eq_ignore_ascii_case("PioneerDJ") && w[1].eq_ignore_ascii_case("Demo Tracks"))
 }
 
+#[cfg(not(target_os = "android"))]
 impl Collection {
     /// Reads the library in `master_db`, decrypting with `key` (64 hex characters). `share` is the
     /// folder that holds the analysis files, normally the `share` directory beside the database.
@@ -172,5 +182,13 @@ impl Collection {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(playlists)
+    }
+}
+
+/// The desktop library is SQLCipher, a C library, which the Android build leaves out.
+#[cfg(target_os = "android")]
+impl Collection {
+    pub fn open(_master_db: &Path, _key: &str, _share: &Path) -> Result<Collection, Error> {
+        Err(Error::Sql("not available on Android".into()))
     }
 }

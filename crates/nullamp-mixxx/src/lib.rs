@@ -6,10 +6,13 @@
 
 mod analysis;
 
+#[cfg(not(target_os = "android"))]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_os = "android"))]
 use rusqlite::types::ValueRef;
+#[cfg(not(target_os = "android"))]
 use rusqlite::{Connection, OpenFlags, Row};
 
 pub use analysis::Waveform;
@@ -24,6 +27,7 @@ pub enum Error {
     Format(&'static str),
 }
 
+#[cfg(not(target_os = "android"))]
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Error {
         Error::Sql(e.to_string())
@@ -98,6 +102,7 @@ pub struct Library {
 
 /// Mixxx declares many columns as text that hold numbers (year, track number) and the other way
 /// round, so a value is read as whatever it is stored as.
+#[cfg(not(target_os = "android"))]
 fn text(r: &Row, i: usize) -> rusqlite::Result<String> {
     Ok(match r.get_ref(i)? {
         ValueRef::Text(t) => String::from_utf8_lossy(t).trim().to_owned(),
@@ -107,6 +112,7 @@ fn text(r: &Row, i: usize) -> rusqlite::Result<String> {
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn number(r: &Row, i: usize) -> rusqlite::Result<f64> {
     Ok(match r.get_ref(i)? {
         ValueRef::Integer(n) => n as f64,
@@ -117,16 +123,19 @@ fn number(r: &Row, i: usize) -> rusqlite::Result<f64> {
 }
 
 /// The leading number of a value like "3" or "3/12" (Mixxx keeps the track number as typed).
+#[cfg(not(target_os = "android"))]
 fn leading_number(s: &str) -> u32 {
     s.split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse().ok()).unwrap_or(0)
 }
 
 /// The year at the start of a date value ("2018", "2018-05-01").
+#[cfg(not(target_os = "android"))]
 fn year(s: &str) -> Option<u16> {
     let y = s.get(..4)?;
     y.bytes().all(|b| b.is_ascii_digit()).then(|| y.parse().ok()).flatten().filter(|&y| y > 0)
 }
 
+#[cfg(not(target_os = "android"))]
 impl Library {
     /// Reads the library in `db`.
     pub fn open(db: &Path) -> Result<Library, Error> {
@@ -189,6 +198,7 @@ impl Library {
 }
 
 /// The colour labels of the tracks that have one.
+#[cfg(not(target_os = "android"))]
 fn read_colors(conn: &Connection, index_of: &HashMap<i64, usize>, tracks: &mut [Track]) {
     let Ok(mut stmt) = conn.prepare("SELECT id, color FROM library WHERE color IS NOT NULL") else { return };
     let Ok(mut rows) = stmt.query([]) else { return };
@@ -203,6 +213,7 @@ fn read_colors(conn: &Connection, index_of: &HashMap<i64, usize>, tracks: &mut [
 
 /// Where the analysed waveform of each track is: `track_analysis` lists them by type, 1 for the
 /// detail and 2 for the overview, and the data lives in a file named by the row's id.
+#[cfg(not(target_os = "android"))]
 fn read_analysis(conn: &Connection, index_of: &HashMap<i64, usize>, folder: &Path, tracks: &mut [Track]) {
     let Ok(mut stmt) = conn.prepare("SELECT track_id, id, CAST(type AS INTEGER) FROM track_analysis WHERE CAST(type AS INTEGER) IN (1, 2) ORDER BY id") else { return };
     let Ok(mut rows) = stmt.query([]) else { return };
@@ -221,6 +232,7 @@ fn read_analysis(conn: &Connection, index_of: &HashMap<i64, usize>, folder: &Pat
 }
 
 /// The entries of every list in `table` as (list id, track id) in order, grouped by list.
+#[cfg(not(target_os = "android"))]
 fn members(conn: &Connection, sql: &str, index_of: &HashMap<i64, usize>) -> Result<HashMap<i64, Vec<usize>>, Error> {
     let mut out: HashMap<i64, Vec<usize>> = HashMap::new();
     let mut stmt = conn.prepare(sql)?;
@@ -234,6 +246,7 @@ fn members(conn: &Connection, sql: &str, index_of: &HashMap<i64, usize>) -> Resu
     Ok(out)
 }
 
+#[cfg(not(target_os = "android"))]
 fn read_lists(conn: &Connection, index_of: &HashMap<i64, usize>, lists: &mut Vec<List>) -> Result<(), Error> {
     // A crate with `show` off is one Mixxx keeps out of its sidebar.
     let mut in_crate = members(conn, "SELECT crate_id, track_id FROM crate_tracks ORDER BY rowid", index_of)?;
@@ -258,3 +271,11 @@ fn read_lists(conn: &Connection, index_of: &HashMap<i64, usize>, lists: &mut Vec
 
 #[cfg(test)]
 mod tests;
+
+/// Mixxx's database is SQLite, a C library, which the Android build leaves out.
+#[cfg(target_os = "android")]
+impl Library {
+    pub fn open(_db: &Path) -> Result<Library, Error> {
+        Err(Error::Sql("not available on Android".into()))
+    }
+}

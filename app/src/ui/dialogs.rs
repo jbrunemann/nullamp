@@ -130,6 +130,71 @@ impl Dialogs {
     }
 }
 
+/// Android has no file dialog yet. This stands in for `rfd` there: it picks nothing, except that "Add folder"
+/// yields the music folders: the app's own `Music` folder (`adb push` files into it) and the shared one.
+#[cfg(target_os = "android")]
+mod rfd {
+    use std::path::{Path, PathBuf};
+
+    pub struct FileHandle(PathBuf);
+
+    impl FileHandle {
+        pub fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    pub struct AsyncFileDialog;
+
+    impl AsyncFileDialog {
+        pub fn new() -> Self {
+            AsyncFileDialog
+        }
+
+        pub fn set_title(self, _: impl Into<String>) -> Self {
+            self
+        }
+
+        pub fn add_filter(self, _: impl Into<String>, _: &[&str]) -> Self {
+            self
+        }
+
+        pub fn set_directory(self, _: impl AsRef<Path>) -> Self {
+            self
+        }
+
+        pub fn set_file_name(self, _: impl Into<String>) -> Self {
+            self
+        }
+
+        pub async fn pick_folders(self) -> Option<Vec<FileHandle>> {
+            let own = std::env::var_os("NULLAMP_MUSIC").map(PathBuf::from);
+            let dirs: Vec<FileHandle> = own.into_iter().chain([PathBuf::from("/storage/emulated/0/Music")]).filter(|d| {
+                let found = d.is_dir();
+                log::info!("music folder {}: {}", d.display(), if found { "found" } else { "missing or unreadable" });
+                found
+            }).map(FileHandle).collect();
+            (!dirs.is_empty()).then_some(dirs)
+        }
+
+        pub async fn pick_folder(self) -> Option<FileHandle> {
+            None
+        }
+
+        pub async fn pick_files(self) -> Option<Vec<FileHandle>> {
+            None
+        }
+
+        pub async fn pick_file(self) -> Option<FileHandle> {
+            None
+        }
+
+        pub async fn save_file(self) -> Option<FileHandle> {
+            None
+        }
+    }
+}
+
 /// Run an async rfd dialog on a helper thread so the UI loop (and with it media keys
 /// and track changes) keeps running while the dialog is open.
 fn spawn<F, Fut>(app: &App, make: F)

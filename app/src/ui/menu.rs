@@ -1,6 +1,7 @@
 //! The native macOS menu bar: About and a shortcut to the config file.
 
 /// What a menu click asks the app to do.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     About,

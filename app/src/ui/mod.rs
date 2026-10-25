@@ -33,6 +33,8 @@ use crate::workers::{Job, JobResult, Workers};
 /// How often the resume position is written while a track plays.
 const RESUME_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_HEIGHT: f32 = 24.0;
+/// The width "media keys unavailable" needs at the right end of the status bar.
+const MEDIA_KEYS_NOTE_WIDTH: f32 = 150.0;
 const DEFAULT_HEIGHT: f32 = 720.0;
 /// Keep in step with the minimum window size in `main.rs`.
 const MIN_WIDTH: f32 = 360.0;
@@ -350,6 +352,7 @@ impl App {
 
     /// Put the app's own menu bar in place of the default one. Main thread only, so it is
     /// not part of `new` (tests build the app on other threads).
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn install_native_menu(&mut self) {
         #[cfg(target_os = "macos")]
         {
@@ -357,6 +360,7 @@ impl App {
         }
     }
 
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     fn on_menu_action(&mut self, action: menu::MenuAction) {
         match action {
             menu::MenuAction::About => {
@@ -369,6 +373,7 @@ impl App {
 
     /// Open `settings.json` in the default text editor, writing the current settings first
     /// if the file does not exist yet.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     fn open_config_file(&mut self) {
         let path = self.store.paths.config.join("settings.json");
         if !path.exists() {
@@ -1387,7 +1392,9 @@ impl App {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {
+                // Android has no media service to reach, and a narrow window has no room beside the other texts.
+                let room = ui.available_width() >= MEDIA_KEYS_NOTE_WIDTH;
+                if room && !cfg!(target_os = "android") && self.sysmedia.as_ref().is_some_and(|s| !s.is_available()) {
                     ui.label(egui::RichText::new("media keys unavailable").size(11.0).color(theme::warn()))
                         .on_hover_text("The system media service could not be reached; in-app shortcuts still work.");
                 }
@@ -1417,14 +1424,16 @@ impl eframe::App for App {
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);
 
+        // Where system bars cover the window (Android), the panels at the edges pad themselves clear of them.
+        let (bars_top, bars_bottom) = crate::system_bar_insets(ctx.pixels_per_point());
         let deck = egui::Panel::top("deck")
-            .frame(egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)))
+            .frame(egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin { left: 10, right: 10, top: 8 + bars_top as i8, bottom: 8 }))
             .resizable(false)
             .show(ui, |ui| theme::with_dark(ui, |ui| deck::show(self, ui)));
         self.fit_window(&ctx, deck.response.rect.height());
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 3)))
-            .exact_size(STATUS_HEIGHT)
+            .frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin { left: 10, right: 10, top: 3, bottom: 3 + bars_bottom as i8 }))
+            .exact_size(STATUS_HEIGHT + bars_bottom)
             .resizable(false)
             .show(ui, |ui| self.status_bar(ui));
         // The setlist and the inspector sit right of the playlist. Without the playlist the first of them

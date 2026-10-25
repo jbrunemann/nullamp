@@ -9,11 +9,16 @@
 //! Media keys reach the application through these system services, so they work
 //! while the window is unfocused and coexist with other players the way the OS
 //! arbitrates them (the most recent player owns the keys).
+//!
+//! Android has no backend yet: [`SystemMedia`] there does nothing, since the lock screen and headset buttons
+//! need a Java `MediaSession`.
 
 use std::path::PathBuf;
+#[cfg(not(target_os = "android"))]
 use std::time::Duration;
 
 use nullamp_core::command::Command;
+#[cfg(not(target_os = "android"))]
 use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig, SeekDirection};
 
 /// What the OS asked the application to do.
@@ -43,14 +48,37 @@ pub enum PlaybackState {
 }
 
 /// Seek step for "seek forward/backward" requests that carry no amount.
+#[cfg(not(target_os = "android"))]
 const DEFAULT_SEEK: f64 = 10.0;
 
+#[cfg(not(target_os = "android"))]
 pub struct SystemMedia {
     controls: Option<MediaControls>,
     last_metadata: Option<NowPlaying>,
     last_state: Option<PlaybackState>,
 }
 
+#[cfg(target_os = "android")]
+pub struct SystemMedia;
+
+#[cfg(target_os = "android")]
+impl SystemMedia {
+    pub fn new(_handler: impl Fn(SystemEvent) + Send + 'static, _hwnd: Option<*mut std::ffi::c_void>) -> Self {
+        SystemMedia
+    }
+
+    pub fn is_available(&self) -> bool {
+        false
+    }
+
+    pub fn set_metadata(&mut self, _now: &NowPlaying) {}
+
+    pub fn clear_metadata(&mut self) {}
+
+    pub fn set_playback(&mut self, _state: PlaybackState) {}
+}
+
+#[cfg(not(target_os = "android"))]
 impl SystemMedia {
     /// Connect to the OS. On failure (no D-Bus session, missing window handle) the
     /// integration is disabled and a warning logged; the player works regardless.
@@ -131,6 +159,7 @@ impl SystemMedia {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn map_event(ev: MediaControlEvent) -> Option<SystemEvent> {
     let cmd = |c| Some(SystemEvent::Command(c));
     match ev {
@@ -150,6 +179,7 @@ fn map_event(ev: MediaControlEvent) -> Option<SystemEvent> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn signed(dir: SeekDirection, secs: f64) -> f64 {
     match dir {
         SeekDirection::Forward => secs,
@@ -157,6 +187,7 @@ fn signed(dir: SeekDirection, secs: f64) -> f64 {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn file_url(path: &std::path::Path) -> Option<String> {
     let abs = std::fs::canonicalize(path).ok()?;
     let s = abs.to_str()?;

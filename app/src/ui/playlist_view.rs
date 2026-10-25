@@ -756,7 +756,9 @@ fn table(app: &mut App, ui: &mut Ui, order: &[Col]) {
         }
         for k in range {
             let i = entry_at(k);
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click_and_drag());
+            // On a touch screen a drag scrolls the list, so rows cannot also be dragged to reorder them.
+            let sense = if cfg!(target_os = "android") { Sense::click() } else { Sense::click_and_drag() };
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), sense);
             rows.push((i, rect));
             // A context menu action can remove entries mid-loop; stop at the new end.
             let Some(entry) = app.player.viewed().entries().get(i).cloned() else { break };

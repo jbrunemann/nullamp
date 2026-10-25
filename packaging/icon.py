@@ -57,12 +57,15 @@ def cov(d, px):
 # (the plate spans about 80% of the canvas, the rest is room for the shadow) makes Nullamp look
 # smaller than its neighbours there. The full variant drops the shadow and fills about 90%.
 FULL_SCALE = 412 / 460
+# Android's adaptive icons put the launcher's mask over a 108 dp layer and show the middle 72 dp, so the plate
+# takes about 62% of the canvas to stay inside a circular mask too.
+ADAPTIVE_SCALE = 1.3
 
 
-def shade(x, y, px, full=False):
+def shade(x, y, px, full=False, scale=FULL_SCALE):
     out = (0.0, 0.0, 0.0, 0.0)
     if full:
-        x, y, px = 512 + (x - 512) * FULL_SCALE, 512 + (y - 512) * FULL_SCALE, px * FULL_SCALE
+        x, y, px = 512 + (x - 512) * scale, 512 + (y - 512) * scale, px * scale
     body = squircle(x, y, 412)
 
     # Soft shadow under the plate.
@@ -122,14 +125,14 @@ def shade(x, y, px, full=False):
     return out
 
 
-def render(size, full=False):
+def render(size, full=False, scale=FULL_SCALE):
     px = 1024 / size
     rows = bytearray()
     for j in range(size):
         rows.append(0)
         y = (j + 0.5) * px
         for i in range(size):
-            r, g, b, a = shade((i + 0.5) * px, y, px, full)
+            r, g, b, a = shade((i + 0.5) * px, y, px, full, scale)
             rows += bytes((int(r + 0.5), int(g + 0.5), int(b + 0.5), int(a * 255 + 0.5)))
 
     def chunk(t, d):
@@ -138,9 +141,11 @@ def render(size, full=False):
 
 
 if __name__ == "__main__":
-    # Usage: icon.py [OUT] [SIZE] [--full]   (--full for Linux and Windows, see FULL_SCALE)
-    full = "--full" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--full"]
+    # Usage: icon.py [OUT] [SIZE] [--full | --adaptive]   (--full for Linux and Windows, see FULL_SCALE;
+    # --adaptive for the foreground layer of an Android adaptive icon, see ADAPTIVE_SCALE)
+    adaptive = "--adaptive" in sys.argv
+    full = "--full" in sys.argv or adaptive
+    args = [a for a in sys.argv[1:] if a not in ("--full", "--adaptive")]
     out = args[0] if args else "icon-1024.png"
     size = int(args[1]) if len(args) > 1 else 1024
-    open(out, "wb").write(render(size, full))
+    open(out, "wb").write(render(size, full, ADAPTIVE_SCALE if adaptive else FULL_SCALE))

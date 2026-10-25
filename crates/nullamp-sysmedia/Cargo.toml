@@ -12,5 +12,5 @@ log.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))'.dependencies]
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 
-[target.'cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))'.dependencies]
+[target.'cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))'.dependencies]
 souvlaki = "0.8.3"
