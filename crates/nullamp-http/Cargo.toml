@@ -1,0 +1,15 @@
+[package]
+name = "nullamp-http"
+description = "The web requests of the online features: curl where there is one, ureq (rustls) on Android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Asks in-process with ureq instead of running curl. Android has no curl, so the app turns this on there; off it
+# the feature only lets the tests and `examples/get.rs` try that path on a computer.
+rustls = ["dep:ureq"]
+
+[dependencies]
+thiserror.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }

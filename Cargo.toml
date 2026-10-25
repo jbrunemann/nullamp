@@ -15,6 +15,7 @@ nullamp-core = { path = "crates/nullamp-core" }
 nullamp-audio = { path = "crates/nullamp-audio" }
 nullamp-meta = { path = "crates/nullamp-meta" }
 nullamp-sysmedia = { path = "crates/nullamp-sysmedia" }
+nullamp-http = { path = "crates/nullamp-http" }
 nullamp-update = { path = "crates/nullamp-update" }
 nullamp-artwork = { path = "crates/nullamp-artwork" }
 nullamp-shazam = { path = "crates/nullamp-shazam" }

@@ -9,15 +9,13 @@
 //! - A file of its own, on any server: `{"version": "1.5.0", "url": "https://example.org/download"}`.
 //!   `url` is optional.
 //!
-//! The page is fetched with `curl`, which macOS ships and most Linux
-//! installs have, so this crate needs no TLS stack. Nothing here contacts
+//! The page is fetched by `nullamp-http` (`curl`, which macOS ships and most Linux
+//! installs have, or ureq on Android), so this crate needs no TLS stack. Nothing here contacts
 //! anyone by itself: the program calls [`check`] when the user asks to.
 //! [`check`] blocks for up to [`TIMEOUT_SECS`] seconds, so call it from a
 //! worker thread.
 
 use std::fmt;
-use std::io::Read;
-use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
@@ -105,46 +103,20 @@ fn is_web_address(text: &str) -> bool {
     (lower.starts_with("https://") || lower.starts_with("http://")) && !text.contains(char::is_whitespace)
 }
 
-/// The body at `url`, by running curl. Redirects are followed, but only to
-/// `https`.
+/// The body at `url`. Redirects are followed, but only to `https`.
 fn fetch(url: &str, program: &str) -> Result<String, Error> {
-    let mut child = Command::new("curl")
-        .args(["--silent", "--show-error", "--fail", "--location"])
-        .args(["--proto", "=http,https", "--proto-redir", "=https"])
-        .args(["--connect-timeout", "8", "--max-time", &TIMEOUT_SECS.to_string()])
-        .args(["--header", "Accept: application/vnd.github+json", "--user-agent", program, "--url", url])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { Error::NoCurl } else { Error::Fetch(e.to_string()) })?;
-    let mut body = Vec::new();
-    let read = child.stdout.take().map(|out| out.take(MAX_BYTES + 1).read_to_end(&mut body));
-    if body.len() as u64 > MAX_BYTES {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(Error::Reply("The answer is too long".to_owned()));
-    }
-    let mut message = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut message);
-    }
-    let status = child.wait().map_err(|e| Error::Fetch(e.to_string()))?;
-    if !status.success() {
-        return Err(Error::Fetch(curl_message(&message)));
-    }
-    if let Some(Err(e)) = read {
-        return Err(Error::Fetch(e.to_string()));
-    }
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    let request = nullamp_http::Request::get(url, program).allow_http().headers(&[("Accept", "application/vnd.github+json")]).max_bytes(MAX_BYTES).timeout_secs(TIMEOUT_SECS);
+    Ok(nullamp_http::send(&request)?.ok()?.text())
 }
 
-/// curl's last line without its `curl: (22) ` prefix.
-fn curl_message(stderr: &str) -> String {
-    let line = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("The request failed").trim();
-    let line = line.strip_prefix("curl:").map_or(line, str::trim_start);
-    let line = line.strip_prefix('(').and_then(|rest| rest.split_once(')')).map_or(line, |(_, rest)| rest.trim_start());
-    line.to_owned()
+impl From<nullamp_http::Error> for Error {
+    fn from(e: nullamp_http::Error) -> Self {
+        match e {
+            nullamp_http::Error::NoCurl => Error::NoCurl,
+            nullamp_http::Error::Fetch(message) => Error::Fetch(message),
+            nullamp_http::Error::TooLong => Error::Reply(e.to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -205,10 +177,4 @@ mod tests {
         assert!(matches!(&error, Error::Fetch(m) if m.contains("404")), "{error:?}");
     }
 
-    #[test]
-    fn curl_messages_lose_their_prefix() {
-        assert_eq!(curl_message("curl: (22) The requested URL returned error: 403\n"), "The requested URL returned error: 403");
-        assert_eq!(curl_message("curl: (6) Could not resolve host: example.org"), "Could not resolve host: example.org");
-        assert_eq!(curl_message(""), "The request failed");
-    }
 }

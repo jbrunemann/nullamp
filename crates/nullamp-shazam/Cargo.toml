@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+nullamp-http.workspace = true
 base64 = "0.22"
 realfft = "3.5"
 serde_json.workspace = true
