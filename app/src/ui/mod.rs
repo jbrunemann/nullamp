@@ -1265,6 +1265,11 @@ impl App {
         }
         let widths = Widths { total: width, playlist_min: self.pl_view.toolbar_min, side_min: SIDE_MIN_WIDTH };
         self.plan = sections::plan(self.wanted(), widths, self.recent);
+        // A phone is never just the player: closing the last section brings the playlist back.
+        if cfg!(target_os = "android") && !self.plan.any() {
+            self.show_playlist();
+            self.plan = sections::plan(self.wanted(), widths, self.recent);
+        }
     }
 
     /// With nothing below the deck showing, the window is just the

@@ -648,10 +648,12 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
         return;
     };
     let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
-    let inner = deck.size() - egui::vec2(20.0, 16.0);
+    // Below the system bars, as the deck itself is.
+    let (bars_top, _) = crate::system_bar_insets(ctx.pixels_per_point());
+    let inner = deck.size() - egui::vec2(20.0, 16.0 + bars_top);
     egui::Area::new(egui::Id::NULL.with("deck-overlay")).order(egui::Order::Foreground).fixed_pos(deck.min).show(ctx, |ui| {
         theme::with_dark(ui, |ui| {
-            egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+            egui::Frame::new().fill(theme::deck_bg()).inner_margin(egui::Margin { left: 10, right: 10, top: 8 + bars_top as i8, bottom: 8 }).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
                 if ui.available_width() < SETTINGS_TABS_WIDTH {
@@ -716,7 +718,7 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
     ui.label(RichText::new("Appearance").small().weak());
     ui.vertical(|ui| {
         ui.set_width(260.0);
-        let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, "System (follow macOS)")];
+        let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, if cfg!(target_os = "macos") { "System (follow macOS)" } else { "System" })];
         for (appearance, label) in rows {
             if super::deck::choice_row(ui, label, true, current == appearance, |p, rect, color| widgets::paint_appearance_icon(p, rect, appearance, color)) && current != appearance {
                 app.settings.appearance = appearance.setting().into();

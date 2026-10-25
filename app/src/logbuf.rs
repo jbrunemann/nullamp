@@ -12,7 +12,8 @@ const KEEP: usize = 300;
 static TAIL: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static START: OnceLock<Instant> = OnceLock::new();
 
-struct Tee(env_logger::Logger);
+/// The `env_logger` that filters and prints, the tail the About window shows, and on Android logcat.
+struct Tee(env_logger::Logger, #[cfg(target_os = "android")] android_logger::AndroidLogger);
 
 impl Log for Tee {
     fn enabled(&self, metadata: &Metadata) -> bool {
@@ -24,6 +25,8 @@ impl Log for Tee {
             return;
         }
         self.0.log(record);
+        #[cfg(target_os = "android")]
+        self.1.log(record);
         let secs = START.get_or_init(Instant::now).elapsed().as_secs_f32();
         let line = format!("{secs:8.2}s {:<5} {}: {}", record.level(), record.target(), record.args());
         if let Ok(mut tail) = TAIL.lock() {
@@ -44,7 +47,12 @@ pub fn init(default_filter: &str) {
     START.get_or_init(Instant::now);
     let inner = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter)).build();
     log::set_max_level(inner.filter());
-    let _ = log::set_boxed_logger(Box::new(Tee(inner)));
+    // The filter above already decided; logcat takes whatever reaches it.
+    #[cfg(target_os = "android")]
+    let tee = Tee(inner, android_logger::AndroidLogger::new(android_logger::Config::default().with_max_level(log::LevelFilter::Trace).with_tag("nullamp")));
+    #[cfg(not(target_os = "android"))]
+    let tee = Tee(inner);
+    let _ = log::set_boxed_logger(Box::new(tee));
 }
 
 /// The most recent lines, oldest first.

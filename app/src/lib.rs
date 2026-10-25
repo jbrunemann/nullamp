@@ -4,8 +4,6 @@
 
 mod cache;
 mod entry_art;
-// Android logs to logcat instead; the About window still shows the (empty) tail.
-#[cfg_attr(target_os = "android", allow(dead_code))]
 mod logbuf;
 mod mixxx;
 mod paths;
@@ -22,12 +20,14 @@ mod workers;
 #[cfg(test)]
 mod ui_snapshots;
 
+// lofty warns on every UTF-8 frame it rewrites as UTF-16 when saving ID3v2.3; the output is correct.
+// symphonia warns about a missing bit reservoir and resync junk after coarse MP3 seeks; a frame is dropped, nothing audible.
+const LOG_FILTER: &str = "warn,lofty::util::text=error,lofty::mpeg::properties=error,symphonia_bundle_mp3::layer3=error,symphonia_bundle_mp3::demuxer=error,nullamp=info,nullamp_audio=info";
+
 /// The desktop program.
 #[cfg(not(target_os = "android"))]
 pub fn run() -> eframe::Result {
-    // lofty warns on every UTF-8 frame it rewrites as UTF-16 when saving ID3v2.3; the output is correct.
-    // symphonia warns about a missing bit reservoir and resync junk after coarse MP3 seeks; a frame is dropped, nothing audible.
-    logbuf::init("warn,lofty::util::text=error,lofty::mpeg::properties=error,symphonia_bundle_mp3::layer3=error,symphonia_bundle_mp3::demuxer=error,nullamp=info,nullamp_audio=info");
+    logbuf::init(LOG_FILTER);
     let paths = paths::AppPaths::detect();
     log::info!("config: {}", paths.config.display());
     let store = store::Store::new(paths.clone());
@@ -120,7 +120,7 @@ pub(crate) fn system_bar_insets(_ppp: f32) -> (f32, f32) {
 /// There is no file dialog yet, so "Add folder" adds the music folders that `rfd` below names instead.
 #[cfg(target_os = "android")]
 pub fn run_android(android_app: android_activity::AndroidApp) {
-    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("nullamp"));
+    logbuf::init(LOG_FILTER);
     // SAFETY: nothing else is running yet, so nothing reads the environment concurrently.
     unsafe {
         if let Some(home) = android_app.internal_data_path() {

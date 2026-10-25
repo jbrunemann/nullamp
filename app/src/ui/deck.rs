@@ -49,11 +49,34 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     transport(app, ui);
 }
 
-/// Right-click anywhere on the display for the settings pages. The clock and the output label
-/// sit on top of the display and take their own clicks, so the click is read from the pointer
+/// How long a finger rests on the display to open the settings pages, and how far it may drift meanwhile.
+const LONG_PRESS_SECS: f64 = 0.6;
+const LONG_PRESS_DRIFT: f32 = 12.0;
+
+/// Right-click anywhere on the display for the settings pages, or press and hold on a touch screen. The clock and
+/// the output label sit on top of the display and take their own clicks, so both are read from the pointer
 /// instead of from the display's response.
 fn settings_menu(app: &mut App, ui: &mut Ui, lcd: &egui::Response) {
-    let opened = ui.input(|i| i.pointer.secondary_clicked() && i.pointer.interact_pos().is_some_and(|p| lcd.rect.contains(p)));
+    let secondary = ui.input(|i| i.pointer.secondary_clicked() && i.pointer.interact_pos().is_some_and(|p| lcd.rect.contains(p)));
+    // egui's own long press never fired on the phone, so it is timed here. The frames while resting are asked for,
+    // since an idle player repaints only twice a second.
+    let resting = ui.input(|i| {
+        let origin = i.pointer.press_origin().filter(|o| lcd.rect.contains(*o));
+        let still = i.pointer.latest_pos().zip(origin).is_some_and(|(p, o)| p.distance(o) < LONG_PRESS_DRIFT);
+        i.any_touches() && i.pointer.primary_down() && still
+    });
+    let start = ui.input(|i| i.pointer.press_start_time());
+    let mut long_press = false;
+    if resting {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        let id = egui::Id::unique("lcd-long-press");
+        let done: Option<f64> = ui.data(|d| d.get_temp(id));
+        if start.is_some_and(|t| ui.input(|i| i.time) - t > LONG_PRESS_SECS) && done != start {
+            ui.data_mut(|d| d.insert_temp(id, start));
+            long_press = true;
+        }
+    }
+    let opened = secondary || long_press;
     egui::Popup::menu(lcd).open_memory(opened.then_some(egui::SetOpenCommand::Bool(true))).at_pointer_fixed().show(|ui| {
         use super::dialogs::SettingsTab;
         ui.label(RichText::new("Settings").strong().color(theme::text_dim()));
