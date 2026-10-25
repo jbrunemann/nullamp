@@ -35,7 +35,7 @@ const RESUME_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 const STATUS_HEIGHT: f32 = 24.0;
 const DEFAULT_HEIGHT: f32 = 720.0;
 /// Keep in step with the minimum window size in `main.rs`.
-const MIN_WIDTH: f32 = 640.0;
+const MIN_WIDTH: f32 = 360.0;
 const MIN_FULL_HEIGHT: f32 = 420.0;
 /// The narrowest a setlist or inspector column can be dragged.
 const SIDE_MIN_WIDTH: f32 = 300.0;
@@ -221,6 +221,8 @@ pub struct App {
     /// first frame) and the height to return to when it grows back.
     compact: Option<bool>,
     full_height: f32,
+    /// The window height last asked for while compact: a narrow window wraps the deck onto more rows.
+    compact_height: f32,
     pub message: Option<Message>,
     /// The bulk read of rekordbox data that is running, if any.
     dj_data_read: Option<ReadProgress>,
@@ -305,6 +307,7 @@ impl App {
             deck_bright: [egui::Rect::NOTHING; 2],
             compact: None,
             full_height: DEFAULT_HEIGHT,
+            compact_height: 0.0,
             settings,
             store,
             selection: Selection::default(),
@@ -1264,7 +1267,8 @@ impl App {
     fn fit_window(&mut self, ctx: &egui::Context, deck_height: f32) {
         let compact = !self.plan.any();
         let before = self.compact.replace(compact);
-        if before == Some(compact) {
+        let height = (deck_height + STATUS_HEIGHT).ceil();
+        if before == Some(compact) && (!compact || height == self.compact_height) {
             return;
         }
         let size = ctx.content_rect().size();
@@ -1272,7 +1276,7 @@ impl App {
             if before == Some(false) {
                 self.full_height = size.y;
             }
-            let height = (deck_height + STATUS_HEIGHT).ceil();
+            self.compact_height = height;
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(vec2(MIN_WIDTH, height)));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(size.x.max(MIN_WIDTH), height)));
         } else {

@@ -185,10 +185,9 @@ fn row_height(order: &[Col]) -> f32 {
     if order.contains(&Col::Art) { ROW_HEIGHT_ART } else { theme::ROW_HEIGHT }
 }
 
-/// Cell rects for the visible columns, left to right. Number, artwork, year, format, bitrate, BPM, key and time are
-/// fixed; title, artist and album share the rest by weight.
-fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
-    let fixed = |c: Col| match c {
+/// The slot of a column with a fixed width; title, artist and album have none.
+fn fixed(c: Col) -> Option<f32> {
+    match c {
         Col::Num => Some(46.0 + GAP),
         Col::Art => Some(ROW_HEIGHT_ART + GAP),
         Col::Year => Some(40.0 + GAP),
@@ -198,7 +197,35 @@ fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
         Col::Key => Some(36.0 + GAP),
         Col::Time => Some(62.0 + GAP),
         _ => None,
+    }
+}
+
+/// Windows narrower than this trim the playlist's columns to fit.
+const NARROW_WINDOW: f32 = 700.0;
+/// The least a title, artist or album column gets before the less useful columns give way.
+const TEXT_COLUMN_MIN: f32 = 100.0;
+/// What a narrow row drops first, in this order. The saved columns are not touched.
+const DROPPED_FIRST: [Col; 8] = [Col::Bitrate, Col::Year, Col::Key, Col::Bpm, Col::Format, Col::Num, Col::Album, Col::Time];
+
+/// The columns of `order` that fit a row `width` wide: those in [`DROPPED_FIRST`] go until the text columns have room.
+fn fit_columns(order: &[Col], width: f32) -> Vec<Col> {
+    let mut fit = order.to_vec();
+    let short = |fit: &[Col]| {
+        let text = fit.iter().filter(|c| fixed(**c).is_none()).count() as f32;
+        width - fit.iter().filter_map(|c| fixed(*c)).sum::<f32>() < TEXT_COLUMN_MIN * text
     };
+    for c in DROPPED_FIRST {
+        if !short(&fit) {
+            break;
+        }
+        fit.retain(|k| *k != c);
+    }
+    fit
+}
+
+/// Cell rects for the visible columns, left to right. Number, artwork, year, format, bitrate, BPM, key and time are
+/// fixed; title, artist and album share the rest by weight.
+fn columns(order: &[Col], row: Rect) -> Vec<(Col, Rect)> {
     let weight = |c: Col| match c {
         Col::Title => 0.44,
         _ => 0.28,
@@ -297,8 +324,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         });
     });
     egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| toolbar(app, ui));
-    let order = parse_columns(&app.settings.playlist_columns);
-    header(app, ui, &order);
+    let saved = parse_columns(&app.settings.playlist_columns);
+    // Only a narrow window trims columns. A narrow playlist panel in a wide window keeps them all, squeezed.
+    let row_width = if ui.ctx().content_rect().width() < NARROW_WINDOW { ui.available_width() - 16.0 } else { f32::INFINITY };
+    let order = fit_columns(&saved, row_width);
+    header(app, ui, &order, order.len() < saved.len());
     table(app, ui, &order);
 }
 
@@ -371,13 +401,29 @@ fn playlist_tabs(app: &mut App, ui: &mut Ui) {
 
 fn toolbar(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        if ui.button("Add files…").on_hover_text(widgets::cmd_key('O', false)).clicked() {
-            dialogs::open_files(app);
+        // Where the filter no longer fits, the two add buttons share a menu. The wide measure below is kept
+        // meanwhile: the layout plan needs the room the full toolbar takes, not what this one needs.
+        let narrow = ui.available_width() + TOOLBAR_MARGINS < app.pl_view.toolbar_min;
+        if narrow {
+            ui.menu_button("Add", |ui| {
+                if ui.button("Add files…").on_hover_text(widgets::cmd_key('O', false)).clicked() {
+                    dialogs::open_files(app);
+                    ui.close();
+                }
+                if ui.button("Add folder…").on_hover_text(widgets::cmd_key('O', true)).clicked() {
+                    dialogs::open_folder(app);
+                    ui.close();
+                }
+            });
+        } else {
+            if ui.button("Add files…").on_hover_text(widgets::cmd_key('O', false)).clicked() {
+                dialogs::open_files(app);
+            }
+            if ui.button("Add folder…").on_hover_text(widgets::cmd_key('O', true)).clicked() {
+                dialogs::open_folder(app);
+            }
+            ui.separator();
         }
-        if ui.button("Add folder…").on_hover_text(widgets::cmd_key('O', true)).clicked() {
-            dialogs::open_folder(app);
-        }
-        ui.separator();
         let has_sel = !app.selection.ids.is_empty();
         let movable = has_sel && !app.pl_view.filter.is_active();
         if ui.add_enabled(has_sel, egui::Button::new("Remove")).on_hover_text("Delete / Backspace").clicked() {
@@ -488,13 +534,15 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
             }
         });
         // Below this width the toolbar drops the filter field and the pill; the margins are the frame's.
-        app.pl_view.toolbar_min = ui.min_rect().width() + ui.spacing().item_spacing.x + FILTER_MIN_WIDTH + 8.0 + 16.0;
+        if !narrow {
+            app.pl_view.toolbar_min = ui.min_rect().width() + ui.spacing().item_spacing.x + FILTER_MIN_WIDTH + 8.0 + TOOLBAR_MARGINS;
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Drop the pill rather than let it overlap the Sort and List buttons in a narrow panel.
             const LABEL: &str = "◎ Now playing";
             let font = egui::TextStyle::Small.resolve(ui.style());
             let needed = ui.painter().layout_no_wrap(LABEL.into(), font, theme::text()).size().x + 2.0 * ui.spacing().button_padding.x;
-            if app.player.current.is_some() && ui.available_width() >= needed && ui.small_button(LABEL).on_hover_text(format!("Scroll to the playing track ({})", widgets::cmd_key('J', false))).clicked() {
+            if !narrow && app.player.current.is_some() && ui.available_width() >= needed && ui.small_button(LABEL).on_hover_text(format!("Scroll to the playing track ({})", widgets::cmd_key('J', false))).clicked() {
                 show_playing(app);
             }
             filter_field(app, ui);
@@ -503,6 +551,8 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
 }
 
 const FILTER_MIN_WIDTH: f32 = 60.0;
+/// The frame around the toolbar takes this much from the width it has.
+const TOOLBAR_MARGINS: f32 = 16.0;
 const MOVE_FILTERED: &str = "Clear the filter to move entries";
 
 /// The filter field. Esc clears it, Enter moves to the list with the first match selected.
@@ -560,7 +610,9 @@ pub fn show_playing(app: &mut App) {
     app.scroll_to = Some(c.entry);
 }
 
-fn header(app: &mut App, ui: &mut Ui, order: &[Col]) {
+/// `trimmed`: the window is too narrow for every column, so the header only labels them: moving or hiding
+/// columns of a trimmed set would write the trimmed set over the saved one.
+fn header(app: &mut App, ui: &mut Ui, order: &[Col], trimmed: bool) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, theme::bg());
     ui.painter().line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, theme::border()));
@@ -571,7 +623,8 @@ fn header(app: &mut App, ui: &mut Ui, order: &[Col]) {
     for &(col, cell_rect) in &cols {
         // The whole slot is the drag handle and menu target, not just the label.
         let slot = Rect::from_min_max(pos2(cell_rect.left() - GAP / 2.0, rect.top()), pos2(cell_rect.right() + GAP / 2.0, rect.bottom()));
-        let resp = ui.interact(slot, ui.make_persistent_id(("column-header", col.id())), Sense::click_and_drag());
+        let sense = if trimmed { Sense::hover() } else { Sense::click_and_drag() };
+        let resp = ui.interact(slot, ui.make_persistent_id(("column-header", col.id())), sense);
         if resp.drag_started() {
             app.pl_view.header_drag = Some(col);
         }
@@ -583,14 +636,18 @@ fn header(app: &mut App, ui: &mut Ui, order: &[Col]) {
         }
         let color = if dragging == Some(col) { theme::text() } else { theme::text_faint() };
         cell(ui, cell_rect, col.header(), font.clone(), color, col.align());
-        if dragging.is_none() {
+        if trimmed {
+            resp.clone().on_hover_text("Widen the window to see every column and to change them");
+        } else if dragging.is_none() {
             resp.clone().on_hover_text("Drag to reorder · right-click to show or hide columns");
         }
-        resp.context_menu(|ui| {
-            if let Some(next) = column_menu(ui, order) {
-                menu_change = Some(next);
-            }
-        });
+        if !trimmed {
+            resp.context_menu(|ui| {
+                if let Some(next) = column_menu(ui, order) {
+                    menu_change = Some(next);
+                }
+            });
+        }
     }
 
     if let Some(dragged) = dragging {
@@ -1164,4 +1221,29 @@ pub fn new_playlist(app: &mut App, name: &str) {
     app.player.viewing = i;
     app.selection = Default::default();
     app.mark_list_dirty(i);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_rows_keep_every_column() {
+        assert_eq!(fit_columns(&Col::DEFAULT, 1000.0), Col::DEFAULT.to_vec());
+        assert_eq!(fit_columns(&Col::DEFAULT, 624.0), Col::DEFAULT.to_vec(), "the old minimum window still shows them all");
+    }
+
+    #[test]
+    fn narrow_rows_drop_the_least_useful_columns_first() {
+        let at = |w| fit_columns(&Col::DEFAULT, w);
+        assert!(!at(600.0).contains(&Col::Key) && at(600.0).contains(&Col::Bpm));
+        assert_eq!(at(524.0), [Col::Num, Col::Art, Col::Title, Col::Artist, Col::Album, Col::Format, Col::Time]);
+        assert_eq!(at(344.0), [Col::Art, Col::Title, Col::Artist, Col::Time]);
+    }
+
+    #[test]
+    fn the_text_columns_and_the_artwork_stay_however_narrow() {
+        assert_eq!(fit_columns(&Col::DEFAULT, 50.0), [Col::Art, Col::Title, Col::Artist]);
+        assert_eq!(fit_columns(&[Col::Title], 50.0), [Col::Title]);
+    }
 }
