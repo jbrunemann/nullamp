@@ -476,7 +476,7 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 app.mix.paste = Some(Paste { replace: true, ..Default::default() });
                 ui.close();
             }
-            if ui.button("Search 1001Tracklists…").on_hover_text("Find this mix on 1001Tracklists and bring in its tracklist (needs your 1001Tracklists guid in Settings)").clicked() {
+            if crate::ONLINE_EXTRAS && ui.button("Search 1001Tracklists…").on_hover_text("Find this mix on 1001Tracklists and bring in its tracklist (needs your 1001Tracklists guid in Settings)").clicked() {
                 open_tracklist_search(app);
                 ui.close();
             }
@@ -1017,47 +1017,49 @@ fn entries(app: &mut App, ui: &mut Ui) {
                     menu_action = Some((e.id, "set-start"));
                     ui.close();
                 }
-                if asked.is_some() {
-                    if ui.button("Cancel Shazam").clicked() {
-                        menu_action = Some((e.id, "cancel-identify"));
-                        ui.close();
-                    }
-                } else {
-                    let why_not = if e.start.is_none() {
-                        Some("The entry needs a start time")
-                    } else if asking.is_some() {
-                        Some("Shazam is being asked about another track; wait for it, or cancel it from that track's menu")
+                if crate::ONLINE_EXTRAS {
+                    if asked.is_some() {
+                        if ui.button("Cancel Shazam").clicked() {
+                            menu_action = Some((e.id, "cancel-identify"));
+                            ui.close();
+                        }
                     } else {
-                        None
-                    };
-                    let hover = why_not.unwrap_or(if fillable(e) {
-                        "Name this track with Shazam, about half a minute. Short signatures of a few clips (not the audio) go to Shazam."
-                    } else {
-                        "Ask Shazam about this track, about half a minute. You named it, so its answer is offered in the editor instead of replacing your name."
-                    });
-                    if ui.add_enabled(why_not.is_none(), egui::Button::new("Identify with Shazam")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
-                        menu_action = Some((e.id, "identify"));
-                        ui.close();
+                        let why_not = if e.start.is_none() {
+                            Some("The entry needs a start time")
+                        } else if asking.is_some() {
+                            Some("Shazam is being asked about another track; wait for it, or cancel it from that track's menu")
+                        } else {
+                            None
+                        };
+                        let hover = why_not.unwrap_or(if fillable(e) {
+                            "Name this track with Shazam, about half a minute. Short signatures of a few clips (not the audio) go to Shazam."
+                        } else {
+                            "Ask Shazam about this track, about half a minute. You named it, so its answer is offered in the editor instead of replacing your name."
+                        });
+                        if ui.add_enabled(why_not.is_none(), egui::Button::new("Identify with Shazam")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+                            menu_action = Some((e.id, "identify"));
+                            ui.close();
+                        }
                     }
-                }
-                let telegram_asked = app.telegram.asking.as_ref().map(|a| a.entry);
-                if telegram_asked == Some(e.id) {
-                    if ui.button("Cancel Telegram").clicked() {
-                        menu_action = Some((e.id, "cancel-telegram"));
-                        ui.close();
-                    }
-                } else {
-                    let why_not = if e.is_unidentified() {
-                        Some("The track needs a name to ask for")
-                    } else if telegram_asked.is_some() {
-                        Some("Telegram is being asked about another track; wait for it, or cancel it from that track's menu")
+                    let telegram_asked = app.telegram.asking.as_ref().map(|a| a.entry);
+                    if telegram_asked == Some(e.id) {
+                        if ui.button("Cancel Telegram").clicked() {
+                            menu_action = Some((e.id, "cancel-telegram"));
+                            ui.close();
+                        }
                     } else {
-                        super::telegram::unavailable(app)
-                    };
-                    let hover = why_not.unwrap_or("Asks the Telegram bot for \"Artist - Title\" as you, like typing @bot Artist - Title in a chat, and saves the result you choose");
-                    if ui.add_enabled(why_not.is_none(), egui::Button::new("Request on Telegram")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
-                        menu_action = Some((e.id, "telegram"));
-                        ui.close();
+                        let why_not = if e.is_unidentified() {
+                            Some("The track needs a name to ask for")
+                        } else if telegram_asked.is_some() {
+                            Some("Telegram is being asked about another track; wait for it, or cancel it from that track's menu")
+                        } else {
+                            super::telegram::unavailable(app)
+                        };
+                        let hover = why_not.unwrap_or("Asks the Telegram bot for \"Artist - Title\" as you, like typing @bot Artist - Title in a chat, and saves the result you choose");
+                        if ui.add_enabled(why_not.is_none(), egui::Button::new("Request on Telegram")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+                            menu_action = Some((e.id, "telegram"));
+                            ui.close();
+                        }
                     }
                 }
                 if ui.button("Delete entry").clicked() {

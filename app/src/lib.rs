@@ -20,6 +20,12 @@ mod workers;
 #[cfg(test)]
 mod ui_snapshots;
 
+/// Whether this build has Identify with Shazam, Search 1001Tracklists and Request on Telegram (the `online-extras` feature).
+pub(crate) const ONLINE_EXTRAS: bool = cfg!(feature = "online-extras");
+
+/// Whether this build has the Settings > Updates tab (the `update-check` feature).
+pub(crate) const UPDATE_CHECK: bool = cfg!(feature = "update-check");
+
 // lofty warns on every UTF-8 frame it rewrites as UTF-16 when saving ID3v2.3; the output is correct.
 // symphonia warns about a missing bit reservoir and resync junk after coarse MP3 seeks; a frame is dropped, nothing audible.
 const LOG_FILTER: &str = "warn,lofty::util::text=error,lofty::mpeg::properties=error,symphonia_bundle_mp3::layer3=error,symphonia_bundle_mp3::demuxer=error,nullamp=info,nullamp_audio=info";

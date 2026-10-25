@@ -14,6 +14,14 @@ path = "src/lib.rs"
 name = "nullamp"
 path = "src/main.rs"
 
+[features]
+default = ["online-extras", "update-check"]
+# Identify with Shazam, Search 1001Tracklists and Request on Telegram, with the Settings tabs they need. They use services
+# that offer no API for this (see "Online sources" in docs/HANDOFF.md). Off, a build has no way to reach them.
+online-extras = []
+# The Settings > Updates tab. App stores do their own updates, so a store build leaves it out.
+update-check = []
+
 [dependencies]
 nullamp-core.workspace = true
 nullamp-audio.workspace = true

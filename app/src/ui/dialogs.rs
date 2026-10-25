@@ -45,6 +45,15 @@ pub enum SettingsTab {
 impl SettingsTab {
     const ALL: [SettingsTab; 10] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Telegram, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
+    /// The tabs this build has: without the online extras there is no Web or Telegram tab, without the update check no Updates tab.
+    pub(super) fn shown() -> impl Iterator<Item = SettingsTab> {
+        Self::ALL.into_iter().filter(|t| match t {
+            SettingsTab::Web | SettingsTab::Telegram => crate::ONLINE_EXTRAS,
+            SettingsTab::Updates => crate::UPDATE_CHECK,
+            _ => true,
+        })
+    }
+
     fn label(self) -> &'static str {
         match self {
             SettingsTab::General => "General",
@@ -675,7 +684,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                 if ui.available_width() < SETTINGS_TABS_WIDTH {
                     // A phone: the tabs wrap onto more rows, and Close ends the last.
                     ui.horizontal_wrapped(|ui| {
-                        for t in SettingsTab::ALL {
+                        for t in SettingsTab::shown() {
                             if widgets::tab(ui, tab == t, t.label()).clicked() {
                                 tab = t;
                             }
@@ -686,7 +695,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     });
                 } else {
                     ui.horizontal(|ui| {
-                        for t in SettingsTab::ALL {
+                        for t in SettingsTab::shown() {
                             if widgets::tab(ui, tab == t, t.label()).clicked() {
                                 tab = t;
                             }
@@ -1004,5 +1013,19 @@ fn cache_body(app: &mut App, ui: &mut egui::Ui) {
     }
     if let Some(kinds) = clear {
         scan_cache(app, kinds);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_tabs_follow_the_build_features() {
+        let tabs: Vec<_> = SettingsTab::shown().collect();
+        assert_eq!(tabs.contains(&SettingsTab::Web), cfg!(feature = "online-extras"));
+        assert_eq!(tabs.contains(&SettingsTab::Telegram), cfg!(feature = "online-extras"));
+        assert_eq!(tabs.contains(&SettingsTab::Updates), cfg!(feature = "update-check"));
+        assert!(tabs.contains(&SettingsTab::General) && tabs.contains(&SettingsTab::About));
     }
 }
