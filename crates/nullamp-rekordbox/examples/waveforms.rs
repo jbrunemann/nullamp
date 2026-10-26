@@ -42,7 +42,7 @@ fn main() {
             }
         };
         let started = std::time::Instant::now();
-        let ours = match nullamp_audio::compute_waveform(&t.file, &|| false) {
+        let ours = match nullamp_audio::compute_waveform(&t.file, false, &|| false) {
             Ok(w) => w,
             Err(e) => {
                 println!("  {} columns, audio not decoded: {e}", theirs.heights.len());

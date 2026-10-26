@@ -791,9 +791,12 @@ impl App {
                 if self.player.current.as_ref().is_some_and(|c| c.token == token) {
                     match result {
                         Ok(wave) => {
+                            // Colours arriving for a waveform already shown do not sweep it in again.
+                            if self.now.waveform.is_none() {
+                                self.now.wave_arrived = Some(Instant::now());
+                            }
                             self.now.waveform = Some(wave);
                             self.now.wave_colors = colors;
-                            self.now.wave_arrived = Some(Instant::now());
                         }
                         Err(e) => log::debug!("waveform: {e}"),
                     }
@@ -941,6 +944,14 @@ impl App {
         }
     }
 
+    /// The original artwork shows band colours, which a waveform decoded under another setting lacks:
+    /// ask for them for the playing track. The waveform on screen stays until they arrive.
+    pub fn request_wave_colors(&mut self) {
+        if let Some(c) = self.player.current.as_ref().filter(|_| self.now.wave_colors.is_none()) {
+            self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform, true);
+        }
+    }
+
     fn on_track_changed(&mut self) {
         let Some(c) = self.player.current.clone() else { return };
         self.mark_settings_dirty();
@@ -949,7 +960,7 @@ impl App {
         self.now = NowState { art_shown, art_transition, ..NowState::default() };
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
-        self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform);
+        self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform, self.settings.artwork == ArtworkMode::Original);
         self.workers.request_tempo(c.token, c.path.clone(), None);
         self.scroll_to = Some(c.entry);
         if self.settings.inspector_follows_playing {
