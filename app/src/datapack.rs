@@ -210,7 +210,7 @@ mod tests {
     }
 
     fn analysed() -> Analysed {
-        Analysed { wave: Waveform { peak: vec![1, 2, 3], rms: vec![1, 1, 2] }, colors: Some(vec![[1, 2, 3]; 3]) }
+        Analysed { wave: Waveform { peak: vec![1, 2, 3], rms: vec![1, 1, 2], colors: None }, colors: Some(vec![[1, 2, 3]; 3]) }
     }
 
     fn saved(fingerprint: &str, entries: &[(&str, bool)]) -> SavedSetlist {
