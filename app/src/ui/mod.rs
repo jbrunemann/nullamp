@@ -383,7 +383,7 @@ impl App {
                 return;
             }
         }
-        if let Err(e) = std::process::Command::new("open").arg("-t").arg(&path).spawn() {
+        if let Err(e) = dialogs::open_in_editor(&path) {
             self.error(format!("Cannot open {}: {e}", path.display()));
         }
     }
@@ -602,6 +602,31 @@ impl App {
         }
     }
 
+    fn raise_window(&self) {
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    /// Files from the command line, a second launch or Finder: added to the list on view, and the first one
+    /// plays when they are all plain audio files, the way a double-click is expected to behave.
+    fn handle_open_requests(&mut self) {
+        let request = crate::open::take();
+        if !request.raise {
+            return;
+        }
+        self.raise_window();
+        if request.paths.is_empty() {
+            return;
+        }
+        let play = request.paths.iter().all(|p| p.is_file() && crate::workers::is_audio_file(p));
+        let list = self.player.viewing;
+        self.add_paths(list, request.paths, None);
+        if let (true, Some(first)) = (play, self.selection.anchor) {
+            self.player.play_entry(list, first, 0.0);
+        }
+    }
+
     // ----- Event processing (runs every frame, also while hidden) -----
 
     fn process_events(&mut self) {
@@ -612,11 +637,7 @@ impl App {
         while let Ok(ev) = self.system_events.try_recv() {
             match ev {
                 SystemEvent::Command(cmd) => self.player.command(cmd, CommandSource::System),
-                SystemEvent::Raise => {
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
+                SystemEvent::Raise => self.raise_window(),
                 SystemEvent::Quit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
         }
@@ -1456,6 +1477,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_events();
+        self.handle_open_requests();
         self.schedule_repaint(ctx);
     }
 
