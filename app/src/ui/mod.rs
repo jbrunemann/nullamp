@@ -638,6 +638,10 @@ impl App {
             match ev {
                 SystemEvent::Command(cmd) => self.player.command(cmd, CommandSource::System),
                 SystemEvent::Raise => self.raise_window(),
+                SystemEvent::OpenUri(uri) => match crate::open::uri_to_path(&uri) {
+                    Some(path) => crate::open::push(vec![path]),
+                    None => log::debug!("cannot open {uri}: not a local file"),
+                },
                 SystemEvent::Quit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
         }
