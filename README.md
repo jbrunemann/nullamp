@@ -110,4 +110,8 @@ The full list is in the [user manual](docs/USER_MANUAL.md#9-keyboard-shortcuts).
 
 ## License
 
-MIT or Apache-2.0, at your option. The texts are in `LICENSE-MIT` and `LICENSE-APACHE`.
+GPL-3.0-or-later. The text is in `LICENSE`.
+
+The waveform colours are ported from [Mixxx](https://github.com/mixxxdj/mixxx) (GPL-2.0-or-later), whose analysis uses filters from fidlib by Jim Peters (LGPL-2.1), itself derived from mkfilter by Tony Fisher. See `crates/nullamp-audio/src/fidlib.rs`.
+
+Releases up to v1.9.0 were published under MIT or Apache-2.0, and those terms stay with them. The texts are kept in `licenses/`.
