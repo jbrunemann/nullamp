@@ -829,6 +829,7 @@ impl App {
             JobResult::SplitGaps { request, result } => setlist_view::on_split_gaps(self, request, result),
             JobResult::TracklistHits { request, result } => setlist_view::on_tracklist_hits(self, request, result),
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
+            JobResult::Located { request, root, search, secs } => dialogs::on_located(self, request, root, search, secs),
             JobResult::Spotify { request, result } => spotify::on_playlist(self, request, result),
             JobResult::Telegram(event) => telegram::on_event(self, event),
             JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),

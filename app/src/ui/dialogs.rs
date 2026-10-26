@@ -17,6 +17,8 @@ pub enum DialogResult {
     AddFiles { list: String, paths: Vec<PathBuf> },
     /// The file picked with Browse in the Change file dialog.
     ChangeFileBrowsed(PathBuf),
+    /// The folder picked with Search folder in the Change file dialog.
+    ChangeFileFolder(PathBuf),
     ImportPlaylist { list: String, path: PathBuf },
     ExportPlaylist { list: String, path: PathBuf },
     ImportSetlist(PathBuf),
@@ -250,13 +252,22 @@ pub struct ChangeFile {
     /// The new path as typed, pasted or browsed.
     text: String,
     error: Option<String>,
+    search: Searched,
+}
+
+/// Where the dialog's search for the missing file stands.
+enum Searched {
+    Idle,
+    /// Looking in this folder, for the request with this id.
+    Running { request: u64, root: PathBuf },
+    Done { root: PathBuf, search: crate::locate::Search, secs: f64 },
 }
 
 /// "Change file…" of a playlist row: opens the dialog with the track's current path to edit.
 pub fn change_file(app: &mut App, list: usize, entry: EntryId) {
     let Some(old) = app.player.lists.get(list).and_then(|d| d.playlist.get(entry)).map(|e| e.path.clone()) else { return };
     let key = app.player.lists[list].key.clone();
-    app.dialogs.change_file = Some(ChangeFile { list: key, entry, text: old.display().to_string(), old, error: None });
+    app.dialogs.change_file = Some(ChangeFile { list: key, entry, text: old.display().to_string(), old, error: None, search: Searched::Idle });
 }
 
 /// Browse for the new file, starting in the folder of the one typed, else of the old one.
@@ -271,6 +282,90 @@ fn browse_change_file(app: &App) {
         let file = d.pick_file().await?;
         Some(DialogResult::ChangeFileBrowsed(file.path().to_path_buf()))
     });
+}
+
+/// Choose the folder to look for the missing file in, starting at the last one searched, else the nearest
+/// folder of the old path that exists.
+fn browse_search_folder(app: &App) {
+    let Some(c) = app.dialogs.change_file.as_ref() else { return };
+    let searched = match &c.search {
+        Searched::Running { root, .. } | Searched::Done { root, .. } => Some(root.clone()),
+        Searched::Idle => None,
+    };
+    let dir = searched.or_else(|| c.old.ancestors().skip(1).find(|d| d.is_dir()).map(Path::to_path_buf)).or_else(|| start_dir(app));
+    spawn(app, move || async move {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Search folder");
+        if let Some(dir) = dir {
+            d = d.set_directory(dir);
+        }
+        let folder = d.pick_folder().await?;
+        Some(DialogResult::ChangeFileFolder(folder.path().to_path_buf()))
+    });
+}
+
+/// Start looking for the missing file in `root`.
+fn start_search(app: &mut App, root: PathBuf) {
+    let request = app.workers.request_id();
+    let Some(c) = app.dialogs.change_file.as_mut() else { return };
+    app.workers.locate(request, root.clone(), c.old.clone());
+    c.search = Searched::Running { request, root };
+}
+
+/// What the search found. One file of the very name fills the field, since it is nearly always the one.
+pub fn on_located(app: &mut App, request: u64, root: PathBuf, search: crate::locate::Search, secs: f64) {
+    let Some(c) = app.dialogs.change_file.as_mut() else { return };
+    if !matches!(&c.search, Searched::Running { request: r, .. } if *r == request) {
+        return;
+    }
+    use crate::locate::Match;
+    let exact = search.found.iter().filter(|f| f.kind == Match::Name).count();
+    if let (1, Some(best)) = (exact, search.found.first()) {
+        (c.text, c.error) = (best.path.display().to_string(), None);
+    }
+    c.search = Searched::Done { root, search, secs };
+}
+
+/// The search's state and its results, as rows to click.
+fn search_results(ui: &mut egui::Ui, c: &mut ChangeFile) {
+    use crate::locate::Match;
+    match &c.search {
+        Searched::Idle => {}
+        Searched::Running { root, .. } => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new(format!("Looking in {}…", root.display())).small().color(theme::text_faint()));
+            });
+        }
+        Searched::Done { root, search, secs } => {
+            let looked = format!("{} looked at in {secs:.1} s", super::plural(search.scanned, "audio file"));
+            let skipped = if search.skipped > 0 { format!(", {} could not be read", super::plural(search.skipped, "folder")) } else { String::new() };
+            let summary = match search.found.len() {
+                0 => format!("Nothing like it in {} ({looked}{skipped})", root.display()),
+                n if search.more => format!("The {n} best matches in {} ({looked}{skipped})", root.display()),
+                1 => format!("1 match in {} ({looked}{skipped})", root.display()),
+                n => format!("{n} matches in {} ({looked}{skipped})", root.display()),
+            };
+            ui.label(RichText::new(summary).small().color(theme::text_faint()));
+            let mut chosen = None;
+            egui::ScrollArea::vertical().max_height(180.0).auto_shrink([false, true]).show(ui, |ui| {
+                for f in &search.found {
+                    let shown = f.path.strip_prefix(root).unwrap_or(&f.path).display().to_string();
+                    let note = match f.kind {
+                        Match::Name => "",
+                        Match::Format => "  (other format)",
+                        Match::Similar => "  (similar name)",
+                    };
+                    let selected = parse_path(&c.text) == f.path;
+                    if ui.selectable_label(selected, format!("{shown}{note}")).on_hover_text(f.path.display().to_string()).clicked() {
+                        chosen = Some(f.path.display().to_string());
+                    }
+                }
+            });
+            if let Some(text) = chosen {
+                (c.text, c.error) = (text, None);
+            }
+        }
+    }
 }
 
 /// A path as people paste it: with quotes around it, `\ ` for the spaces (a terminal's drag and drop), or a
@@ -310,7 +405,7 @@ fn apply_change_file(app: &mut App) -> bool {
 
 fn change_file_modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
     let Some(mut c) = app.dialogs.change_file.take() else { return };
-    let (mut keep, mut apply, mut browse) = (true, false, false);
+    let (mut keep, mut apply, mut browse, mut search) = (true, false, false, false);
     egui::Modal::new(egui::Id::unique("change-file")).show(ctx, |ui| {
         ui.set_width(widgets::modal_width(ctx, 560.0));
         ui.heading("Change file");
@@ -326,6 +421,10 @@ fn change_file_modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bo
                 browse = true;
             }
         });
+        if ui.button("Search folder…").on_hover_text("Look for a file of this name in a folder and the folders below it").clicked() {
+            search = true;
+        }
+        search_results(ui, &mut c);
         if let Some(error) = &c.error {
             ui.label(RichText::new(error).small().color(theme::err()));
         }
@@ -343,8 +442,12 @@ fn change_file_modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bo
     if browse {
         browse_change_file(app);
     }
+    if search {
+        browse_search_folder(app);
+    }
     if (apply && apply_change_file(app)) || !keep {
         app.dialogs.change_file = None;
+        app.workers.cancel_locate();
     }
 }
 
@@ -473,6 +576,10 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
             if let Some(c) = app.dialogs.change_file.as_mut() {
                 (c.text, c.error) = (path.display().to_string(), None);
             }
+        }
+        DialogResult::ChangeFileFolder(root) => {
+            remember_dir(app, &root);
+            start_search(app, root);
         }
         DialogResult::ImportPlaylist { list, path } => {
             remember_dir(app, &path);
@@ -1140,5 +1247,34 @@ mod tests {
         let track = app.player.lists[0].playlist.get(id).unwrap();
         assert_eq!((&track.path, &track.status), (&new, &EntryStatus::Unknown));
         assert_eq!(app.settings.last_dir.as_deref(), new.parent());
+    }
+
+    /// Searching a folder finds a copy of the file by its name, fills the field with it, and a search that
+    /// the dialog has closed on is dropped.
+    #[test]
+    fn searching_a_folder_fills_the_field_with_the_one_file_of_that_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (id, old) = (entries[6].id, entries[6].path.clone());
+        let moved = dir.path().join("music/moved").join(old.file_name().unwrap());
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, b"x").unwrap();
+
+        change_file(app, 0, id);
+        on_dialog_result(app, DialogResult::ChangeFileFolder(dir.path().join("music")));
+        assert!(matches!(app.dialogs.change_file.as_ref().unwrap().search, Searched::Running { .. }));
+        for _ in 0..40 {
+            settle(&mut h, 50);
+            if matches!(h.state_mut().dialogs.change_file.as_ref().unwrap().search, Searched::Done { .. }) {
+                break;
+            }
+        }
+        let c = h.state_mut().dialogs.change_file.as_ref().unwrap();
+        assert!(matches!(c.search, Searched::Done { .. }), "the search answers");
+        assert_eq!(c.text, moved.display().to_string());
     }
 }

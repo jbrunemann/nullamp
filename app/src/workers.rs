@@ -16,7 +16,9 @@
 //! - *telegram* (the login and asking a bot for a track) waits on the network for up to half a
 //!   minute, so its thread, which `nullamp-telegram` runs itself, answers through the same results;
 //! - *split* (finding where the tracks of a mix start, offline) decodes and analyses the whole
-//!   mix for several seconds, so it has a thread of its own as well.
+//!   mix for several seconds, so it has a thread of its own as well;
+//! - *locate* (looking for a missing playlist file in a folder tree) reads directories for as long
+//!   as the tree is big, so it has a thread of its own and a newer search replaces the running one.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -178,6 +180,13 @@ pub struct IdentifyTrack {
     pub end: f64,
 }
 
+struct LocateRequest {
+    request: u64,
+    root: PathBuf,
+    /// The path the playlist has for the missing file.
+    wanted: PathBuf,
+}
+
 /// A request to 1001Tracklists, made on the user's behalf.
 enum TracklistRequest {
     Search { request: u64, query: String },
@@ -269,6 +278,8 @@ pub enum JobResult {
     Split { request: u64, result: Result<Vec<f64>, String> },
     /// The answer to [`Workers::split_gaps`]: for each gap, where its tracks start, the first at the gap's `from`.
     SplitGaps { request: u64, result: Result<Vec<Vec<f64>>, String> },
+    /// The answer to [`Workers::locate`]. A cancelled or replaced search sends nothing.
+    Located { request: u64, root: PathBuf, search: crate::locate::Search, secs: f64 },
     /// The answer to [`Workers::search_tracklists`].
     TracklistHits { request: u64, result: Result<Vec<nullamp_tracklists::Hit>, String> },
     /// The answer to [`Workers::fetch_tracklist`].
@@ -297,6 +308,9 @@ pub struct Workers {
     split: Sender<SplitRequest>,
     /// The split request that may run; any other one stops at its next packet or step.
     split_current: Arc<AtomicU64>,
+    locate: Sender<LocateRequest>,
+    /// The locate request that may run; any other one stops at its next folder.
+    locate_current: Arc<AtomicU64>,
     tracklists: Sender<TracklistRequest>,
     spotify: Sender<SpotifyRequest>,
     /// The login to Telegram and the questions to its bot; its answers come as [`JobResult::Telegram`].
@@ -537,6 +551,31 @@ impl Workers {
                 .expect("spawn split worker");
         }
 
+        let locate_current = Arc::new(AtomicU64::new(0));
+        let (locate, locate_rx) = crossbeam_channel::unbounded::<LocateRequest>();
+        {
+            let (tx, w, current) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&locate_current));
+            std::thread::Builder::new()
+                .name("nullamp-locate".into())
+                .spawn(move || {
+                    while let Ok(mut request) = locate_rx.recv() {
+                        while let Ok(newer) = locate_rx.try_recv() {
+                            request = newer;
+                        }
+                        let id = request.request;
+                        let started = std::time::Instant::now();
+                        let Some(search) = crate::locate::search(&request.root, &request.wanted, &|| current.load(Ordering::SeqCst) != id) else { continue };
+                        let secs = started.elapsed().as_secs_f64();
+                        log::info!("Looked for {} in {}: {} found among {} audio files in {secs:.2} s", request.wanted.display(), request.root.display(), search.found.len(), search.scanned);
+                        if current.load(Ordering::SeqCst) != id || tx.send(JobResult::Located { request: id, root: request.root, search, secs }).is_err() {
+                            continue;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn locate worker");
+        }
+
         let (tracklists, tracklists_rx) = crossbeam_channel::unbounded::<TracklistRequest>();
         {
             let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
@@ -625,6 +664,8 @@ impl Workers {
             identify_current,
             split,
             split_current,
+            locate,
+            locate_current,
             tracklists,
             spotify,
             telegram,
@@ -686,6 +727,18 @@ impl Workers {
     /// Stop the running split request at its next packet or step.
     pub fn cancel_split(&self) {
         self.split_current.store(0, Ordering::SeqCst);
+    }
+
+    /// Look in `root` and below for the file `wanted` names, which is no longer there. Answered with
+    /// [`JobResult::Located`] under `request`. A newer request replaces this one.
+    pub fn locate(&self, request: u64, root: PathBuf, wanted: PathBuf) {
+        self.locate_current.store(request, Ordering::SeqCst);
+        let _ = self.locate.send(LocateRequest { request, root, wanted });
+    }
+
+    /// Stop the running locate request at its next folder.
+    pub fn cancel_locate(&self) {
+        self.locate_current.store(0, Ordering::SeqCst);
     }
 
     /// Search 1001Tracklists for `query`; answered with [`JobResult::TracklistHits`] under `request`.
