@@ -505,6 +505,30 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
     }
 }
 
+/// Show a file selected in the file manager through the `org.freedesktop.FileManager1` D-Bus service that
+/// Nautilus, Dolphin, Nemo, Thunar and others implement; a desktop without it gets the folder opened.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn reveal_on_linux(path: &Path) -> std::io::Result<()> {
+    let folder = path.parent().unwrap_or(path).to_path_buf();
+    let uri = nullamp_sysmedia::file_url(path);
+    std::thread::spawn(move || {
+        let shown = uri.is_some_and(|uri| {
+            std::process::Command::new("dbus-send")
+                .args(["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems"])
+                .arg(format!("array:string:{uri}"))
+                .arg("string:")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if !shown && let Err(e) = std::process::Command::new("xdg-open").arg(&folder).spawn() {
+            log::warn!("cannot reveal in {}: {e}", folder.display());
+        }
+    });
+    Ok(())
+}
+
 /// Open a text file in the platform's default editor.
 pub fn open_in_editor(path: &Path) -> std::io::Result<std::process::Child> {
     #[cfg(target_os = "macos")]
@@ -522,7 +546,7 @@ pub fn reveal(path: &Path) {
     #[cfg(target_os = "windows")]
     let r = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let r = std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn();
+    let r = reveal_on_linux(path);
     if let Err(e) = r {
         log::warn!("cannot reveal {}: {e}", path.display());
     }
