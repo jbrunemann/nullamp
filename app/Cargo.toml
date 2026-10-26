@@ -6,6 +6,14 @@ edition.workspace = true
 license.workspace = true
 default-run = "nullamp"
 
+[lib]
+name = "nullamp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nullamp"
+path = "src/main.rs"
+
 [dependencies]
 nullamp-core.workspace = true
 nullamp-audio.workspace = true
