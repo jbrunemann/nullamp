@@ -3425,6 +3425,7 @@ dependencies = [
  "nullamp-mixxx",
  "nullamp-rekordbox",
  "nullamp-shazam",
+ "nullamp-spotify",
  "nullamp-sysmedia",
  "nullamp-telegram",
  "nullamp-tracklists",
@@ -3528,6 +3529,15 @@ dependencies = [
  "nullamp-core",
  "nullamp-http",
  "realfft",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nullamp-spotify"
+version = "2.0.0"
+dependencies = [
+ "nullamp-http",
  "serde_json",
  "thiserror 2.0.21",
 ]

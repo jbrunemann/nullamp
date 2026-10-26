@@ -7,6 +7,7 @@ mod menu;
 mod playlist_view;
 pub mod sections;
 mod setlist_view;
+pub mod spotify;
 pub mod telegram;
 pub mod theme;
 mod visualizer;
@@ -530,6 +531,26 @@ impl App {
         }
     }
 
+    /// Make a track play another file. The tags of the new file replace what the track was known by; until
+    /// they are read the old ones stay. A track that is playing or loading keeps its file.
+    pub fn change_entry_file(&mut self, list: usize, entry: EntryId, path: PathBuf) {
+        if self.player.is_current(list, entry) && self.player.status != Status::Stopped {
+            self.warn("Stop the track before changing its file");
+            return;
+        }
+        let mut changed = false;
+        self.player.edit_list(list, |p| {
+            if let Some(e) = p.get_mut(entry) {
+                (e.path, e.status, changed) = (path.clone(), EntryStatus::Unknown, true);
+            }
+        });
+        if changed {
+            self.mark_list_dirty(list);
+            self.workers.scan(vec![path.clone()]);
+            self.info(format!("The track now plays {}", path.display()));
+        }
+    }
+
     pub fn insert_entries(&mut self, list: usize, entries: Vec<PlaylistEntry>, insert_at: Option<usize>) {
         if entries.is_empty() {
             return;
@@ -783,6 +804,7 @@ impl App {
             JobResult::SplitGaps { request, result } => setlist_view::on_split_gaps(self, request, result),
             JobResult::TracklistHits { request, result } => setlist_view::on_tracklist_hits(self, request, result),
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
+            JobResult::Spotify { request, result } => spotify::on_playlist(self, request, result),
             JobResult::Telegram(event) => telegram::on_event(self, event),
             JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),
             JobResult::DataPack { export, path, result } => match result {
@@ -1564,5 +1586,37 @@ mod tests {
         assert!(!retry_due(ENTRY_ART_RETRY - Duration::from_secs(1), false));
         assert!(retry_due(ENTRY_ART_RETRY, false));
         assert!(retry_due(Duration::ZERO, true));
+    }
+
+    /// "Change file…" points one track at another file and has the new file's tags read; a track that is
+    /// playing keeps its file, and a track that is gone changes nothing.
+    #[test]
+    fn a_track_can_be_pointed_at_another_file() {
+        use crate::ui_snapshots::{seeded_store, settle};
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (gone, other) = (entries[6].id, entries[1].path.clone());
+        assert_eq!(app.player.lists[0].playlist.get(gone).unwrap().path.file_name().unwrap(), "missing.mp3");
+        app.player.lists[0].playlist.get_mut(gone).unwrap().status = EntryStatus::Missing;
+        let old_info = app.player.lists[0].playlist.get(gone).unwrap().info.clone();
+
+        app.change_entry_file(0, gone, other.clone());
+        let track = app.player.lists[0].playlist.get(gone).unwrap();
+        assert_eq!((&track.path, &track.status), (&other, &EntryStatus::Unknown));
+        assert_eq!(track.info, old_info, "the old tags stay until the new file's are read");
+        settle(&mut h, 500);
+        let track = h.state().player.lists[0].playlist.get(gone).unwrap();
+        assert_eq!(track.info.title.as_deref(), Some("V24 Tone"), "the new file's tags replace them");
+        assert_eq!(h.state().player.lists[0].playlist.entries()[1].path, other, "the other track with that file is untouched");
+
+        let app = h.state_mut();
+        let before: Vec<PathBuf> = app.player.lists[0].playlist.entries().iter().map(|e| e.path.clone()).collect();
+        app.change_entry_file(0, EntryId::new(), other.clone());
+        let after: Vec<PathBuf> = app.player.lists[0].playlist.entries().iter().map(|e| e.path.clone()).collect();
+        assert_eq!(before, after);
     }
 }

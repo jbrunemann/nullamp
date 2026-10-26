@@ -184,6 +184,13 @@ enum TracklistRequest {
     Fetch { request: u64, guid: String, url: String },
 }
 
+/// A request to read a public Spotify playlist, made on the user's behalf.
+struct SpotifyRequest {
+    request: u64,
+    /// What the user typed: a link, a URI or an id.
+    link: String,
+}
+
 enum OnlineRequest {
     EntryArt(EntryArtRequest),
     TrackCover { request: u64, artist: String, title: String },
@@ -266,6 +273,8 @@ pub enum JobResult {
     TracklistHits { request: u64, result: Result<Vec<nullamp_tracklists::Hit>, String> },
     /// The answer to [`Workers::fetch_tracklist`].
     TracklistPage { request: u64, result: Result<nullamp_tracklists::Tracklist, String> },
+    /// The answer to [`Workers::fetch_spotify`].
+    Spotify { request: u64, result: Result<nullamp_spotify::Playlist, String> },
     /// Something the Telegram thread reports: a sign-in step, or progress of a track being asked for.
     Telegram(nullamp_telegram::Event),
     /// The picture of result `index` of the list the bot offered to ask `request`.
@@ -289,6 +298,7 @@ pub struct Workers {
     /// The split request that may run; any other one stops at its next packet or step.
     split_current: Arc<AtomicU64>,
     tracklists: Sender<TracklistRequest>,
+    spotify: Sender<SpotifyRequest>,
     /// The login to Telegram and the questions to its bot; its answers come as [`JobResult::Telegram`].
     pub telegram: nullamp_telegram::Telegram,
     pub results: Receiver<JobResult>,
@@ -561,6 +571,27 @@ impl Workers {
                 .expect("spawn tracklists worker");
         }
 
+        let (spotify, spotify_rx) = crossbeam_channel::unbounded::<SpotifyRequest>();
+        {
+            let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
+            std::thread::Builder::new()
+                .name("nullamp-spotify".into())
+                .spawn(move || {
+                    while let Ok(SpotifyRequest { request, link }) = spotify_rx.recv() {
+                        let result = nullamp_spotify::fetch(&link).map_err(|e| e.to_string());
+                        match &result {
+                            Ok(list) => log::info!("Spotify: {} tracks in \"{}\"{}", list.tracks.len(), list.name, if list.cut { " (the page stops at its limit)" } else { "" }),
+                            Err(e) => log::warn!("Spotify playlist {link}: {e}"),
+                        }
+                        if tx.send(JobResult::Spotify { request, result }).is_err() {
+                            return;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn spotify worker");
+        }
+
         let telegram = {
             let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
             nullamp_telegram::Telegram::start(paths.telegram_session(), move |event| {
@@ -595,6 +626,7 @@ impl Workers {
             split,
             split_current,
             tracklists,
+            spotify,
             telegram,
             results,
             scan_generation,
@@ -665,6 +697,11 @@ impl Workers {
     /// [`JobResult::TracklistPage`] under `request`.
     pub fn fetch_tracklist(&self, request: u64, guid: String, url: String) {
         let _ = self.tracklists.send(TracklistRequest::Fetch { request, guid, url });
+    }
+
+    /// Read the public Spotify playlist `link` names; answered with [`JobResult::Spotify`] under `request`.
+    pub fn fetch_spotify(&self, request: u64, link: String) {
+        let _ = self.spotify.send(SpotifyRequest { request, link });
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with

@@ -54,6 +54,7 @@ Do any of the following:
 - Drag files or folders from Finder onto the window. They land where you drop them.
 - Click **Add files…** (⌘O) or **Add folder…** (⇧⌘O) above the playlist.
 - Use **List ▸ Import M3U / M3U8…** to load an existing playlist.
+- Use **List ▸ Import from Spotify…** to turn a public Spotify playlist into a playlist here (see [Importing a Spotify playlist](#importing-a-spotify-playlist)).
 - Use the **List** menu to add playlists from rekordbox or Mixxx (see [section 8](#8-rekordbox-and-mixxx)).
 
 Double-click a row, or select it and press Enter, to play it.
@@ -146,7 +147,7 @@ Playlists are saved automatically and are restored the next time you start Nulla
 | Reorder | Drag rows. A line shows where they will land. Or use **▲ ▼**, or ⌥↑ and ⌥↓. |
 | Copy to another playlist | Drag the rows onto that playlist's tab, or right-click ▸ **Copy to playlist**. They are added at the end and stay in this playlist too. |
 | Remove | **Remove**, or Delete or Backspace |
-| Right-click menu | **Play**, **Inspect metadata**, **Show in folder**, **Copy path**, **Copy to playlist**, **Move up**, **Move down**, **Remove** |
+| Right-click menu | **Play**, **Inspect metadata**, **Show in folder**, **Copy path**, **Change file…** (type, paste or browse for another file for the track, for one that moved), **Copy to playlist**, **Move up**, **Move down**, **Remove** |
 | Find the playing track | **◎ Now playing**, or ⌘J. This clears a filter that hides it. |
 | Filter | Type in the **Filter** field at the right of the toolbar, or press ⌘F. Only tracks whose title, artist, album or file name contain every word you type stay in the table. Each tab shows how many of its tracks match, so you can see which playlist has what you are looking for; the filter stays when you switch tabs. Enter moves to the list, Esc in the field clears it. While a filter is on, rows cannot be reordered (dragging them onto another tab still copies them), and ⌘A, ⇧-click and the arrow keys only take the shown rows. Adding files clears the filter. |
 
@@ -163,9 +164,17 @@ The **BPM** column shows the tempo from the tags. A tempo Nullamp detected while
 - **Sort:** by title, artist, album, file path, bitrate, BPM, key or duration, and **Reverse**. By key follows the Camelot wheel.
 - **List:**
   - **Open rekordbox USB**, **Open rekordbox collection…**, **Open Mixxx library…** and **Read metadata from DJ software** (see [section 8](#8-rekordbox-and-mixxx)).
-  - **Import M3U / M3U8…** and **Export as M3U8…**.
+  - **Import M3U / M3U8…**, **Import from Spotify…** and **Export as M3U8…**.
   - **Select all**, **Remove unavailable entries** and **Rescan tags** (re-read tags for every entry).
   - **Clear playlist…**.
+
+### Importing a Spotify playlist
+
+Choose **List ▸ Import from Spotify…** and paste the link of a public playlist (in Spotify: Share, Copy link to playlist). Nullamp makes a new playlist with the same name. You need no Spotify account, and nothing is downloaded: only the artist, title and length of each track are brought in.
+
+Every track shows as unavailable, because Nullamp has no file for it yet. Find the files yourself and add them. A file saved in your Music folder as `Spotify/<playlist name>/<artist> - <title>.mp3` is picked up by **List ▸ Rescan tags**.
+
+Spotify shows only the first 100 tracks of a playlist to a visitor without an account, so Nullamp warns when a longer playlist was cut. Private playlists cannot be read.
 
 ### Hiding the playlist
 

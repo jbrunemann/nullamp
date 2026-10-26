@@ -32,6 +32,15 @@ impl AppPaths {
         }
     }
 
+    /// The user's Music folder; under `NULLAMP_HOME` (tests, portable use) the data folder instead, so
+    /// nothing is placed in their own.
+    pub fn music(&self) -> PathBuf {
+        if std::env::var_os("NULLAMP_HOME").is_some() {
+            return self.data.clone();
+        }
+        directories::UserDirs::new().and_then(|d| d.audio_dir().map(std::path::Path::to_path_buf)).unwrap_or_else(|| self.data.clone())
+    }
+
     pub fn playlists(&self) -> PathBuf {
         self.config.join("playlists")
     }
