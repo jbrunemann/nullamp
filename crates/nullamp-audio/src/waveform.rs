@@ -83,8 +83,9 @@ impl Waveform {
     }
 }
 
-/// Decode `path` and summarise it. `cancel` is polled between packets.
-pub fn compute(path: &Path, cancel: &dyn Fn() -> bool) -> Result<Waveform, WaveformError> {
+/// Decode `path` and summarise it. `cancel` is polled between packets. The band colours cost about
+/// half again as much as the rest of the pass, so `with_colors` false leaves them out.
+pub fn compute(path: &Path, with_colors: bool, cancel: &dyn Fn() -> bool) -> Result<Waveform, WaveformError> {
     let mut dec = Decoding::open_native(path)?;
     let channels = usize::from(dec.info.channels).max(1);
     let block_frames = (dec.info.sample_rate / (1000 / BLOCK_MS)).max(1) as usize;
@@ -115,8 +116,10 @@ pub fn compute(path: &Path, cancel: &dyn Fn() -> bool) -> Result<Waveform, Wavef
                         sum_sq += f64::from(s) * f64::from(s);
                         mono += f64::from(s);
                     }
-                    for (sq, level) in band_sq.iter_mut().zip(bands.split(mono / channels as f64)) {
-                        *sq += level * level;
+                    if with_colors {
+                        for (sq, level) in band_sq.iter_mut().zip(bands.split(mono / channels as f64)) {
+                            *sq += level * level;
+                        }
                     }
                     frames += 1;
                     if frames == block_frames {
@@ -133,7 +136,7 @@ pub fn compute(path: &Path, cancel: &dyn Fn() -> bool) -> Result<Waveform, Wavef
     if blocks.is_empty() {
         return Err(WaveformError::Empty);
     }
-    Ok(reduce(&blocks, BUCKETS))
+    Ok(reduce(&blocks, BUCKETS, with_colors))
 }
 
 /// What one decode block holds: peak and mean square of the whole signal, and the mean square of each band.
@@ -191,8 +194,8 @@ impl Bands {
 }
 
 /// Merge `blocks` into at most `buckets` equal runs: the loudest peak and the combined RMS of
-/// each, and the colour of its bands.
-fn reduce(blocks: &[Block], buckets: usize) -> Waveform {
+/// each, and the colour of its bands when `with_colors`.
+fn reduce(blocks: &[Block], buckets: usize, with_colors: bool) -> Waveform {
     let n = blocks.len();
     let buckets = n.min(buckets);
     let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -208,7 +211,7 @@ fn reduce(blocks: &[Block], buckets: usize) -> Waveform {
         out.rms.push(to_u8(mean_sq.sqrt()));
         levels.push([0, 1, 2].map(|k| (run.iter().map(|b| b.bands[k]).sum::<f32>() / run.len() as f32).sqrt()));
     }
-    out.colors = Some(colorize(&levels));
+    out.colors = with_colors.then(|| colorize(&levels));
     out
 }
 
@@ -247,12 +250,12 @@ mod tests {
     fn reduce_keeps_loudest_peak_and_combined_rms() {
         let block = |peak, mean_sq| Block { peak, mean_sq, bands: [0.0; 3] };
         let blocks = [block(0.2, 0.01), block(1.0, 0.25), block(0.5, 0.0), block(0.0, 0.0)];
-        let w = reduce(&blocks, 2);
+        let w = reduce(&blocks, 2, false);
         assert_eq!(w.peak, [255, 128]);
         // sqrt(mean(0.01, 0.25)) = sqrt(0.13)
         assert_eq!(w.rms, [(0.13f32.sqrt() * 255.0).round() as u8, 0]);
         // Fewer blocks than buckets: one bucket per block.
-        assert_eq!(reduce(&blocks[..3], 2048).peak.len(), 3);
+        assert_eq!(reduce(&blocks[..3], 2048, false).peak.len(), 3);
     }
 
     #[test]
@@ -270,7 +273,7 @@ mod tests {
 
     #[test]
     fn tone_has_steady_envelope() {
-        let w = compute(&fixture("tone.flac"), &|| false).unwrap();
+        let w = compute(&fixture("tone.flac"), true, &|| false).unwrap();
         assert!(!w.peak.is_empty());
         let mid = w.peak.len() / 2;
         // A sine's RMS is its peak over sqrt(2).
@@ -298,7 +301,7 @@ mod tests {
                 blocks.push(Block { peak: 0.5, mean_sq: 0.125, bands: sq.map(|s| (s / 441.0) as f32) });
             }
         }
-        let colors = reduce(&blocks, 3).colors.unwrap();
+        let colors = reduce(&blocks, 3, true).colors.unwrap();
         let dominant: Vec<usize> = colors.iter().map(|c| (0..3).max_by_key(|&k| c[k]).unwrap()).collect();
         assert_eq!(dominant, [0, 1, 2], "{colors:?}");
         assert!(colors.iter().all(|c| c.contains(&255)));
@@ -306,24 +309,31 @@ mod tests {
 
     #[test]
     fn decoded_files_come_with_colours() {
-        let w = compute(&fixture("tone.flac"), &|| false).unwrap();
+        let w = compute(&fixture("tone.flac"), true, &|| false).unwrap();
         assert_eq!(w.colors.as_ref().map(Vec::len), Some(w.peak.len()));
+    }
+
+    #[test]
+    fn colours_can_be_left_out_without_changing_the_rest() {
+        let (with, without) = (compute(&fixture("tone.flac"), true, &|| false).unwrap(), compute(&fixture("tone.flac"), false, &|| false).unwrap());
+        assert_eq!(without.colors, None);
+        assert_eq!((with.peak, with.rms), (without.peak, without.rms));
     }
 
     #[test]
     fn mono_and_resample_free_paths_work() {
         // 22.05 kHz mono: decoded at its own rate, not the device's.
-        let w = compute(&fixture("tone_mono_22k.wav"), &|| false).unwrap();
+        let w = compute(&fixture("tone_mono_22k.wav"), true, &|| false).unwrap();
         assert!(w.peak.iter().any(|&p| p > 20));
     }
 
     #[test]
     fn cancel_stops_decoding() {
-        assert_eq!(compute(&fixture("tone.flac"), &|| true), Err(WaveformError::Cancelled));
+        assert_eq!(compute(&fixture("tone.flac"), true, &|| true), Err(WaveformError::Cancelled));
     }
 
     #[test]
     fn missing_file_is_a_load_error() {
-        assert_eq!(compute(Path::new("/nonexistent/x.mp3"), &|| false), Err(WaveformError::Load(LoadError::NotFound)));
+        assert_eq!(compute(Path::new("/nonexistent/x.mp3"), true, &|| false), Err(WaveformError::Load(LoadError::NotFound)));
     }
 }

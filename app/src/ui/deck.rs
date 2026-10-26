@@ -38,6 +38,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             if has_art {
                 app.settings.artwork = app.settings.artwork.next();
                 app.mark_settings_dirty();
+                if app.settings.artwork == ArtworkMode::Original {
+                    app.request_wave_colors();
+                }
             } else {
                 app.toggle_side(Section::Inspector);
             }

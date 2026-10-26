@@ -133,6 +133,9 @@ struct WaveformRequest {
     path: PathBuf,
     /// Prefer the waveform rekordbox analysed when the file is on one of its USB sticks.
     rekordbox: bool,
+    /// Compute the band colours of a decoded file too (only the original artwork shows them). A cached
+    /// waveform without them is decoded again for them; one with them is used whatever this says.
+    colors: bool,
 }
 
 struct TempoRequest {
@@ -790,9 +793,9 @@ impl Workers {
 
     /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
     /// decode already running for an earlier request stops at its next packet.
-    pub fn request_waveform(&self, token: u64, path: PathBuf, rekordbox: bool) {
+    pub fn request_waveform(&self, token: u64, path: PathBuf, rekordbox: bool, colors: bool) {
         let generation = self.waveform_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.waveform.send(WaveformRequest { generation, token, path, rekordbox });
+        let _ = self.waveform.send(WaveformRequest { generation, token, path, rekordbox, colors });
     }
 
     /// Compute (or load from the cache) the tempo of `path`, loaded under `token`, of the whole
@@ -835,18 +838,20 @@ impl Workers {
 
 /// `None` when a newer request replaced this one while it ran.
 fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
-    let WaveformRequest { generation, token, path, rekordbox } = request;
+    let WaveformRequest { generation, token, path, rekordbox, colors: want_colors } = request;
     let fingerprint = store::fingerprint(&path).ok();
     // The same file once analysed by rekordbox, now played from somewhere else.
     if let Some(found) = rekordbox.then(|| fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox(dir, fp))).flatten() {
         return Some(JobResult::Waveform { token, result: Ok(found.wave), colors: found.colors });
     }
-    if let Some(mut wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
+    // An entry without colours is only good enough while nobody wants them; the decode below then replaces it.
+    let cached = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)).filter(|w| w.colors.is_some() || !want_colors);
+    if let Some(mut wave) = cached {
         let colors = wave.colors.take();
         return Some(JobResult::Waveform { token, result: Ok(wave), colors });
     }
     let cancelled = || current.load(Ordering::Relaxed) != generation;
-    match nullamp_audio::compute_waveform(&path, &cancelled) {
+    match nullamp_audio::compute_waveform(&path, want_colors, &cancelled) {
         Ok(mut wave) => {
             if let Some(fp) = fingerprint {
                 waveform_cache::store(dir, &fp, &wave);
