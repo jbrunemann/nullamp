@@ -1,3 +1,4 @@
 target/
 *.nullamp-tmp
 .playwright-mcp/
+web/pkg/
