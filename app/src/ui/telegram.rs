@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use egui::RichText;
-use nullamp_core::EntryId;
+use nullamp_core::{EntryId, PlaylistEntry};
 use nullamp_telegram::{Ask, Choice, Credentials, Event, LoginStep, Outcome, Progress};
 
 use super::{App, dialogs, playlist_view, theme, widgets};
@@ -138,6 +138,27 @@ pub fn unavailable(app: &App) -> Option<&'static str> {
 /// wait [`WAIT`] for a sound file.
 pub fn ask_entry(app: &mut App, entry: EntryId) {
     let Some(text) = app.mix.setlist.as_ref().and_then(|s| s.entries.iter().find(|e| e.id == entry)).filter(|e| !e.is_unidentified()).map(|e| format!("{} - {}", e.display_artist(), e.full_title())) else {
+        app.warn("The track has no name to ask for");
+        return;
+    };
+    send_ask(app, entry, text);
+}
+
+/// What to ask for on behalf of a playlist track: "Artist - Title" from the tags it had when it was
+/// last read, the title alone when that is all there is, else the file name without its extension.
+fn playlist_query(e: &PlaylistEntry) -> Option<String> {
+    let tag = |t: &Option<String>| t.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned);
+    let text = match (tag(&e.info.artist), tag(&e.info.title)) {
+        (Some(artist), Some(title)) => format!("{artist} - {title}"),
+        (None, Some(title)) => title,
+        _ => e.path.file_stem()?.to_string_lossy().trim().to_owned(),
+    };
+    (!text.is_empty()).then_some(text)
+}
+
+/// Ask the bot for a playlist track, which is usually one whose file is not found any more.
+pub fn ask_playlist_entry(app: &mut App, entry: EntryId) {
+    let Some(text) = app.player.viewed().get(entry).and_then(playlist_query) else {
         app.warn("The track has no name to ask for");
         return;
     };
@@ -419,7 +440,7 @@ pub fn body(app: &mut App, ui: &mut egui::Ui) {
             dirty = true;
         }
     });
-    ui.label(RichText::new(format!("Setlist > right-click a track > Request on Telegram asks the bot for \"Artist - Title\" as you, like typing @bot Artist - Title in a chat, and saves the result you choose (or the only one) into a Telegram playlist, waiting up to {} s for the bot; everything the bot answers is logged on the Logs tab. Your login stays on this computer. Telegram may limit accounts that send automated messages, so this sends one per click.", WAIT.as_secs())).small().weak());
+    ui.label(RichText::new(format!("Setlist > right-click a track, or a playlist track whose file is not found > Request on Telegram asks the bot for \"Artist - Title\" as you, like typing @bot Artist - Title in a chat, and saves the result you choose (or the only one) into a Telegram playlist, waiting up to {} s for the bot; everything the bot answers is logged on the Logs tab. Your login stays on this computer. Telegram may limit accounts that send automated messages, so this sends one per click.", WAIT.as_secs())).small().weak());
     if dirty {
         app.settings.telegram_api_id = app.settings.telegram_api_id.trim().to_owned();
         app.settings.telegram_api_hash = app.settings.telegram_api_hash.trim().to_owned();
@@ -526,6 +547,19 @@ mod tests {
         assert_eq!((c.api_id, c.api_hash.as_str()), (12345, "abc"));
         s.telegram_api_id = "twelve".into();
         assert!(credentials(&s).is_none());
+    }
+
+    /// A playlist track is asked for by its tags, or by its file name when it has none.
+    #[test]
+    fn a_playlist_track_is_asked_for_by_tags_or_file_name() {
+        let mut e = PlaylistEntry::new("/gone/01 Locklead - Hunting.mp3".into());
+        assert_eq!(playlist_query(&e).as_deref(), Some("01 Locklead - Hunting"));
+        e.info.title = Some(" Hunting ".into());
+        assert_eq!(playlist_query(&e).as_deref(), Some("Hunting"));
+        e.info.artist = Some("Locklead".into());
+        assert_eq!(playlist_query(&e).as_deref(), Some("Locklead - Hunting"));
+        e.info.title = Some("  ".into());
+        assert_eq!(playlist_query(&e).as_deref(), Some("01 Locklead - Hunting"));
     }
 
     #[test]

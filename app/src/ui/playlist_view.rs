@@ -999,6 +999,22 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         }
         ui.close();
     }
+    if app.player.viewed().get(id).is_some_and(|e| e.status == EntryStatus::Missing) {
+        let asked = app.telegram.asking.as_ref().map(|a| a.entry);
+        if asked == Some(id) {
+            if ui.button("Cancel Telegram").clicked() {
+                super::telegram::cancel_ask(app);
+                ui.close();
+            }
+        } else {
+            let why_not = if asked.is_some() { Some("Telegram is being asked about another track; wait for it, or cancel it from that track's menu") } else { super::telegram::unavailable(app) };
+            let hover = why_not.unwrap_or("Asks the Telegram bot for this track as you, like typing @bot Artist - Title in a chat, and saves the result you choose");
+            if ui.add_enabled(why_not.is_none(), egui::Button::new("Request on Telegram")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+                super::telegram::ask_playlist_entry(app, id);
+                ui.close();
+            }
+        }
+    }
     if app.player.lists.len() > 1 {
         ui.menu_button("Copy to playlist", |ui| {
             for i in 0..app.player.lists.len() {
