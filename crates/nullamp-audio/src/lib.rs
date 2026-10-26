@@ -19,6 +19,7 @@
 mod bands;
 mod decode;
 mod engine;
+mod fidlib;
 mod fingerprint;
 mod kind;
 mod mono;

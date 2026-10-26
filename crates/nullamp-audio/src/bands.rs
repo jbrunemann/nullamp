@@ -1,14 +1,15 @@
 //! The colours of a waveform: how loud the low, mid and high sounds of each stretch of a file are.
 //!
-//! Follows the scheme of Mixxx's waveform analysis, written here from its description. The signal
-//! goes through three filters side by side (low below 600 Hz, mid from 600 Hz to 4 kHz, high above
-//! 4 kHz, each a 4th-order Bessel), and every stretch of 1/441 s (a stride) keeps the largest
-//! absolute value of each band, and of the whole signal, over both channels. The values of a bucket
-//! of the overview are the mean of its strides' maxima, never rescaled by anything about the file, so
-//! a bass-heavy track stays red. A bucket's colour is its (low, mid, high) as (red, green, blue), the
-//! brightest channel brought to full, and its height is the mean peak of the whole signal.
+//! Follows Mixxx's waveform analysis (`AnalyzerWaveform`, GPL-2.0-or-later; the filters are in
+//! [`crate::fidlib`]). The signal goes through three filters side by side (low below 600 Hz, mid
+//! from 600 Hz to 4 kHz, high above 4 kHz, each a 4th-order Bessel), and every stretch of 1/441 s
+//! (a stride) keeps the largest absolute value of each band, and of the whole signal, over both
+//! channels. The values of a bucket of the overview are the mean of its strides' maxima, never
+//! rescaled by anything about the file, so a bass-heavy track stays red. A bucket's colour is its
+//! (low, mid, high) as (red, green, blue), the brightest channel brought to full, and its height is
+//! the mean peak of the whole signal.
 
-use std::f64::consts::PI;
+use crate::fidlib::{Design, Kind, Runner};
 
 /// Where the bands part: below `LOW_MID_HZ` is low, above `MID_HIGH_HZ` high.
 const LOW_MID_HZ: f64 = 600.0;
@@ -19,70 +20,26 @@ const STRIDES_PER_SECOND: f64 = 441.0;
 /// the memory does not grow with the length of a file and the average stays exact.
 const MAX_CELLS: usize = 4096;
 
-/// Poles with a positive imaginary part of a 4th-order Bessel low-pass whose -3 dB point is at 1 rad/s.
-const BESSEL4_POLES: [(f64, f64); 2] = [(-0.995_208_7, 1.257_105_8), (-1.370_067_9, 0.410_249_7)];
-
-/// A second-order section (transposed direct form II). The state is `f64` because a 600 Hz corner
-/// at 44.1 kHz has poles close enough to 1 to lose precision in `f32`.
-#[derive(Clone)]
-struct Biquad {
-    b: [f64; 3],
-    a: [f64; 2],
-    z: [f64; 2],
-}
-
-impl Biquad {
-    fn run(&mut self, x: f64) -> f64 {
-        let y = self.b[0] * x + self.z[0];
-        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
-        self.z[1] = self.b[2] * x - self.a[1] * y;
-        y
-    }
-}
-
-/// A 4th-order Bessel filter with its -3 dB point at `hz`, as two sections: the poles of the
-/// prototype scaled to the prewarped corner (inverted first for a high-pass), then the bilinear transform.
-fn bessel4(rate: f64, hz: f64, high: bool) -> [Biquad; 2] {
-    let k = 2.0 * rate;
-    let corner = k * (PI * hz.min(rate * 0.45) / rate).tan();
-    BESSEL4_POLES.map(|(re, im)| {
-        let (re, im) = if high {
-            let power = re * re + im * im;
-            (corner * re / power, corner * im / power)
-        } else {
-            (corner * re, corner * im)
-        };
-        let (c1, c0) = (-2.0 * re, re * re + im * im);
-        let d0 = k * k + c1 * k + c0;
-        let a = [(2.0 * c0 - 2.0 * k * k) / d0, (k * k - c1 * k + c0) / d0];
-        let b = if high { [k * k / d0, -2.0 * k * k / d0, k * k / d0] } else { [c0 / d0, 2.0 * c0 / d0, c0 / d0] };
-        Biquad { b, a, z: [0.0; 2] }
-    })
-}
-
-fn run(chain: &mut [Biquad; 2], x: f64) -> f64 {
-    let first = chain[0].run(x);
-    chain[1].run(first)
-}
-
-/// The three filters of one channel.
+/// The three filters of one channel, side by side.
 #[derive(Clone)]
 struct Bands {
-    low: [Biquad; 2],
-    mid_high_pass: [Biquad; 2],
-    mid_low_pass: [Biquad; 2],
-    high: [Biquad; 2],
+    low: Runner,
+    mid: Runner,
+    high: Runner,
 }
 
 impl Bands {
     fn new(rate: f64) -> Bands {
-        Bands { low: bessel4(rate, LOW_MID_HZ, false), mid_high_pass: bessel4(rate, LOW_MID_HZ, true), mid_low_pass: bessel4(rate, MID_HIGH_HZ, false), high: bessel4(rate, MID_HIGH_HZ, true) }
+        Bands {
+            low: Design::bessel4(Kind::LowPass, rate, LOW_MID_HZ, 0.0).runner(),
+            mid: Design::bessel4(Kind::BandPass, rate, LOW_MID_HZ, MID_HIGH_HZ).runner(),
+            high: Design::bessel4(Kind::HighPass, rate, MID_HIGH_HZ, 0.0).runner(),
+        }
     }
 
     /// Low, mid and high part of `x`.
     fn split(&mut self, x: f64) -> [f64; 3] {
-        let mid = run(&mut self.mid_low_pass, run(&mut self.mid_high_pass, x));
-        [run(&mut self.low, x), mid, run(&mut self.high, x)]
+        [self.low.run(x), self.mid.run(x), self.high.run(x)]
     }
 }
 
@@ -211,33 +168,6 @@ mod tests {
 
     fn sine(hz: f64, i: usize) -> f64 {
         0.5 * (std::f64::consts::TAU * hz * i as f64 / RATE).sin()
-    }
-
-    /// How much of a sine of `hz` a filter lets through, measured on its steady state.
-    fn gain(mut filter: impl FnMut(f64) -> f64, hz: f64) -> f64 {
-        let n = RATE as usize;
-        let out: Vec<f64> = (0..n).map(|i| filter(sine(hz, i))).collect();
-        let rms = |v: &[f64]| (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt();
-        rms(&out[n / 2..]) / (0.5 / 2f64.sqrt())
-    }
-
-    #[test]
-    fn bessel_filters_are_3_db_down_at_their_corner() {
-        let mut low = bessel4(RATE, 600.0, false);
-        let mut high = bessel4(RATE, 4000.0, true);
-        let at_corner = gain(|x| run(&mut low, x), 600.0);
-        assert!((at_corner - 0.7071).abs() < 0.01, "low-pass at its corner: {at_corner}");
-        let at_corner = gain(|x| run(&mut high, x), 4000.0);
-        assert!((at_corner - 0.7071).abs() < 0.01, "high-pass at its corner: {at_corner}");
-    }
-
-    #[test]
-    fn bessel_filters_pass_and_stop() {
-        let (mut a, mut b, mut c, mut d) = (bessel4(RATE, 600.0, false), bessel4(RATE, 600.0, false), bessel4(RATE, 4000.0, true), bessel4(RATE, 4000.0, true));
-        assert!(gain(|x| run(&mut a, x), 60.0) > 0.99, "low-pass passes 60 Hz");
-        assert!(gain(|x| run(&mut b, x), 6000.0) < 0.01, "low-pass stops 6 kHz");
-        assert!(gain(|x| run(&mut c, x), 12000.0) > 0.95, "high-pass passes 12 kHz");
-        assert!(gain(|x| run(&mut d, x), 400.0) < 0.01, "high-pass stops 400 Hz");
     }
 
     #[test]
