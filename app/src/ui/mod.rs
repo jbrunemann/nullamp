@@ -1,5 +1,7 @@
 //! The single-window user interface and the glue between UI, controller and workers.
 
+#[cfg(target_os = "android")]
+mod android_dialogs;
 pub mod deck;
 pub mod dialogs;
 pub mod file_browser;
