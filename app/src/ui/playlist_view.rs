@@ -505,6 +505,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 dialogs::import_playlist(app);
                 ui.close();
             }
+            if ui.button("Import from Spotify…").on_hover_text("Make a playlist of a public Spotify playlist. No account needed; the files are for you to find, so every track starts out missing").clicked() {
+                super::spotify::open(app);
+                ui.close();
+            }
             if ui.button("Export as M3U8…").clicked() {
                 let i = app.player.viewing;
                 dialogs::export_playlist(app, i);
@@ -997,6 +1001,12 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
         if let Some(e) = app.player.viewed().get(id) {
             ui.ctx().copy_text(e.path.display().to_string());
         }
+        ui.close();
+    }
+    let busy = app.player.is_current(list, id) && app.player.status != Status::Stopped;
+    let hover = if busy { "Stop the track first" } else { "Choose another file for this track, for one that moved or was renamed" };
+    if ui.add_enabled(!busy, egui::Button::new("Change file…")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+        dialogs::change_file(app, list, id);
         ui.close();
     }
     if app.player.viewed().get(id).is_some_and(|e| e.status == EntryStatus::Missing) {

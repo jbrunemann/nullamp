@@ -735,6 +735,49 @@ fn render_telegram_chooser() {
     save(&mut h, "06k-telegram-no-results.png");
 }
 
+/// Importing a Spotify playlist: the dialog, and the list of tracks without files it makes.
+#[test]
+#[ignore]
+fn render_spotify_import() {
+    use nullamp_spotify::{Playlist, Track};
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    crate::ui::spotify::open(h.state_mut());
+    h.state_mut().dialogs.spotify.as_mut().unwrap().link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=0a1b2c".into();
+    settle(&mut h, 300);
+    save(&mut h, "06l-spotify-import.png");
+    let import = h.state_mut().dialogs.spotify.as_mut().unwrap();
+    import.error = Some("Spotify has no public playlist with this link; it may be private".into());
+    settle(&mut h, 300);
+    save(&mut h, "06m-spotify-error.png");
+    let track = |artist: &str, title: &str, seconds: f64| Track { artist: artist.into(), title: title.into(), duration: Some(seconds), uri: String::new() };
+    let tracks = vec![
+        track("Fleetwood Mac", "Dreams - 2004 Remaster", 257.0),
+        track("Led Zeppelin", "Stairway to Heaven - Remaster", 483.0),
+        track("Queen, David Bowie", "Under Pressure - Remastered 2011", 248.0),
+        track("Creedence Clearwater Revival", "Bad Moon Rising", 142.0),
+    ];
+    let app = h.state_mut();
+    app.dialogs.spotify.as_mut().unwrap().request = Some(1);
+    crate::ui::spotify::on_playlist(app, 1, Ok(Playlist { name: "Rock Classics".into(), id: String::new(), tracks, cut: false }));
+    settle(&mut h, 600);
+    save(&mut h, "06n-spotify-playlist.png");
+}
+
+/// The Change file dialog of a playlist row, with a path that is no file.
+#[test]
+#[ignore]
+fn render_change_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[6].id;
+    crate::ui::dialogs::change_file(h.state_mut(), 0, id);
+    settle(&mut h, 300);
+    save(&mut h, "06o-change-file.png");
+}
+
 /// The rekordbox settings page, which takes over the deck.
 #[test]
 #[ignore]

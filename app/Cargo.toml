@@ -16,6 +16,7 @@ nullamp-artwork.workspace = true
 nullamp-shazam.workspace = true
 nullamp-telegram.workspace = true
 nullamp-tracklists.workspace = true
+nullamp-spotify.workspace = true
 nullamp-rekordbox.workspace = true
 nullamp-mixxx.workspace = true
 serde.workspace = true

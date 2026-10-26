@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use crossbeam_channel::{Receiver, Sender};
 use egui::{Key, RichText};
 
+use nullamp_core::EntryId;
+
 use super::{App, list_index, playlist_view, setlist_view, theme, widgets};
 use crate::cache::{self, Kind, Usage};
 use crate::rekordbox::Overview;
@@ -13,6 +15,8 @@ use crate::workers::{AUDIO_EXTENSIONS, Job};
 
 pub enum DialogResult {
     AddFiles { list: String, paths: Vec<PathBuf> },
+    /// The file picked with Browse in the Change file dialog.
+    ChangeFileBrowsed(PathBuf),
     ImportPlaylist { list: String, path: PathBuf },
     ExportPlaylist { list: String, path: PathBuf },
     ImportSetlist(PathBuf),
@@ -123,12 +127,14 @@ pub struct Dialogs {
     pub cache: CacheState,
     pub python: PythonState,
     pub library_import: Option<LibraryImport>,
+    pub change_file: Option<ChangeFile>,
+    pub spotify: Option<super::spotify::Import>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, change_file: None, spotify: None }
     }
 }
 
@@ -236,6 +242,112 @@ pub fn open_files(app: &mut App) {
     });
 }
 
+/// The "Change file" dialog of a playlist row: the track's file now, and the text of the file it should play instead.
+pub struct ChangeFile {
+    list: String,
+    entry: EntryId,
+    old: PathBuf,
+    /// The new path as typed, pasted or browsed.
+    text: String,
+    error: Option<String>,
+}
+
+/// "Change file…" of a playlist row: opens the dialog with the track's current path to edit.
+pub fn change_file(app: &mut App, list: usize, entry: EntryId) {
+    let Some(old) = app.player.lists.get(list).and_then(|d| d.playlist.get(entry)).map(|e| e.path.clone()) else { return };
+    let key = app.player.lists[list].key.clone();
+    app.dialogs.change_file = Some(ChangeFile { list: key, entry, text: old.display().to_string(), old, error: None });
+}
+
+/// Browse for the new file, starting in the folder of the one typed, else of the old one.
+fn browse_change_file(app: &App) {
+    let Some(c) = app.dialogs.change_file.as_ref() else { return };
+    let dir = [parse_path(&c.text), c.old.clone()].iter().find_map(|p| p.parent().filter(|d| d.is_dir()).map(Path::to_path_buf)).or_else(|| start_dir(app));
+    spawn(app, move || async move {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Choose file").add_filter("Audio", AUDIO_EXTENSIONS);
+        if let Some(dir) = dir {
+            d = d.set_directory(dir);
+        }
+        let file = d.pick_file().await?;
+        Some(DialogResult::ChangeFileBrowsed(file.path().to_path_buf()))
+    });
+}
+
+/// A path as people paste it: with quotes around it, `\ ` for the spaces (a terminal's drag and drop), or a
+/// leading `~`.
+fn parse_path(text: &str) -> PathBuf {
+    let text = text.trim().trim_matches(['"', '\'']).trim();
+    let text = text.replace("\\ ", " ");
+    match (text.strip_prefix("~/"), directories::UserDirs::new()) {
+        (Some(rest), Some(dirs)) => dirs.home_dir().join(rest),
+        _ => PathBuf::from(text),
+    }
+}
+
+/// Point the track at the typed path, when it names an audio file; else say what is wrong and keep the dialog.
+fn apply_change_file(app: &mut App) -> bool {
+    let Some(c) = app.dialogs.change_file.as_mut() else { return true };
+    let path = parse_path(&c.text);
+    c.error = if !path.is_file() {
+        Some("There is no file at that path".into())
+    } else if !crate::workers::is_audio_file(&path) {
+        Some("That is not an audio file Nullamp can play".into())
+    } else {
+        None
+    };
+    if c.error.is_some() {
+        return false;
+    }
+    let (list, entry) = (c.list.clone(), c.entry);
+    app.dialogs.change_file = None;
+    if let Some(i) = list_index(app, &list) {
+        app.settings.last_dir = path.parent().map(Path::to_path_buf);
+        app.mark_settings_dirty();
+        app.change_entry_file(i, entry, path);
+    }
+    true
+}
+
+fn change_file_modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
+    let Some(mut c) = app.dialogs.change_file.take() else { return };
+    let (mut keep, mut apply, mut browse) = (true, false, false);
+    egui::Modal::new(egui::Id::unique("change-file")).show(ctx, |ui| {
+        ui.set_width(widgets::modal_width(ctx, 560.0));
+        ui.heading("Change file");
+        ui.horizontal(|ui| {
+            let field = ui.add(egui::TextEdit::singleline(&mut c.text).desired_width(ui.available_width() - 90.0).font(egui::TextStyle::Monospace));
+            if field.changed() {
+                c.error = None;
+            }
+            if !field.has_focus() && !browse {
+                field.request_focus();
+            }
+            if ui.button("Browse…").clicked() {
+                browse = true;
+            }
+        });
+        if let Some(error) = &c.error {
+            ui.label(RichText::new(error).small().color(theme::err()));
+        }
+        ui.horizontal(|ui| {
+            let ready = !c.text.trim().is_empty() && parse_path(&c.text) != c.old;
+            if ui.add_enabled(ready, egui::Button::new("Change")).clicked() || (ready && enter) {
+                apply = true;
+            }
+            if ui.button("Cancel").clicked() || escape {
+                keep = false;
+            }
+        });
+    });
+    app.dialogs.change_file = Some(c);
+    if browse {
+        browse_change_file(app);
+    }
+    if (apply && apply_change_file(app)) || !keep {
+        app.dialogs.change_file = None;
+    }
+}
+
 pub fn open_folder(app: &mut App) {
     let list = app.player.lists[app.player.viewing].key.clone();
     let dir = start_dir(app);
@@ -336,7 +448,7 @@ pub fn pick_artwork(app: &mut App) {
     });
 }
 
-fn sanitize(name: &str) -> String {
+pub(super) fn sanitize(name: &str) -> String {
     name.chars().map(|c| if "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
 }
 
@@ -355,6 +467,11 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
             }
             if let Some(i) = list_index(app, &list) {
                 app.add_paths(i, paths, None);
+            }
+        }
+        DialogResult::ChangeFileBrowsed(path) => {
+            if let Some(c) = app.dialogs.change_file.as_mut() {
+                (c.text, c.error) = (path.display().to_string(), None);
             }
         }
         DialogResult::ImportPlaylist { list, path } => {
@@ -453,6 +570,8 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
 
     library_import_modal(app, ctx, escape);
     super::telegram::chooser_modal(app, ctx);
+    change_file_modal(app, ctx, enter, escape);
+    super::spotify::modal(app, ctx, enter, escape);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
@@ -932,5 +1051,60 @@ fn cache_body(app: &mut App, ui: &mut egui::Ui) {
     }
     if let Some(kinds) = clear {
         scan_cache(app, kinds);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use nullamp_core::EntryStatus;
+
+    use super::*;
+    use crate::ui_snapshots::{seeded_store, settle};
+
+    #[test]
+    fn pasted_paths_are_cleaned_up() {
+        assert_eq!(parse_path("  /Music/a b.mp3\n"), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("\"/Music/a b.mp3\""), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("'/Music/a b.mp3'"), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("/Music/a\\ b.mp3"), PathBuf::from("/Music/a b.mp3"));
+        if let Some(dirs) = directories::UserDirs::new() {
+            assert_eq!(parse_path("~/Music/a.mp3"), dirs.home_dir().join("Music/a.mp3"));
+        }
+    }
+
+    /// The dialog starts with the track's path; a path that is no file or no audio is explained and keeps the
+    /// dialog open, and an audio file is taken, remembered as the folder to browse from.
+    #[test]
+    fn the_dialog_takes_a_typed_path_that_names_an_audio_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (id, old, new) = (entries[6].id, entries[6].path.clone(), entries[1].path.clone());
+
+        change_file(app, 0, id);
+        assert_eq!(app.dialogs.change_file.as_ref().unwrap().text, old.display().to_string());
+
+        app.dialogs.change_file.as_mut().unwrap().text = format!("{}.nope", new.display());
+        assert!(!apply_change_file(app));
+        assert_eq!(app.dialogs.change_file.as_ref().unwrap().error.as_deref(), Some("There is no file at that path"));
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, "not music").unwrap();
+        app.dialogs.change_file.as_mut().unwrap().text = notes.display().to_string();
+        assert!(!apply_change_file(app));
+        assert!(app.dialogs.change_file.as_ref().unwrap().error.as_deref().is_some_and(|e| e.contains("not an audio file")));
+        assert_eq!(app.player.lists[0].playlist.get(id).unwrap().path, old);
+
+        // Browsing fills the field and clears the complaint.
+        on_dialog_result(app, DialogResult::ChangeFileBrowsed(new.clone()));
+        assert!(app.dialogs.change_file.as_ref().unwrap().error.is_none());
+        assert!(apply_change_file(app));
+        assert!(app.dialogs.change_file.is_none());
+        let track = app.player.lists[0].playlist.get(id).unwrap();
+        assert_eq!((&track.path, &track.status), (&new, &EntryStatus::Unknown));
+        assert_eq!(app.settings.last_dir.as_deref(), new.parent());
     }
 }

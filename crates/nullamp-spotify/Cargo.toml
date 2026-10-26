@@ -1,0 +1,11 @@
+[package]
+name = "nullamp-spotify"
+description = "Reads the tracks of a public Spotify playlist from its embed page, without an account or a key"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nullamp-http.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
