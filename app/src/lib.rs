@@ -3,9 +3,16 @@
 //! The desktop program is `main.rs`; the Android app is the `android` crate, which hands its activity to [`run_android`].
 
 mod cache;
+mod datapack;
 mod entry_art;
+#[cfg(target_os = "macos")]
+mod finder;
+#[cfg(not(target_os = "android"))]
+mod instance;
+mod locate;
 mod logbuf;
 mod mixxx;
+mod open;
 mod paths;
 mod placeholder_art;
 mod player;
@@ -36,6 +43,17 @@ pub fn run() -> eframe::Result {
     logbuf::init(LOG_FILTER);
     let paths = paths::AppPaths::detect();
     log::info!("config: {}", paths.config.display());
+    // A second launch hands its files to the running instance and leaves.
+    let args = open::args_paths(std::env::args_os().skip(1));
+    let listener = match instance::claim(&paths.config, &args) {
+        instance::Role::Forwarded => return Ok(()),
+        instance::Role::Primary(listener) => listener,
+    };
+    if !args.is_empty() {
+        open::push(args);
+    }
+    #[cfg(target_os = "macos")]
+    finder::install();
     let store = store::Store::new(paths.clone());
 
     let options = eframe::NativeOptions {
@@ -51,6 +69,13 @@ pub fn run() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native("Nullamp", options, Box::new(|cc| {
+        open::set_context(cc.egui_ctx.clone());
+        if let Some(listener) = listener {
+            listener.spawn();
+        }
+        // The notification may have come first; for a running app this is the moment that matters.
+        #[cfg(target_os = "macos")]
+        finder::add_open_files();
         let mut app = ui::App::new(cc, store);
         app.install_native_menu();
         Ok(Box::new(app))

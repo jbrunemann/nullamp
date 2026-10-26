@@ -32,6 +32,7 @@ nullamp-artwork.workspace = true
 nullamp-shazam.workspace = true
 nullamp-telegram.workspace = true
 nullamp-tracklists.workspace = true
+nullamp-spotify.workspace = true
 nullamp-rekordbox.workspace = true
 nullamp-mixxx.workspace = true
 serde.workspace = true
@@ -44,6 +45,7 @@ directories = "6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 raw-window-handle = "0.6"
+zip = { version = "9.1.1", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
@@ -65,3 +67,5 @@ android_logger = "0.15"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21.2", default-features = false }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSArray", "NSNotification"] }

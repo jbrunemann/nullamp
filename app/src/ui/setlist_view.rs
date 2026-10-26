@@ -2032,3 +2032,136 @@ fn render_tracklist_search() {
     h.render().expect("render").save(out.join("16a-tracklist-search.png")).unwrap();
     h.state_mut().player.stop();
 }
+
+/// The screenshots of the website, from a library of synthesized, tagged files with covers and a
+/// mix with a cue sheet. `NULLAMP_SHOWCASE` names its folder; `site/tools/make-showcase.sh` makes
+/// one. Images go to target/screenshots/site/.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn render_site_screenshots() {
+    use egui_kittest::Harness;
+
+    use crate::paths::AppPaths;
+    use crate::rekordbox::{Item, Overview};
+    use crate::store::{PlaylistDoc, Settings, Store};
+    use crate::ui_snapshots::settle;
+
+    let Some(lib) = std::env::var_os("NULLAMP_SHOWCASE").map(PathBuf::from) else {
+        eprintln!("NULLAMP_SHOWCASE is not set; nothing to render");
+        return;
+    };
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&lib).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "mp3")).collect();
+    files.sort();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = AppPaths { config: dir.path().join("config"), data: dir.path().join("data"), cache: dir.path().join("cache") };
+    let store = Store::new(paths);
+    let mut pl = nullamp_core::Playlist::new("Sunday Sets");
+    pl.add_paths(files);
+    store.save_playlist(&PlaylistDoc { key: "default".into(), playlist: pl }).unwrap();
+    store.save_playlist(&PlaylistDoc { key: "peak-time".into(), playlist: nullamp_core::Playlist::new("Peak Time") }).unwrap();
+    store.save_settings(&Settings { volume: 0.0, appearance: "dark".into(), online_artwork: false, ..Default::default() }).unwrap();
+
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/screenshots/site");
+    std::fs::create_dir_all(&out).unwrap();
+    let save = |h: &mut Harness<'_, App>, name: &str| h.render().expect("render").save(out.join(name)).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 2000);
+
+    // The mix, a few minutes into its third track.
+    let ids: Vec<EntryId> = h.state().player.lists[0].playlist.entries().iter().map(|e| e.id).collect();
+    h.state_mut().player.play_entry(0, ids[0], 0.0);
+    settle(&mut h, 5000);
+    {
+        let app = h.state_mut();
+        app.player.seek_to(700.0);
+        app.selection.ids = [ids[0]].into();
+        app.selection.cursor = Some(ids[0]);
+        app.inspector_open = false;
+        app.message = None;
+    }
+    settle(&mut h, 2500);
+    save(&mut h, "setlist.png");
+
+    // Marks placed by ear, named by Shazam one by one: three named, one unsure, one being asked about.
+    let song = |artist: &str, title: &str| Song { artist: artist.into(), title: title.into(), key: title.into(), url: Some("https://www.shazam.com/".into()), offset: 0.0, time_skew: 0.0, frequency_skew: 0.0 };
+    {
+        let app = h.state_mut();
+        let starts = [0.0, 265.0, 555.0, 875.0, 1145.0, 1435.0];
+        let s = app.mix.setlist.as_mut().expect("the cue sheet");
+        s.entries = starts
+            .iter()
+            .map(|&t| {
+                let mut e = SetlistEntry::new("", "", Some(t), Provenance::Manual);
+                e.timing = Timing::Exact;
+                e
+            })
+            .collect();
+    }
+    let entries: Vec<EntryId> = h.state().mix.setlist.as_ref().unwrap().entries.iter().map(|e| e.id).collect();
+    let named = [("Halden Rue", "Glass Harbour"), ("Tessellate", "Night Shift (Extended Mix)"), ("Orla Finch & Nova Kite", "Low Tide (Dub Mix)")];
+    {
+        let app = h.state_mut();
+        for (i, (artist, title)) in named.iter().enumerate() {
+            let request = 20 + i as u64;
+            app.mix.identify = Some(Identifying { request, entry: entries[i], done: 5, total: 5, outcome: None });
+            on_identified(app, request, entries[i], Verdict::Named { song: song(artist, title), support: 4 });
+            on_identify_done(app, request, Ok(()));
+        }
+        app.mix.identify = Some(Identifying { request: 30, entry: entries[3], done: 5, total: 5, outcome: None });
+        on_identified(app, 30, entries[3], Verdict::Unsure { candidates: vec![song("Static Orchard", "Parallel Lines"), song("Kestrel", "Parallel Lines (Dub Mix)")] });
+        on_identify_done(app, 30, Ok(()));
+        app.mix.identify = Some(Identifying { request: 31, entry: entries[4], done: 3, total: 5, outcome: None });
+    }
+    crate::ui::select_setlist_entry(h.state_mut(), 3);
+    h.set_size(egui::vec2(1180.0, 900.0));
+    h.state_mut().message = None;
+    settle(&mut h, 600);
+    save(&mut h, "identify.png");
+    h.set_size(egui::vec2(1180.0, 740.0));
+    h.state_mut().mix.identify = None;
+    h.state_mut().player.stop();
+
+    // Nine tracks selected at once, edited together in the inspector.
+    h.state_mut().player.play_entry(0, ids[2], 0.0);
+    settle(&mut h, 2500);
+    {
+        let app = h.state_mut();
+        app.setlist_open = false;
+        app.inspector_open = true;
+        app.selection.ids = ids[1..].iter().copied().collect();
+        app.selection.cursor = Some(ids[2]);
+        crate::ui::inspect_selection(app);
+        app.message = None;
+    }
+    settle(&mut h, 1500);
+    save(&mut h, "inspector.png");
+
+    // Adding the lists of a Mixxx library.
+    {
+        let item = |id: &str, name: &str, depth: usize, is_folder: bool, tracks: usize| Item { id: id.into(), name: name.into(), depth, is_folder, tracks };
+        let overview = Overview {
+            tracks: 1284,
+            items: vec![
+                item("crates", "Crates", 0, true, 0),
+                item("crates/1", "Peak Time", 1, false, 48),
+                item("crates/2", "Warm Up", 1, false, 31),
+                item("crates/3", "Sunday Sets", 1, false, 22),
+                item("playlists", "Playlists", 0, true, 0),
+                item("playlists/1", "Auto DJ", 1, false, 12),
+                item("history", "History", 0, true, 0),
+                item("history/7", "2025-09-14", 1, false, 11),
+                item("history/9", "2025-09-21", 1, false, 9),
+            ],
+        };
+        let app = h.state_mut();
+        app.inspector_open = false;
+        app.selection.ids = [ids[2]].into();
+        app.selection.cursor = Some(ids[2]);
+        dialogs::open_library_import(app, dialogs::ImportSource::Mixxx, overview);
+        app.dialogs.library_import.as_mut().unwrap().selected.extend(["crates/1".to_owned(), "crates/3".to_owned()]);
+    }
+    settle(&mut h, 800);
+    save(&mut h, "dj-software.png");
+    h.state_mut().player.stop();
+}

@@ -8,6 +8,7 @@ mod menu;
 mod playlist_view;
 pub mod sections;
 mod setlist_view;
+pub mod spotify;
 pub mod telegram;
 pub mod theme;
 mod visualizer;
@@ -116,6 +117,10 @@ impl NowState {
 }
 
 /// Whether the lookup that failed `failed_for` ago is repeated now.
+fn plural(n: usize, noun: &str) -> String {
+    format!("{n} {noun}{}", if n == 1 { "" } else { "s" })
+}
+
 fn retry_due(failed_for: Duration, track_reactivated: bool) -> bool {
     track_reactivated || failed_for >= ENTRY_ART_RETRY
 }
@@ -385,7 +390,7 @@ impl App {
                 return;
             }
         }
-        if let Err(e) = std::process::Command::new("open").arg("-t").arg(&path).spawn() {
+        if let Err(e) = dialogs::open_in_editor(&path) {
             self.error(format!("Cannot open {}: {e}", path.display()));
         }
     }
@@ -533,6 +538,26 @@ impl App {
         }
     }
 
+    /// Make a track play another file. The tags of the new file replace what the track was known by; until
+    /// they are read the old ones stay. A track that is playing or loading keeps its file.
+    pub fn change_entry_file(&mut self, list: usize, entry: EntryId, path: PathBuf) {
+        if self.player.is_current(list, entry) && self.player.status != Status::Stopped {
+            self.warn("Stop the track before changing its file");
+            return;
+        }
+        let mut changed = false;
+        self.player.edit_list(list, |p| {
+            if let Some(e) = p.get_mut(entry) {
+                (e.path, e.status, changed) = (path.clone(), EntryStatus::Unknown, true);
+            }
+        });
+        if changed {
+            self.mark_list_dirty(list);
+            self.workers.scan(vec![path.clone()]);
+            self.info(format!("The track now plays {}", path.display()));
+        }
+    }
+
     pub fn insert_entries(&mut self, list: usize, entries: Vec<PlaylistEntry>, insert_at: Option<usize>) {
         if entries.is_empty() {
             return;
@@ -584,6 +609,31 @@ impl App {
         }
     }
 
+    fn raise_window(&self) {
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    /// Files from the command line, a second launch or Finder: added to the list on view, and the first one
+    /// plays when they are all plain audio files, the way a double-click is expected to behave.
+    fn handle_open_requests(&mut self) {
+        let request = crate::open::take();
+        if !request.raise {
+            return;
+        }
+        self.raise_window();
+        if request.paths.is_empty() {
+            return;
+        }
+        let play = request.paths.iter().all(|p| p.is_file() && crate::workers::is_audio_file(p));
+        let list = self.player.viewing;
+        self.add_paths(list, request.paths, None);
+        if let (true, Some(first)) = (play, self.selection.anchor) {
+            self.player.play_entry(list, first, 0.0);
+        }
+    }
+
     // ----- Event processing (runs every frame, also while hidden) -----
 
     fn process_events(&mut self) {
@@ -594,11 +644,11 @@ impl App {
         while let Ok(ev) = self.system_events.try_recv() {
             match ev {
                 SystemEvent::Command(cmd) => self.player.command(cmd, CommandSource::System),
-                SystemEvent::Raise => {
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
+                SystemEvent::Raise => self.raise_window(),
+                SystemEvent::OpenUri(uri) => match crate::open::uri_to_path(&uri) {
+                    Some(path) => crate::open::push(vec![path]),
+                    None => log::debug!("cannot open {uri}: not a local file"),
+                },
                 SystemEvent::Quit => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
         }
@@ -755,9 +805,12 @@ impl App {
                 if self.player.current.as_ref().is_some_and(|c| c.token == token) {
                     match result {
                         Ok(wave) => {
+                            // Colours arriving for a waveform already shown do not sweep it in again.
+                            if self.now.waveform.is_none() {
+                                self.now.wave_arrived = Some(Instant::now());
+                            }
                             self.now.waveform = Some(wave);
                             self.now.wave_colors = colors;
-                            self.now.wave_arrived = Some(Instant::now());
                         }
                         Err(e) => log::debug!("waveform: {e}"),
                     }
@@ -793,8 +846,33 @@ impl App {
             JobResult::SplitGaps { request, result } => setlist_view::on_split_gaps(self, request, result),
             JobResult::TracklistHits { request, result } => setlist_view::on_tracklist_hits(self, request, result),
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
+            JobResult::Located { request, root, search, secs } => dialogs::on_located(self, request, root, search, secs),
+            JobResult::Spotify { request, result } => spotify::on_playlist(self, request, result),
             JobResult::Telegram(event) => telegram::on_event(self, event),
             JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),
+            JobResult::DataPack { export, path, result } => match result {
+                Ok(s) if export => self.info(format!(
+                    "Saved {}: {}, {} and {}",
+                    path.display(),
+                    plural(s.setlists, "setlist"),
+                    plural(s.waveforms, "waveform"),
+                    plural(s.records, "record")
+                )),
+                Ok(s) => {
+                    let mut text = format!("Imported {}, {} and {}", plural(s.setlists + s.merged, "setlist"), plural(s.waveforms, "waveform"), plural(s.records, "record"));
+                    if s.present > 0 {
+                        text.push_str(&format!("; {} already here", s.present));
+                    }
+                    if s.rejected > 0 {
+                        text.push_str(&format!("; {} skipped as not valid", s.rejected));
+                    }
+                    if s.setlists + s.merged > 0 {
+                        text.push_str(". Open a mix again to see its setlist");
+                    }
+                    self.info(text);
+                }
+                Err(e) => self.error(format!("{}: {e}", path.display())),
+            },
             JobResult::TextWritten { path, result } => match result {
                 Ok(()) => self.info(format!("Saved {}", path.display())),
                 Err(e) => self.error(format!("Cannot write {}: {e}", path.display())),
@@ -880,6 +958,14 @@ impl App {
         }
     }
 
+    /// The original artwork shows band colours, which a waveform decoded under another setting lacks:
+    /// ask for them for the playing track. The waveform on screen stays until they arrive.
+    pub fn request_wave_colors(&mut self) {
+        if let Some(c) = self.player.current.as_ref().filter(|_| self.now.wave_colors.is_none()) {
+            self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform, true);
+        }
+    }
+
     fn on_track_changed(&mut self) {
         let Some(c) = self.player.current.clone() else { return };
         self.mark_settings_dirty();
@@ -888,7 +974,7 @@ impl App {
         self.now = NowState { art_shown, art_transition, ..NowState::default() };
         setlist_view::reset_for_track(self, c.token, c.path.clone());
         self.workers.submit(Job::NowPlaying { token: c.token, path: c.path.clone() });
-        self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform);
+        self.workers.request_waveform(c.token, c.path.clone(), self.settings.rekordbox_waveform, self.settings.artwork == ArtworkMode::Original);
         self.workers.request_tempo(c.token, c.path.clone(), None);
         self.scroll_to = Some(c.entry);
         if self.settings.inspector_follows_playing {
@@ -1428,6 +1514,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_events();
+        self.handle_open_requests();
         self.schedule_repaint(ctx);
     }
 
@@ -1567,5 +1654,37 @@ mod tests {
         assert!(!retry_due(ENTRY_ART_RETRY - Duration::from_secs(1), false));
         assert!(retry_due(ENTRY_ART_RETRY, false));
         assert!(retry_due(Duration::ZERO, true));
+    }
+
+    /// "Change file…" points one track at another file and has the new file's tags read; a track that is
+    /// playing keeps its file, and a track that is gone changes nothing.
+    #[test]
+    fn a_track_can_be_pointed_at_another_file() {
+        use crate::ui_snapshots::{seeded_store, settle};
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (gone, other) = (entries[6].id, entries[1].path.clone());
+        assert_eq!(app.player.lists[0].playlist.get(gone).unwrap().path.file_name().unwrap(), "missing.mp3");
+        app.player.lists[0].playlist.get_mut(gone).unwrap().status = EntryStatus::Missing;
+        let old_info = app.player.lists[0].playlist.get(gone).unwrap().info.clone();
+
+        app.change_entry_file(0, gone, other.clone());
+        let track = app.player.lists[0].playlist.get(gone).unwrap();
+        assert_eq!((&track.path, &track.status), (&other, &EntryStatus::Unknown));
+        assert_eq!(track.info, old_info, "the old tags stay until the new file's are read");
+        settle(&mut h, 500);
+        let track = h.state().player.lists[0].playlist.get(gone).unwrap();
+        assert_eq!(track.info.title.as_deref(), Some("V24 Tone"), "the new file's tags replace them");
+        assert_eq!(h.state().player.lists[0].playlist.entries()[1].path, other, "the other track with that file is untouched");
+
+        let app = h.state_mut();
+        let before: Vec<PathBuf> = app.player.lists[0].playlist.entries().iter().map(|e| e.path.clone()).collect();
+        app.change_entry_file(0, EntryId::new(), other.clone());
+        let after: Vec<PathBuf> = app.player.lists[0].playlist.entries().iter().map(|e| e.path.clone()).collect();
+        assert_eq!(before, after);
     }
 }

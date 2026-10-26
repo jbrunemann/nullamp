@@ -16,7 +16,9 @@
 //! - *telegram* (the login and asking a bot for a track) waits on the network for up to half a
 //!   minute, so its thread, which `nullamp-telegram` runs itself, answers through the same results;
 //! - *split* (finding where the tracks of a mix start, offline) decodes and analyses the whole
-//!   mix for several seconds, so it has a thread of its own as well.
+//!   mix for several seconds, so it has a thread of its own as well;
+//! - *locate* (looking for a missing playlist file in a folder tree) reads directories for as long
+//!   as the tree is big, so it has a thread of its own and a newer search replaces the running one.
 //!
 //! Every job carries a request id. The UI remembers the id it is waiting for and
 //! ignores results for anything it has moved on from. Bulk scans also check a
@@ -117,6 +119,10 @@ pub enum Job {
     /// Look for chapters / cue sheets again (user-initiated rescan).
     Rediscover { request: u64, path: PathBuf },
     WriteText { path: PathBuf, text: String },
+    /// Write the data pack (setlists, rekordbox and Mixxx data) for another device to `path`.
+    ExportData { path: PathBuf },
+    /// Bring in a data pack made by another copy of Nullamp.
+    ImportData { path: PathBuf },
     /// Chromaprint of the file's first two minutes, written to the log only (nothing consumes it yet).
     LogFingerprint { path: PathBuf },
 }
@@ -127,6 +133,9 @@ struct WaveformRequest {
     path: PathBuf,
     /// Prefer the waveform rekordbox analysed when the file is on one of its USB sticks.
     rekordbox: bool,
+    /// Compute the band colours of a decoded file too (only the original artwork shows them). A cached
+    /// waveform without them is decoded again for them; one with them is used whatever this says.
+    colors: bool,
 }
 
 struct TempoRequest {
@@ -174,10 +183,24 @@ pub struct IdentifyTrack {
     pub end: f64,
 }
 
+struct LocateRequest {
+    request: u64,
+    root: PathBuf,
+    /// The path the playlist has for the missing file.
+    wanted: PathBuf,
+}
+
 /// A request to 1001Tracklists, made on the user's behalf.
 enum TracklistRequest {
     Search { request: u64, query: String },
     Fetch { request: u64, guid: String, url: String },
+}
+
+/// A request to read a public Spotify playlist, made on the user's behalf.
+struct SpotifyRequest {
+    request: u64,
+    /// What the user typed: a link, a URI or an id.
+    link: String,
 }
 
 enum OnlineRequest {
@@ -240,6 +263,7 @@ pub enum JobResult {
     Rediscovered { request: u64, setlist: Option<Setlist> },
     Restored { request: u64, target: PathBuf, result: Result<(), String> },
     TextWritten { path: PathBuf, result: Result<(), String> },
+    DataPack { export: bool, path: PathBuf, result: Result<crate::datapack::Summary, String> },
     /// Overview of the track loaded under `token`. Abandoned requests send nothing.
     /// `colors` (one per bucket, red to blue by pitch) only for a waveform that came from rekordbox.
     Waveform { token: u64, result: Result<Waveform, String>, colors: Option<Vec<[u8; 3]>> },
@@ -257,10 +281,14 @@ pub enum JobResult {
     Split { request: u64, result: Result<Vec<f64>, String> },
     /// The answer to [`Workers::split_gaps`]: for each gap, where its tracks start, the first at the gap's `from`.
     SplitGaps { request: u64, result: Result<Vec<Vec<f64>>, String> },
+    /// The answer to [`Workers::locate`]. A cancelled or replaced search sends nothing.
+    Located { request: u64, root: PathBuf, search: crate::locate::Search, secs: f64 },
     /// The answer to [`Workers::search_tracklists`].
     TracklistHits { request: u64, result: Result<Vec<nullamp_tracklists::Hit>, String> },
     /// The answer to [`Workers::fetch_tracklist`].
     TracklistPage { request: u64, result: Result<nullamp_tracklists::Tracklist, String> },
+    /// The answer to [`Workers::fetch_spotify`].
+    Spotify { request: u64, result: Result<nullamp_spotify::Playlist, String> },
     /// Something the Telegram thread reports: a sign-in step, or progress of a track being asked for.
     Telegram(nullamp_telegram::Event),
     /// The picture of result `index` of the list the bot offered to ask `request`.
@@ -283,7 +311,11 @@ pub struct Workers {
     split: Sender<SplitRequest>,
     /// The split request that may run; any other one stops at its next packet or step.
     split_current: Arc<AtomicU64>,
+    locate: Sender<LocateRequest>,
+    /// The locate request that may run; any other one stops at its next folder.
+    locate_current: Arc<AtomicU64>,
     tracklists: Sender<TracklistRequest>,
+    spotify: Sender<SpotifyRequest>,
     /// The login to Telegram and the questions to its bot; its answers come as [`JobResult::Telegram`].
     pub telegram: nullamp_telegram::Telegram,
     pub results: Receiver<JobResult>,
@@ -522,6 +554,31 @@ impl Workers {
                 .expect("spawn split worker");
         }
 
+        let locate_current = Arc::new(AtomicU64::new(0));
+        let (locate, locate_rx) = crossbeam_channel::unbounded::<LocateRequest>();
+        {
+            let (tx, w, current) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&locate_current));
+            std::thread::Builder::new()
+                .name("nullamp-locate".into())
+                .spawn(move || {
+                    while let Ok(mut request) = locate_rx.recv() {
+                        while let Ok(newer) = locate_rx.try_recv() {
+                            request = newer;
+                        }
+                        let id = request.request;
+                        let started = std::time::Instant::now();
+                        let Some(search) = crate::locate::search(&request.root, &request.wanted, &|| current.load(Ordering::SeqCst) != id) else { continue };
+                        let secs = started.elapsed().as_secs_f64();
+                        log::info!("Looked for {} in {}: {} found among {} audio files in {secs:.2} s", request.wanted.display(), request.root.display(), search.found.len(), search.scanned);
+                        if current.load(Ordering::SeqCst) != id || tx.send(JobResult::Located { request: id, root: request.root, search, secs }).is_err() {
+                            continue;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn locate worker");
+        }
+
         let (tracklists, tracklists_rx) = crossbeam_channel::unbounded::<TracklistRequest>();
         {
             let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
@@ -554,6 +611,27 @@ impl Workers {
                     }
                 })
                 .expect("spawn tracklists worker");
+        }
+
+        let (spotify, spotify_rx) = crossbeam_channel::unbounded::<SpotifyRequest>();
+        {
+            let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
+            std::thread::Builder::new()
+                .name("nullamp-spotify".into())
+                .spawn(move || {
+                    while let Ok(SpotifyRequest { request, link }) = spotify_rx.recv() {
+                        let result = nullamp_spotify::fetch(&link).map_err(|e| e.to_string());
+                        match &result {
+                            Ok(list) => log::info!("Spotify: {} tracks in \"{}\"{}", list.tracks.len(), list.name, if list.cut { " (the page stops at its limit)" } else { "" }),
+                            Err(e) => log::warn!("Spotify playlist {link}: {e}"),
+                        }
+                        if tx.send(JobResult::Spotify { request, result }).is_err() {
+                            return;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn spotify worker");
         }
 
         let telegram = {
@@ -589,7 +667,10 @@ impl Workers {
             identify_current,
             split,
             split_current,
+            locate,
+            locate_current,
             tracklists,
+            spotify,
             telegram,
             results,
             scan_generation,
@@ -651,6 +732,18 @@ impl Workers {
         self.split_current.store(0, Ordering::SeqCst);
     }
 
+    /// Look in `root` and below for the file `wanted` names, which is no longer there. Answered with
+    /// [`JobResult::Located`] under `request`. A newer request replaces this one.
+    pub fn locate(&self, request: u64, root: PathBuf, wanted: PathBuf) {
+        self.locate_current.store(request, Ordering::SeqCst);
+        let _ = self.locate.send(LocateRequest { request, root, wanted });
+    }
+
+    /// Stop the running locate request at its next folder.
+    pub fn cancel_locate(&self) {
+        self.locate_current.store(0, Ordering::SeqCst);
+    }
+
     /// Search 1001Tracklists for `query`; answered with [`JobResult::TracklistHits`] under `request`.
     pub fn search_tracklists(&self, request: u64, query: String) {
         let _ = self.tracklists.send(TracklistRequest::Search { request, query });
@@ -660,6 +753,11 @@ impl Workers {
     /// [`JobResult::TracklistPage`] under `request`.
     pub fn fetch_tracklist(&self, request: u64, guid: String, url: String) {
         let _ = self.tracklists.send(TracklistRequest::Fetch { request, guid, url });
+    }
+
+    /// Read the public Spotify playlist `link` names; answered with [`JobResult::Spotify`] under `request`.
+    pub fn fetch_spotify(&self, request: u64, link: String) {
+        let _ = self.spotify.send(SpotifyRequest { request, link });
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with
@@ -695,9 +793,9 @@ impl Workers {
 
     /// Compute (or load from the cache) the waveform of `path`, loaded under `token`. A
     /// decode already running for an earlier request stops at its next packet.
-    pub fn request_waveform(&self, token: u64, path: PathBuf, rekordbox: bool) {
+    pub fn request_waveform(&self, token: u64, path: PathBuf, rekordbox: bool, colors: bool) {
         let generation = self.waveform_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.waveform.send(WaveformRequest { generation, token, path, rekordbox });
+        let _ = self.waveform.send(WaveformRequest { generation, token, path, rekordbox, colors });
     }
 
     /// Compute (or load from the cache) the tempo of `path`, loaded under `token`, of the whole
@@ -740,22 +838,26 @@ impl Workers {
 
 /// `None` when a newer request replaced this one while it ran.
 fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Option<JobResult> {
-    let WaveformRequest { generation, token, path, rekordbox } = request;
+    let WaveformRequest { generation, token, path, rekordbox, colors: want_colors } = request;
     let fingerprint = store::fingerprint(&path).ok();
     // The same file once analysed by rekordbox, now played from somewhere else.
     if let Some(found) = rekordbox.then(|| fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox(dir, fp))).flatten() {
         return Some(JobResult::Waveform { token, result: Ok(found.wave), colors: found.colors });
     }
-    if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
-        return Some(JobResult::Waveform { token, result: Ok(wave), colors: None });
+    // An entry without colours is only good enough while nobody wants them; the decode below then replaces it.
+    let cached = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)).filter(|w| w.colors.is_some() || !want_colors);
+    if let Some(mut wave) = cached {
+        let colors = wave.colors.take();
+        return Some(JobResult::Waveform { token, result: Ok(wave), colors });
     }
     let cancelled = || current.load(Ordering::Relaxed) != generation;
-    match nullamp_audio::compute_waveform(&path, &cancelled) {
-        Ok(wave) => {
+    match nullamp_audio::compute_waveform(&path, want_colors, &cancelled) {
+        Ok(mut wave) => {
             if let Some(fp) = fingerprint {
                 waveform_cache::store(dir, &fp, &wave);
             }
-            Some(JobResult::Waveform { token, result: Ok(wave), colors: None })
+            let colors = wave.colors.take();
+            Some(JobResult::Waveform { token, result: Ok(wave), colors })
         }
         Err(WaveformError::Cancelled) => None,
         Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()), colors: None }),
@@ -1121,6 +1223,14 @@ fn run_job(ctx: &Ctx, job: Job) -> Vec<JobResult> {
         Job::WriteText { path, text } => {
             let result = store_text(&path, &text);
             vec![JobResult::TextWritten { path, result }]
+        }
+        Job::ExportData { path } => {
+            let result = crate::datapack::export(&ctx.paths, &path);
+            vec![JobResult::DataPack { export: true, path, result }]
+        }
+        Job::ImportData { path } => {
+            let result = crate::datapack::import(&ctx.paths, &path);
+            vec![JobResult::DataPack { export: false, path, result }]
         }
     }
 }

@@ -505,6 +505,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 dialogs::import_playlist(app);
                 ui.close();
             }
+            if ui.button("Import from Spotify…").on_hover_text("Make a playlist of a public Spotify playlist. No account needed; the files are for you to find, so every track starts out missing").clicked() {
+                super::spotify::open(app);
+                ui.close();
+            }
             if ui.button("Export as M3U8…").clicked() {
                 let i = app.player.viewing;
                 dialogs::export_playlist(app, i);
@@ -1000,6 +1004,28 @@ fn row_menu(app: &mut App, ui: &mut Ui, id: EntryId) {
             ui.ctx().copy_text(e.path.display().to_string());
         }
         ui.close();
+    }
+    let busy = app.player.is_current(list, id) && app.player.status != Status::Stopped;
+    let hover = if busy { "Stop the track first" } else { "Choose another file for this track, for one that moved or was renamed" };
+    if ui.add_enabled(!busy, egui::Button::new("Change file…")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+        dialogs::change_file(app, list, id);
+        ui.close();
+    }
+    if app.player.viewed().get(id).is_some_and(|e| e.status == EntryStatus::Missing) {
+        let asked = app.telegram.asking.as_ref().map(|a| a.entry);
+        if asked == Some(id) {
+            if ui.button("Cancel Telegram").clicked() {
+                super::telegram::cancel_ask(app);
+                ui.close();
+            }
+        } else {
+            let why_not = if asked.is_some() { Some("Telegram is being asked about another track; wait for it, or cancel it from that track's menu") } else { super::telegram::unavailable(app) };
+            let hover = why_not.unwrap_or("Asks the Telegram bot for this track as you, like typing @bot Artist - Title in a chat, and saves the result you choose");
+            if ui.add_enabled(why_not.is_none(), egui::Button::new("Request on Telegram")).on_hover_text(hover).on_disabled_hover_text(hover).clicked() {
+                super::telegram::ask_playlist_entry(app, id);
+                ui.close();
+            }
+        }
     }
     if app.player.lists.len() > 1 {
         ui.menu_button("Copy to playlist", |ui| {

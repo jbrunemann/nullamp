@@ -396,7 +396,9 @@ fn rekordbox_waveform_is_cached_for_the_same_file_elsewhere() {
 
     h.state_mut().settings.rekordbox_waveform = false;
     play_file(&mut h, elsewhere);
-    assert!(h.state().now.wave_colors.is_none(), "with the setting off the decoded waveform is used");
+    let decoded = h.state().now.waveform.clone().expect("decoded waveform");
+    assert_ne!(decoded.peak.len(), nullamp_audio::WAVEFORM_BUCKETS, "with the setting off the decoded waveform is used");
+    assert!(h.state().now.wave_colors.is_none(), "the default dithered artwork does not ask for band colours");
     h.state_mut().player.stop();
 }
 
@@ -406,6 +408,38 @@ fn play_file(h: &mut Harness<'_, App>, path: PathBuf) {
     let id = app.player.lists[0].playlist.add_paths([path])[0];
     app.player.play_entry(0, id, 0.0);
     settle(h, 1500);
+}
+
+/// Band colours are only computed while the original artwork is chosen. A waveform decoded without them
+/// is decoded again, and its cache entry upgraded, when the original artwork is chosen later; an entry
+/// with colours is used under any setting and never written back without them.
+#[test]
+fn band_colours_are_computed_when_the_original_artwork_asks_for_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.waveform_cache();
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    let file = dir.path().join("Music/band.mp3");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::copy(fixtures().join("beats_120_90.mp3"), &file).unwrap();
+    let fingerprint = crate::store::fingerprint(&file).unwrap();
+
+    play_file(&mut h, file.clone());
+    assert!(h.state().now.waveform.is_some());
+    assert!(h.state().now.wave_colors.is_none(), "dithered artwork: no colours asked for");
+    assert!(crate::waveform_cache::load(&cache, &fingerprint).unwrap().colors.is_none());
+
+    h.state_mut().settings.artwork = ArtworkMode::Original;
+    h.state_mut().request_wave_colors();
+    settle(&mut h, 1000);
+    assert!(h.state().now.wave_colors.is_some(), "the playing track's colours arrive");
+    assert!(crate::waveform_cache::load(&cache, &fingerprint).unwrap().colors.is_some(), "the entry was upgraded");
+
+    h.state_mut().settings.artwork = ArtworkMode::Dithered;
+    play_file(&mut h, file);
+    assert!(crate::waveform_cache::load(&cache, &fingerprint).unwrap().colors.is_some(), "not written back without colours");
+    assert!(h.state().now.waveform.is_some());
+    h.state_mut().player.stop();
 }
 
 /// A file without a BPM tag gets its tempo found in the background (and cached, so the next
@@ -733,6 +767,71 @@ fn render_telegram_chooser() {
     crate::ui::telegram::on_event(h.state_mut(), Event::Ask { request: 2, progress: Progress::Done(Ok(nullamp_telegram::Outcome::NoResults)) });
     settle(&mut h, 300);
     save(&mut h, "06k-telegram-no-results.png");
+}
+
+/// Importing a Spotify playlist: the dialog, and the list of tracks without files it makes.
+#[test]
+#[ignore]
+fn render_spotify_import() {
+    use nullamp_spotify::{Playlist, Track};
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    crate::ui::spotify::open(h.state_mut());
+    h.state_mut().dialogs.spotify.as_mut().unwrap().link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=0a1b2c".into();
+    settle(&mut h, 300);
+    save(&mut h, "06l-spotify-import.png");
+    let import = h.state_mut().dialogs.spotify.as_mut().unwrap();
+    import.error = Some("Spotify has no public playlist with this link; it may be private".into());
+    settle(&mut h, 300);
+    save(&mut h, "06m-spotify-error.png");
+    let track = |artist: &str, title: &str, seconds: f64| Track { artist: artist.into(), title: title.into(), duration: Some(seconds), uri: String::new() };
+    let tracks = vec![
+        track("Fleetwood Mac", "Dreams - 2004 Remaster", 257.0),
+        track("Led Zeppelin", "Stairway to Heaven - Remaster", 483.0),
+        track("Queen, David Bowie", "Under Pressure - Remastered 2011", 248.0),
+        track("Creedence Clearwater Revival", "Bad Moon Rising", 142.0),
+    ];
+    let app = h.state_mut();
+    app.dialogs.spotify.as_mut().unwrap().request = Some(1);
+    crate::ui::spotify::on_playlist(app, 1, Ok(Playlist { name: "Rock Classics".into(), id: String::new(), tracks, cut: false }));
+    settle(&mut h, 600);
+    save(&mut h, "06n-spotify-playlist.png");
+}
+
+/// The Change file dialog of a playlist row, with a path that is no file.
+#[test]
+#[ignore]
+fn render_change_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[6].id;
+    crate::ui::dialogs::change_file(h.state_mut(), 0, id);
+    settle(&mut h, 300);
+    save(&mut h, "06o-change-file.png");
+}
+
+/// The Change file dialog after searching a folder that holds several files of that name.
+#[test]
+#[ignore]
+fn render_change_file_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[6].id;
+    let name = h.state().player.lists[0].playlist.get(id).unwrap().path.file_name().unwrap().to_owned();
+    let stem = std::path::Path::new(&name).file_stem().unwrap().to_string_lossy().into_owned();
+    let music = dir.path().join("Music");
+    for rel in [format!("Old library/{}", name.to_string_lossy()), format!("Backup/2019/{}", name.to_string_lossy()), format!("Converted/{stem}.flac"), format!("Downloads/01 - {stem}.m4a")] {
+        let p = music.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+    crate::ui::dialogs::change_file(h.state_mut(), 0, id);
+    crate::ui::dialogs::on_dialog_result(h.state_mut(), crate::ui::dialogs::DialogResult::ChangeFileFolder(music));
+    settle(&mut h, 600);
+    save(&mut h, "06o2-change-file-search.png");
 }
 
 /// The rekordbox settings page, which takes over the deck.
@@ -1234,6 +1333,29 @@ fn render_rekordbox_waveform() {
     h.state_mut().now.wave_colors = None;
     settle(&mut h, 100);
     save(&mut h, "rekordbox-waveform-plain.png");
+    h.state_mut().player.stop();
+}
+
+/// The timeline with the waveform of a decoded file in each artwork mode: band colours with the
+/// original cover, the muted tint with the dithered one, and no waveform with the artwork off.
+#[test]
+#[ignore]
+fn render_waveform_by_artwork_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[5].id;
+    h.state_mut().player.play_entry(0, id, 0.0);
+    settle(&mut h, 1500);
+    let mut wave = nullamp_audio::compute_waveform(&fixtures().join("beats_120_90.mp3"), true, &|| false).expect("fixture waveform");
+    h.state_mut().player.seek_to(2.6);
+    h.state_mut().now.wave_colors = wave.colors.take();
+    h.state_mut().now.waveform = Some(wave);
+    for (mode, name) in [(ArtworkMode::Original, "original"), (ArtworkMode::Dithered, "dithered"), (ArtworkMode::Off, "off")] {
+        h.state_mut().settings.artwork = mode;
+        settle(&mut h, 300);
+        save(&mut h, &format!("waveform-artwork-{name}.png"));
+    }
     h.state_mut().player.stop();
 }
 

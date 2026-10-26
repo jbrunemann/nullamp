@@ -27,6 +27,8 @@ pub enum SystemEvent {
     Command(Command),
     /// Bring the window to the front.
     Raise,
+    /// A client (MPRIS `OpenUri`) asks to play this URI.
+    OpenUri(String),
     Quit,
 }
 
@@ -175,7 +177,7 @@ fn map_event(ev: MediaControlEvent) -> Option<SystemEvent> {
         MediaControlEvent::SetVolume(v) => cmd(Command::SetVolume(v.clamp(0.0, 1.0) as f32)),
         MediaControlEvent::Raise => Some(SystemEvent::Raise),
         MediaControlEvent::Quit => Some(SystemEvent::Quit),
-        MediaControlEvent::OpenUri(_) => None,
+        MediaControlEvent::OpenUri(uri) => Some(SystemEvent::OpenUri(uri)),
     }
 }
 
@@ -187,8 +189,8 @@ fn signed(dir: SeekDirection, secs: f64) -> f64 {
     }
 }
 
-#[cfg(not(target_os = "android"))]
-fn file_url(path: &std::path::Path) -> Option<String> {
+/// The `file://` URI of an existing file, percent-encoded.
+pub fn file_url(path: &std::path::Path) -> Option<String> {
     let abs = std::fs::canonicalize(path).ok()?;
     let s = abs.to_str()?;
     let mut out = String::from("file://");
@@ -219,7 +221,7 @@ mod tests {
             map_event(MediaControlEvent::SetPosition(MediaPosition(Duration::from_millis(1500)))),
             Some(SystemEvent::Command(Command::SeekTo(1.5)))
         );
-        assert_eq!(map_event(MediaControlEvent::OpenUri("x".into())), None);
+        assert_eq!(map_event(MediaControlEvent::OpenUri("file:///a.mp3".into())), Some(SystemEvent::OpenUri("file:///a.mp3".into())));
     }
 
     #[test]

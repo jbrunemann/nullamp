@@ -38,6 +38,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             if has_art {
                 app.settings.artwork = app.settings.artwork.next();
                 app.mark_settings_dirty();
+                if app.settings.artwork == ArtworkMode::Original {
+                    app.request_wave_colors();
+                }
             } else {
                 app.toggle_side(Section::Inspector);
             }
@@ -729,7 +732,10 @@ fn timeline(app: &mut App, ui: &mut Ui) {
         };
         p.rect_filled(*r, 0.0, fill);
     }
-    if let Some(wave) = &app.now.waveform {
+    // The waveform follows the artwork setting: coloured bands with the original cover, the muted tint
+    // with the dithered one, and only the plain timeline when the artwork is off.
+    let mode = app.settings.artwork;
+    if mode != ArtworkMode::Off && let Some(wave) = &app.now.waveform {
         let revealed = match app.now.wave_arrived.map(|at| at.elapsed().as_secs_f32() / WAVE_REVEAL_SECS) {
             Some(t) if t < 1.0 => {
                 ui.ctx().request_repaint();
@@ -741,7 +747,8 @@ fn timeline(app: &mut App, ui: &mut Ui) {
                 1.0
             }
         };
-        draw_waveform(&p, bar, wave, app.now.wave_colors.as_deref(), ui.ctx().pixels_per_point(), revealed);
+        let colors = app.now.wave_colors.as_deref().filter(|_| mode == ArtworkMode::Original);
+        draw_waveform(&p, bar, wave, colors, ui.ctx().pixels_per_point(), revealed);
     }
     for (r, active, timing) in &spans {
         let edge = if *timing == Timing::Exact { theme::LCD_MID } else { theme::LCD_MID.gamma_multiply(0.45) };

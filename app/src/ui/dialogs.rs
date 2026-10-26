@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use crossbeam_channel::{Receiver, Sender};
 use egui::{Key, RichText};
 
+use nullamp_core::EntryId;
+
 use super::{App, list_index, playlist_view, setlist_view, theme, widgets};
 use crate::cache::{self, Kind, Usage};
 use crate::rekordbox::Overview;
@@ -13,10 +15,16 @@ use crate::workers::{AUDIO_EXTENSIONS, Job};
 
 pub enum DialogResult {
     AddFiles { list: String, paths: Vec<PathBuf> },
+    /// The file picked with Browse in the Change file dialog.
+    ChangeFileBrowsed(PathBuf),
+    /// The folder picked with Search folder in the Change file dialog.
+    ChangeFileFolder(PathBuf),
     ImportPlaylist { list: String, path: PathBuf },
     ExportPlaylist { list: String, path: PathBuf },
     ImportSetlist(PathBuf),
     ExportSetlist { format: setlist_view::ExportFormat, path: PathBuf },
+    ExportData(PathBuf),
+    ImportData(PathBuf),
     Artwork(PathBuf),
     /// The folder chosen on the Telegram tab for the files the bot sends.
     TelegramDir(PathBuf),
@@ -132,12 +140,14 @@ pub struct Dialogs {
     pub library_import: Option<LibraryImport>,
     /// The in-window file browser that stands in for the native dialog where there is none.
     pub browser: Option<super::file_browser::Browser>,
+    pub change_file: Option<ChangeFile>,
+    pub spotify: Option<super::spotify::Import>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, browser: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, browser: None, change_file: None, spotify: None }
     }
 }
 
@@ -324,6 +334,213 @@ pub fn open_files(app: &mut App) {
     });
 }
 
+/// The "Change file" dialog of a playlist row: the track's file now, and the text of the file it should play instead.
+pub struct ChangeFile {
+    list: String,
+    entry: EntryId,
+    old: PathBuf,
+    /// The new path as typed, pasted or browsed.
+    text: String,
+    error: Option<String>,
+    search: Searched,
+}
+
+/// Where the dialog's search for the missing file stands.
+enum Searched {
+    Idle,
+    /// Looking in this folder, for the request with this id.
+    Running { request: u64, root: PathBuf },
+    Done { root: PathBuf, search: crate::locate::Search, secs: f64 },
+}
+
+/// "Change file…" of a playlist row: opens the dialog with the track's current path to edit.
+pub fn change_file(app: &mut App, list: usize, entry: EntryId) {
+    let Some(old) = app.player.lists.get(list).and_then(|d| d.playlist.get(entry)).map(|e| e.path.clone()) else { return };
+    let key = app.player.lists[list].key.clone();
+    app.dialogs.change_file = Some(ChangeFile { list: key, entry, text: old.display().to_string(), old, error: None, search: Searched::Idle });
+}
+
+/// Browse for the new file, starting in the folder of the one typed, else of the old one.
+fn browse_change_file(app: &App) {
+    let Some(c) = app.dialogs.change_file.as_ref() else { return };
+    let dir = [parse_path(&c.text), c.old.clone()].iter().find_map(|p| p.parent().filter(|d| d.is_dir()).map(Path::to_path_buf)).or_else(|| start_dir(app));
+    spawn(app, move || async move {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Choose file").add_filter("Audio", AUDIO_EXTENSIONS);
+        if let Some(dir) = dir {
+            d = d.set_directory(dir);
+        }
+        let file = d.pick_file().await?;
+        Some(DialogResult::ChangeFileBrowsed(file.path().to_path_buf()))
+    });
+}
+
+/// Choose the folder to look for the missing file in, starting at the last one searched, else the nearest
+/// folder of the old path that exists.
+fn browse_search_folder(app: &App) {
+    let Some(c) = app.dialogs.change_file.as_ref() else { return };
+    let searched = match &c.search {
+        Searched::Running { root, .. } | Searched::Done { root, .. } => Some(root.clone()),
+        Searched::Idle => None,
+    };
+    let dir = searched.or_else(|| c.old.ancestors().skip(1).find(|d| d.is_dir()).map(Path::to_path_buf)).or_else(|| start_dir(app));
+    spawn(app, move || async move {
+        let mut d = rfd::AsyncFileDialog::new().set_title("Search folder");
+        if let Some(dir) = dir {
+            d = d.set_directory(dir);
+        }
+        let folder = d.pick_folder().await?;
+        Some(DialogResult::ChangeFileFolder(folder.path().to_path_buf()))
+    });
+}
+
+/// Start looking for the missing file in `root`.
+fn start_search(app: &mut App, root: PathBuf) {
+    let request = app.workers.request_id();
+    let Some(c) = app.dialogs.change_file.as_mut() else { return };
+    app.workers.locate(request, root.clone(), c.old.clone());
+    c.search = Searched::Running { request, root };
+}
+
+/// What the search found. One file of the very name fills the field, since it is nearly always the one.
+pub fn on_located(app: &mut App, request: u64, root: PathBuf, search: crate::locate::Search, secs: f64) {
+    let Some(c) = app.dialogs.change_file.as_mut() else { return };
+    if !matches!(&c.search, Searched::Running { request: r, .. } if *r == request) {
+        return;
+    }
+    use crate::locate::Match;
+    let exact = search.found.iter().filter(|f| f.kind == Match::Name).count();
+    if let (1, Some(best)) = (exact, search.found.first()) {
+        (c.text, c.error) = (best.path.display().to_string(), None);
+    }
+    c.search = Searched::Done { root, search, secs };
+}
+
+/// The search's state and its results, as rows to click.
+fn search_results(ui: &mut egui::Ui, c: &mut ChangeFile) {
+    use crate::locate::Match;
+    match &c.search {
+        Searched::Idle => {}
+        Searched::Running { root, .. } => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new(format!("Looking in {}…", root.display())).small().color(theme::text_faint()));
+            });
+        }
+        Searched::Done { root, search, secs } => {
+            let looked = format!("{} looked at in {secs:.1} s", super::plural(search.scanned, "audio file"));
+            let skipped = if search.skipped > 0 { format!(", {} could not be read", super::plural(search.skipped, "folder")) } else { String::new() };
+            let summary = match search.found.len() {
+                0 => format!("Nothing like it in {} ({looked}{skipped})", root.display()),
+                n if search.more => format!("The {n} best matches in {} ({looked}{skipped})", root.display()),
+                1 => format!("1 match in {} ({looked}{skipped})", root.display()),
+                n => format!("{n} matches in {} ({looked}{skipped})", root.display()),
+            };
+            ui.label(RichText::new(summary).small().color(theme::text_faint()));
+            let mut chosen = None;
+            egui::ScrollArea::vertical().max_height(180.0).auto_shrink([false, true]).show(ui, |ui| {
+                for f in &search.found {
+                    let shown = f.path.strip_prefix(root).unwrap_or(&f.path).display().to_string();
+                    let note = match f.kind {
+                        Match::Name => "",
+                        Match::Format => "  (other format)",
+                        Match::Similar => "  (similar name)",
+                    };
+                    let selected = parse_path(&c.text) == f.path;
+                    if ui.selectable_label(selected, format!("{shown}{note}")).on_hover_text(f.path.display().to_string()).clicked() {
+                        chosen = Some(f.path.display().to_string());
+                    }
+                }
+            });
+            if let Some(text) = chosen {
+                (c.text, c.error) = (text, None);
+            }
+        }
+    }
+}
+
+/// A path as people paste it: with quotes around it, `\ ` for the spaces (a terminal's drag and drop), or a
+/// leading `~`.
+fn parse_path(text: &str) -> PathBuf {
+    let text = text.trim().trim_matches(['"', '\'']).trim();
+    let text = text.replace("\\ ", " ");
+    match (text.strip_prefix("~/"), directories::UserDirs::new()) {
+        (Some(rest), Some(dirs)) => dirs.home_dir().join(rest),
+        _ => PathBuf::from(text),
+    }
+}
+
+/// Point the track at the typed path, when it names an audio file; else say what is wrong and keep the dialog.
+fn apply_change_file(app: &mut App) -> bool {
+    let Some(c) = app.dialogs.change_file.as_mut() else { return true };
+    let path = parse_path(&c.text);
+    c.error = if !path.is_file() {
+        Some("There is no file at that path".into())
+    } else if !crate::workers::is_audio_file(&path) {
+        Some("That is not an audio file Nullamp can play".into())
+    } else {
+        None
+    };
+    if c.error.is_some() {
+        return false;
+    }
+    let (list, entry) = (c.list.clone(), c.entry);
+    app.dialogs.change_file = None;
+    if let Some(i) = list_index(app, &list) {
+        app.settings.last_dir = path.parent().map(Path::to_path_buf);
+        app.mark_settings_dirty();
+        app.change_entry_file(i, entry, path);
+    }
+    true
+}
+
+fn change_file_modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
+    let Some(mut c) = app.dialogs.change_file.take() else { return };
+    let (mut keep, mut apply, mut browse, mut search) = (true, false, false, false);
+    egui::Modal::new(egui::Id::unique("change-file")).show(ctx, |ui| {
+        ui.set_width(widgets::modal_width(ctx, 560.0));
+        ui.heading("Change file");
+        ui.horizontal(|ui| {
+            let field = ui.add(egui::TextEdit::singleline(&mut c.text).desired_width(ui.available_width() - 90.0).font(egui::TextStyle::Monospace));
+            if field.changed() {
+                c.error = None;
+            }
+            if !field.has_focus() && !browse {
+                field.request_focus();
+            }
+            if ui.button("Browse…").clicked() {
+                browse = true;
+            }
+        });
+        if ui.button("Search folder…").on_hover_text("Look for a file of this name in a folder and the folders below it").clicked() {
+            search = true;
+        }
+        search_results(ui, &mut c);
+        if let Some(error) = &c.error {
+            ui.label(RichText::new(error).small().color(theme::err()));
+        }
+        ui.horizontal(|ui| {
+            let ready = !c.text.trim().is_empty() && parse_path(&c.text) != c.old;
+            if ui.add_enabled(ready, egui::Button::new("Change")).clicked() || (ready && enter) {
+                apply = true;
+            }
+            if ui.button("Cancel").clicked() || escape {
+                keep = false;
+            }
+        });
+    });
+    app.dialogs.change_file = Some(c);
+    if browse {
+        browse_change_file(app);
+    }
+    if search {
+        browse_search_folder(app);
+    }
+    if (apply && apply_change_file(app)) || !keep {
+        app.dialogs.change_file = None;
+        app.workers.cancel_locate();
+    }
+}
+
 pub fn open_folder(app: &mut App) {
     let list = app.player.lists[app.player.viewing].key.clone();
     let dir = start_dir(app);
@@ -398,6 +615,20 @@ pub fn export_setlist(app: &mut App, format: setlist_view::ExportFormat) {
     });
 }
 
+pub fn export_data(app: &mut App) {
+    spawn(app, move || async move {
+        let f = rfd::AsyncFileDialog::new().set_title("Export data for another device").set_file_name("Nullamp data.zip").add_filter("Nullamp data", &["zip"]).save_file().await?;
+        Some(DialogResult::ExportData(f.path().to_path_buf()))
+    });
+}
+
+pub fn import_data(app: &mut App) {
+    spawn(app, move || async move {
+        let f = rfd::AsyncFileDialog::new().set_title("Import data from another device").add_filter("Nullamp data", &["zip"]).pick_file().await?;
+        Some(DialogResult::ImportData(f.path().to_path_buf()))
+    });
+}
+
 pub fn pick_artwork(app: &mut App) {
     let dir = start_dir(app);
     spawn(app, move || async move {
@@ -410,7 +641,7 @@ pub fn pick_artwork(app: &mut App) {
     });
 }
 
-fn sanitize(name: &str) -> String {
+pub(super) fn sanitize(name: &str) -> String {
     name.chars().map(|c| if "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
 }
 
@@ -430,6 +661,15 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
             if let Some(i) = list_index(app, &list) {
                 app.add_paths(i, paths, None);
             }
+        }
+        DialogResult::ChangeFileBrowsed(path) => {
+            if let Some(c) = app.dialogs.change_file.as_mut() {
+                (c.text, c.error) = (path.display().to_string(), None);
+            }
+        }
+        DialogResult::ChangeFileFolder(root) => {
+            remember_dir(app, &root);
+            start_search(app, root);
         }
         DialogResult::ImportPlaylist { list, path } => {
             remember_dir(app, &path);
@@ -452,12 +692,48 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
         DialogResult::Python(found) => app.dialogs.python = found.map_or(PythonState::Missing, PythonState::Found),
         DialogResult::ImportSetlist(path) => setlist_view::import_file(app, path),
         DialogResult::ExportSetlist { format, path } => setlist_view::export_to(app, format, path),
+        DialogResult::ExportData(path) => app.workers.submit(Job::ExportData { path }),
+        DialogResult::ImportData(path) => app.workers.submit(Job::ImportData { path }),
         DialogResult::Artwork(path) => super::inspector::add_artwork_file(app, path),
         DialogResult::TelegramDir(dir) => {
             app.settings.telegram_dir = Some(dir);
             app.mark_settings_dirty();
         }
     }
+}
+
+/// Show a file selected in the file manager through the `org.freedesktop.FileManager1` D-Bus service that
+/// Nautilus, Dolphin, Nemo, Thunar and others implement; a desktop without it gets the folder opened.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn reveal_on_linux(path: &Path) -> std::io::Result<()> {
+    let folder = path.parent().unwrap_or(path).to_path_buf();
+    let uri = nullamp_sysmedia::file_url(path);
+    std::thread::spawn(move || {
+        let shown = uri.is_some_and(|uri| {
+            std::process::Command::new("dbus-send")
+                .args(["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems"])
+                .arg(format!("array:string:{uri}"))
+                .arg("string:")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if !shown && let Err(e) = std::process::Command::new("xdg-open").arg(&folder).spawn() {
+            log::warn!("cannot reveal in {}: {e}", folder.display());
+        }
+    });
+    Ok(())
+}
+
+/// Open a text file in the platform's default editor.
+pub fn open_in_editor(path: &Path) -> std::io::Result<std::process::Child> {
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open").arg("-t").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    return std::process::Command::new("cmd").args(["/C", "start", ""]).arg(path).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return std::process::Command::new("xdg-open").arg(path).spawn();
 }
 
 /// Reveal a file in the platform's file manager.
@@ -467,7 +743,7 @@ pub fn reveal(path: &Path) {
     #[cfg(target_os = "windows")]
     let r = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let r = std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn();
+    let r = reveal_on_linux(path);
     if let Err(e) = r {
         log::warn!("cannot reveal {}: {e}", path.display());
     }
@@ -525,6 +801,8 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
 
     library_import_modal(app, ctx, escape);
     super::telegram::chooser_modal(app, ctx);
+    change_file_modal(app, ctx, enter, escape);
+    super::spotify::modal(app, ctx, enter, escape);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
@@ -760,18 +1038,31 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(4.0);
     let current = theme::Appearance::from_setting(&app.settings.appearance);
-    ui.label(RichText::new("Appearance").small().weak());
-    ui.vertical(|ui| {
-        ui.set_width(260.0);
-        let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, if cfg!(target_os = "macos") { "System (follow macOS)" } else { "System" })];
-        for (appearance, label) in rows {
-            if super::deck::choice_row(ui, label, true, current == appearance, |p, rect, color| widgets::paint_appearance_icon(p, rect, appearance, color)) && current != appearance {
-                app.settings.appearance = appearance.setting().into();
-                theme::set_appearance(ui.ctx(), appearance);
-                app.mark_settings_dirty();
+    let rows = [(theme::Appearance::Dark, "Dark"), (theme::Appearance::Light, "Light"), (theme::Appearance::System, if cfg!(target_os = "macos") { "System (follow macOS)" } else { "System" })];
+    ui.horizontal(|ui| {
+        ui.label("Appearance:");
+        let shown = rows.iter().find(|(a, _)| *a == current).map_or("Dark", |(_, label)| *label);
+        egui::ComboBox::from_id_salt("appearance").selected_text(shown).show_ui(ui, |ui| {
+            for (appearance, label) in rows {
+                if ui.selectable_label(current == appearance, label).clicked() && current != appearance {
+                    app.settings.appearance = appearance.setting().into();
+                    theme::set_appearance(ui.ctx(), appearance);
+                    app.mark_settings_dirty();
+                }
             }
+        });
+    });
+    ui.add_space(8.0);
+    ui.label(RichText::new("Another device").small().weak());
+    ui.horizontal(|ui| {
+        if ui.button("Export data…").on_hover_text("Your setlists and what rekordbox and Mixxx know about your files, in one file").clicked() {
+            export_data(app);
+        }
+        if ui.button("Import data…").on_hover_text("Bring in a file made by Nullamp on another device").clicked() {
+            import_data(app);
         }
     });
+    ui.label(RichText::new("For a copy of Nullamp that has no rekordbox or Mixxx, such as on a phone. Waveforms, tempo and covers are made again there.").small().color(theme::text_dim()));
 }
 
 /// What Nullamp reads from websites on the user's behalf, when the user asks.
@@ -1018,7 +1309,11 @@ fn cache_body(app: &mut App, ui: &mut egui::Ui) {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use nullamp_core::EntryStatus;
+
     use super::*;
+    use crate::ui_snapshots::{seeded_store, settle};
 
     #[test]
     fn settings_tabs_follow_the_build_features() {
@@ -1027,5 +1322,80 @@ mod tests {
         assert_eq!(tabs.contains(&SettingsTab::Telegram), cfg!(feature = "online-extras"));
         assert_eq!(tabs.contains(&SettingsTab::Updates), cfg!(feature = "update-check"));
         assert!(tabs.contains(&SettingsTab::General) && tabs.contains(&SettingsTab::About));
+    }
+
+    #[test]
+    fn pasted_paths_are_cleaned_up() {
+        assert_eq!(parse_path("  /Music/a b.mp3\n"), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("\"/Music/a b.mp3\""), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("'/Music/a b.mp3'"), PathBuf::from("/Music/a b.mp3"));
+        assert_eq!(parse_path("/Music/a\\ b.mp3"), PathBuf::from("/Music/a b.mp3"));
+        if let Some(dirs) = directories::UserDirs::new() {
+            assert_eq!(parse_path("~/Music/a.mp3"), dirs.home_dir().join("Music/a.mp3"));
+        }
+    }
+
+    /// The dialog starts with the track's path; a path that is no file or no audio is explained and keeps the
+    /// dialog open, and an audio file is taken, remembered as the folder to browse from.
+    #[test]
+    fn the_dialog_takes_a_typed_path_that_names_an_audio_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (id, old, new) = (entries[6].id, entries[6].path.clone(), entries[1].path.clone());
+
+        change_file(app, 0, id);
+        assert_eq!(app.dialogs.change_file.as_ref().unwrap().text, old.display().to_string());
+
+        app.dialogs.change_file.as_mut().unwrap().text = format!("{}.nope", new.display());
+        assert!(!apply_change_file(app));
+        assert_eq!(app.dialogs.change_file.as_ref().unwrap().error.as_deref(), Some("There is no file at that path"));
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, "not music").unwrap();
+        app.dialogs.change_file.as_mut().unwrap().text = notes.display().to_string();
+        assert!(!apply_change_file(app));
+        assert!(app.dialogs.change_file.as_ref().unwrap().error.as_deref().is_some_and(|e| e.contains("not an audio file")));
+        assert_eq!(app.player.lists[0].playlist.get(id).unwrap().path, old);
+
+        // Browsing fills the field and clears the complaint.
+        on_dialog_result(app, DialogResult::ChangeFileBrowsed(new.clone()));
+        assert!(app.dialogs.change_file.as_ref().unwrap().error.is_none());
+        assert!(apply_change_file(app));
+        assert!(app.dialogs.change_file.is_none());
+        let track = app.player.lists[0].playlist.get(id).unwrap();
+        assert_eq!((&track.path, &track.status), (&new, &EntryStatus::Unknown));
+        assert_eq!(app.settings.last_dir.as_deref(), new.parent());
+    }
+
+    /// Searching a folder finds a copy of the file by its name, fills the field with it, and a search that
+    /// the dialog has closed on is dropped.
+    #[test]
+    fn searching_a_folder_fills_the_field_with_the_one_file_of_that_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).build_eframe(|cc| App::new(cc, store));
+        settle(&mut h, 300);
+        let app = h.state_mut();
+        let entries = app.player.lists[0].playlist.entries();
+        let (id, old) = (entries[6].id, entries[6].path.clone());
+        let moved = dir.path().join("music/moved").join(old.file_name().unwrap());
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(&moved, b"x").unwrap();
+
+        change_file(app, 0, id);
+        on_dialog_result(app, DialogResult::ChangeFileFolder(dir.path().join("music")));
+        assert!(matches!(app.dialogs.change_file.as_ref().unwrap().search, Searched::Running { .. }));
+        for _ in 0..40 {
+            settle(&mut h, 50);
+            if matches!(h.state_mut().dialogs.change_file.as_ref().unwrap().search, Searched::Done { .. }) {
+                break;
+            }
+        }
+        let c = h.state_mut().dialogs.change_file.as_ref().unwrap();
+        assert!(matches!(c.search, Searched::Done { .. }), "the search answers");
+        assert_eq!(c.text, moved.display().to_string());
     }
 }
