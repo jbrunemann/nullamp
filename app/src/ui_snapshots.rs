@@ -396,7 +396,9 @@ fn rekordbox_waveform_is_cached_for_the_same_file_elsewhere() {
 
     h.state_mut().settings.rekordbox_waveform = false;
     play_file(&mut h, elsewhere);
-    assert!(h.state().now.wave_colors.is_none(), "with the setting off the decoded waveform is used");
+    let decoded = h.state().now.waveform.clone().expect("decoded waveform");
+    assert_ne!(decoded.peak.len(), nullamp_audio::WAVEFORM_BUCKETS, "with the setting off the decoded waveform is used");
+    assert_eq!(h.state().now.wave_colors.as_ref().map(Vec::len), Some(decoded.peak.len()), "with its own band colours");
     h.state_mut().player.stop();
 }
 
@@ -1299,6 +1301,29 @@ fn render_rekordbox_waveform() {
     h.state_mut().now.wave_colors = None;
     settle(&mut h, 100);
     save(&mut h, "rekordbox-waveform-plain.png");
+    h.state_mut().player.stop();
+}
+
+/// The timeline with the waveform of a decoded file in each artwork mode: band colours with the
+/// original cover, the muted tint with the dithered one, and no waveform with the artwork off.
+#[test]
+#[ignore]
+fn render_waveform_by_artwork_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[5].id;
+    h.state_mut().player.play_entry(0, id, 0.0);
+    settle(&mut h, 1500);
+    let mut wave = nullamp_audio::compute_waveform(&fixtures().join("beats_120_90.mp3"), &|| false).expect("fixture waveform");
+    h.state_mut().player.seek_to(2.6);
+    h.state_mut().now.wave_colors = wave.colors.take();
+    h.state_mut().now.waveform = Some(wave);
+    for (mode, name) in [(ArtworkMode::Original, "original"), (ArtworkMode::Dithered, "dithered"), (ArtworkMode::Off, "off")] {
+        h.state_mut().settings.artwork = mode;
+        settle(&mut h, 300);
+        save(&mut h, &format!("waveform-artwork-{name}.png"));
+    }
     h.state_mut().player.stop();
 }
 

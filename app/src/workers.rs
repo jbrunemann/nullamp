@@ -841,16 +841,18 @@ fn run_waveform(dir: &Path, current: &AtomicU64, request: WaveformRequest) -> Op
     if let Some(found) = rekordbox.then(|| fingerprint.as_deref().and_then(|fp| waveform_cache::load_rekordbox(dir, fp))).flatten() {
         return Some(JobResult::Waveform { token, result: Ok(found.wave), colors: found.colors });
     }
-    if let Some(wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
-        return Some(JobResult::Waveform { token, result: Ok(wave), colors: None });
+    if let Some(mut wave) = fingerprint.as_deref().and_then(|fp| waveform_cache::load(dir, fp)) {
+        let colors = wave.colors.take();
+        return Some(JobResult::Waveform { token, result: Ok(wave), colors });
     }
     let cancelled = || current.load(Ordering::Relaxed) != generation;
     match nullamp_audio::compute_waveform(&path, &cancelled) {
-        Ok(wave) => {
+        Ok(mut wave) => {
             if let Some(fp) = fingerprint {
                 waveform_cache::store(dir, &fp, &wave);
             }
-            Some(JobResult::Waveform { token, result: Ok(wave), colors: None })
+            let colors = wave.colors.take();
+            Some(JobResult::Waveform { token, result: Ok(wave), colors })
         }
         Err(WaveformError::Cancelled) => None,
         Err(e) => Some(JobResult::Waveform { token, result: Err(e.to_string()), colors: None }),
