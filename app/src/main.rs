@@ -9,6 +9,7 @@ mod entry_art;
 #[cfg(target_os = "macos")]
 mod finder;
 mod instance;
+mod locate;
 mod logbuf;
 mod mixxx;
 mod open;

@@ -778,6 +778,28 @@ fn render_change_file() {
     save(&mut h, "06o-change-file.png");
 }
 
+/// The Change file dialog after searching a folder that holds several files of that name.
+#[test]
+#[ignore]
+fn render_change_file_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(980.0, 640.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    let id = h.state().player.lists[0].playlist.entries()[6].id;
+    let name = h.state().player.lists[0].playlist.get(id).unwrap().path.file_name().unwrap().to_owned();
+    let stem = std::path::Path::new(&name).file_stem().unwrap().to_string_lossy().into_owned();
+    let music = dir.path().join("Music");
+    for rel in [format!("Old library/{}", name.to_string_lossy()), format!("Backup/2019/{}", name.to_string_lossy()), format!("Converted/{stem}.flac"), format!("Downloads/01 - {stem}.m4a")] {
+        let p = music.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+    crate::ui::dialogs::change_file(h.state_mut(), 0, id);
+    crate::ui::dialogs::on_dialog_result(h.state_mut(), crate::ui::dialogs::DialogResult::ChangeFileFolder(music));
+    settle(&mut h, 600);
+    save(&mut h, "06o2-change-file-search.png");
+}
+
 /// The rekordbox settings page, which takes over the deck.
 #[test]
 #[ignore]
