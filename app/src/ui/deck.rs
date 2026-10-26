@@ -96,21 +96,22 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
 
     // Big time readout (click toggles elapsed / remaining).
     // On a very narrow display the clock gives up some height, and so width, to keep room for the tempo and the output.
-    let digits_h = (34.0_f32).min(((inner.width() - 18.0 - COMPACT_COLUMN) / widgets::seven_segment_width("-188:88", 1.0)).max(22.0));
+    let digits_h = (34.0_f32).min(((inner.width() - 18.0 - COMPACT_COLUMN) / widgets::seven_segment_width("-8:88:88", 1.0)).max(22.0));
     let (time_text, shown_secs) = match (app.show_remaining, dur) {
         (true, Some(d)) => (format!("-{}", lcd_clock(d - pos)), d - pos),
         _ => (format!(" {}", lcd_clock(pos)), pos),
     };
     let time_origin = pos2(inner.left(), inner.top() + 2.0);
-    let w = widgets::seven_segment_width("-188:88", digits_h);
+    let w = widgets::seven_segment_width("-8:88:88", digits_h);
     // Unlit "8"s behind the digits for the LCD look.
-    // The first minute cell is a "1"-only digit, so its ghost shows just those two segments.
-    let ghost = format!("{}188:88", &time_text[..1]);
-    widgets::seven_segment(&p, time_origin, digits_h, &ghost, theme::LCD_OFF, Color32::TRANSPARENT);
+    let ghost = format!("{}8:88:88", &time_text[..1]);
+    // Right-aligned, so the last digit lines up with the visualizer's right edge whether or not there is a minus sign.
+    let digits_origin = pos2(time_origin.x + w - widgets::seven_segment_width(&ghost, digits_h), time_origin.y);
+    widgets::seven_segment(&p, digits_origin, digits_h, &ghost, theme::LCD_OFF, Color32::TRANSPARENT);
     let lit = if status == Status::Stopped { theme::LCD_MID } else { theme::LCD_FG };
     // Past the display's range the digits blink slowly, like an old stereo's error state.
     if shown_secs < LCD_MAX_SECS as f64 || slow_blink(ui) {
-        widgets::seven_segment(&p, time_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
+        widgets::seven_segment(&p, digits_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
     }
     let time_rect = Rect::from_min_size(time_origin, vec2(w, digits_h));
     let resp = ui.interact(time_rect, egui::Id::unique("lcd-time"), Sense::click());
@@ -508,16 +509,16 @@ fn slow_blink(ui: &Ui) -> bool {
     (ui.input(|i| i.time) * 0.5).fract() < 0.5
 }
 
-/// 199:59, the last value the 3½ digit clock can show.
-const LCD_MAX_SECS: u64 = 199 * 60 + 59;
+/// 9:59:59, the last value the clock can show.
+const LCD_MAX_SECS: u64 = 9 * 3600 + 59 * 60 + 59;
 
-/// Total minutes and seconds in a fixed "1mm:ss" field, like a 3½ digit LCD: the first cell can
-/// only show a 1, so 199:59 is the limit (hours roll into the minutes). Unused leading minute
-/// digits are `_`, which draws as an unlit cell.
+/// The time in a fixed "h:mm:ss" field. Under an hour the hour cell and its colon stay unlit and the
+/// minutes are unpadded, so the digits never move when the hour rolls over. `_` is an unlit digit cell
+/// and `;` an unlit colon cell.
 fn lcd_clock(secs: f64) -> String {
     let total = (secs.max(0.0) as u64).min(LCD_MAX_SECS);
-    let (m, s) = (total / 60, total % 60);
-    if m >= 100 { format!("1{:02}:{s:02}", m - 100) } else { format!("_{m:_>2}:{s:02}") }
+    let (h, m, s) = (total / 3600, (total / 60) % 60, total % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("_;{m:_>2}:{s:02}") }
 }
 
 /// Line 1: what is playing (the constituent track for mixes, in amber).
@@ -1006,13 +1007,13 @@ mod tests {
     use super::lcd_clock;
 
     #[test]
-    fn lcd_clock_is_a_three_and_a_half_digit_field() {
-        assert_eq!(lcd_clock(0.0), "__0:00");
-        assert_eq!(lcd_clock(261.0), "__4:21");
-        assert_eq!(lcd_clock(45.0 * 60.0), "_45:00");
-        assert_eq!(lcd_clock(6000.0), "100:00");
-        assert_eq!(lcd_clock(7200.0), "120:00");
-        assert_eq!(lcd_clock(f64::MAX), "199:59");
-        assert_eq!(lcd_clock(-3.0), "__0:00");
+    fn lcd_clock_shows_hours_in_its_first_cell() {
+        assert_eq!(lcd_clock(0.0), "_;_0:00");
+        assert_eq!(lcd_clock(261.0), "_;_4:21");
+        assert_eq!(lcd_clock(45.0 * 60.0), "_;45:00");
+        assert_eq!(lcd_clock(3600.0), "1:00:00");
+        assert_eq!(lcd_clock(72.0 * 60.0), "1:12:00");
+        assert_eq!(lcd_clock(f64::MAX), "9:59:59");
+        assert_eq!(lcd_clock(-3.0), "_;_0:00");
     }
 }

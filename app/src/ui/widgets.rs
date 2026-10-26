@@ -41,14 +41,14 @@ pub fn seven_segment_width_spaced(text: &str, height: f32, gap: f32) -> f32 {
 
 fn char_advance(c: char, h: f32) -> f32 {
     match c {
-        ':' | '.' => h * 0.28,
+        ':' | '.' | ';' => h * 0.28,
         ' ' => h * 0.3,
         _ => h * 0.62,
     }
 }
 
 /// Draw digits, '-', ':' and ' ' as slanted seven-segment glyphs. Unlit segments
-/// are drawn in `off` for the LCD look. '_' is a digit-wide cell with nothing lit. Returns the width used.
+/// are drawn in `off` for the LCD look. '_' is a digit-wide cell with nothing lit, ';' a colon-wide one. Returns the width used.
 pub fn seven_segment(painter: &Painter, origin: Pos2, height: f32, text: &str, on: Color32, off: Color32) -> f32 {
     seven_segment_spaced(painter, origin, height, text, on, off, 0.0)
 }

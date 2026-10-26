@@ -1467,3 +1467,25 @@ fn render_narrow_windows() {
         h.state_mut().player.stop();
     }
 }
+
+/// The clock below an hour, just past it, counting down, and at its limit. The fixture is seconds long, so
+/// the stream's duration is overridden and the position is pinned.
+#[test]
+#[ignore]
+fn render_clock_hours() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 300.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    play_file(&mut h, fixtures().join("beat_120.mp3"));
+    // (position, duration, counting down, name)
+    for (secs, duration, remaining, name) in [(261.0, 40_000.0, false, "a"), (72.0 * 60.0, 40_000.0, false, "b"), (9.0 * 3600.0 + 59.0 * 60.0 + 59.0, 40_000.0, false, "c"), (4.0 * 60.0 + 21.0, 25.0 * 60.0, true, "d"), (72.0 * 60.0, 40_000.0, true, "e")] {
+        h.state_mut().player.current.as_mut().unwrap().info.as_mut().unwrap().duration = Some(duration);
+        h.state_mut().show_remaining = remaining;
+        // The engine's own events keep resetting the pending position, so pin it right before the render.
+        h.state_mut().player.pending_position = Some(secs);
+        h.step();
+        h.state_mut().player.pending_position = Some(secs);
+        save(&mut h, &format!("12-clock-{name}.png"));
+    }
+    h.state_mut().player.stop();
+}

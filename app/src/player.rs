@@ -101,7 +101,7 @@ pub struct Player<E: Engine> {
     /// Consecutive load failures while advancing automatically.
     failures: usize,
     /// Position to report while a load or seek is in flight.
-    pending_position: Option<f64>,
+    pub(crate) pending_position: Option<f64>,
     /// The in-flight load was started paused (skip while paused, seek while stopped).
     load_paused: bool,
     dedup: Deduplicator,
