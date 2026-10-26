@@ -16,6 +16,7 @@
 //!   has already moved away from.
 //! - A preloaded next track is decoded into the same buffer for gapless transitions.
 
+mod bands;
 mod decode;
 mod engine;
 mod fingerprint;

@@ -809,6 +809,8 @@ const WAVE_REVEAL_EDGE: f32 = 40.0;
 /// One column per point; each takes the loudest of the buckets it covers, so a long mix stays
 /// readable and a short track does not turn into a staircase. With rekordbox's `colors` (one per bucket) each column
 /// takes the colour of its loudest bucket and is drawn much brighter than the faint LCD tint of a decoded waveform.
+/// Our own analysis brings `heights` as well (the mean peak of each bucket, as Mixxx draws it): the columns are then one
+/// layer of those, linear, instead of the peak and RMS layers.
 /// Only the left `revealed` (0 to 1) of the bar is drawn, with a soft edge.
 fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, colors: Option<&[[u8; 3]]>, pixels_per_point: f32, revealed: f32) {
     let inner = bar.shrink(1.0);
@@ -827,6 +829,8 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
     let height = |v: u8| (f32::from(v) / top).powf(0.6) * half;
     let (peak_color, rms_color) = (theme::LCD_FG.gamma_multiply(0.05), theme::LCD_FG.gamma_multiply(0.10));
     let colors = colors.filter(|c| c.len() >= n);
+    let heights = wave.heights.as_deref().filter(|h| h.len() >= n && colors.is_some());
+    let mixxx_top = f32::from(heights.map_or(1, |h| h.iter().copied().max().unwrap_or(0).max(1)));
     let mut mesh = egui::Mesh::default();
     // The edge starts off the left end and finishes off the right end, so the first and last columns fade in and out too.
     let edge_x = inner.left() - WAVE_REVEAL_EDGE + revealed * (inner.width() + WAVE_REVEAL_EDGE);
@@ -837,7 +841,7 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
         let x1 = (inner.left() + (c + 1) as f32 * width).round_to_pixels(pixels_per_point).max(x0 + 1.0 / pixels_per_point);
         let (peak_color, rms_color) = match colors {
             Some(colors) => {
-                let loudest_bucket = (lo..hi).max_by_key(|&i| wave.peak[i]).unwrap_or(lo);
+                let loudest_bucket = (lo..hi).max_by_key(|&i| heights.map_or(wave.peak[i], |h| h[i])).unwrap_or(lo);
                 let [r, g, b] = colors[loudest_bucket];
                 let color = Color32::from_rgb(r, g, b);
                 // The ends fade to the bar's background so the time labels stay readable.
@@ -845,13 +849,22 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
                 // Smoothstep, squared: dark under the label, full strength once clear of it.
                 let t = from_end.min(1.0);
                 let fade = (t * t * (3.0 - 2.0 * t)).powi(2);
-                (color.gamma_multiply(0.30 * fade), color.gamma_multiply(0.75 * fade))
+                if heights.is_some() {
+                    (Color32::TRANSPARENT, color.gamma_multiply(0.85 * fade))
+                } else {
+                    (color.gamma_multiply(0.30 * fade), color.gamma_multiply(0.75 * fade))
+                }
             }
             None => (peak_color, rms_color),
         };
         let shown = ((edge_x - x0) / WAVE_REVEAL_EDGE).clamp(0.0, 1.0);
         if shown <= 0.0 {
             break;
+        }
+        if let Some(heights) = heights {
+            let h = (f32::from(loudest(heights, lo, hi)) / mixxx_top * half).max(0.5);
+            mesh.add_colored_rect(Rect::from_min_max(pos2(x0, mid - h), pos2(x1, mid + h)), rms_color.gamma_multiply(shown));
+            continue;
         }
         for (values, color) in [(&wave.peak, peak_color.gamma_multiply(shown)), (&wave.rms, rms_color.gamma_multiply(shown))] {
             let h = height(loudest(values, lo, hi)).max(0.5);

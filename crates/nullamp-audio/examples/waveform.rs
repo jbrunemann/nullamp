@@ -9,4 +9,9 @@ fn main() {
     let took = start.elapsed();
     let bars: String = wave.rms.chunks(wave.rms.len().div_ceil(64)).map(|c| " .:-=+*#%@".as_bytes()[usize::from(*c.iter().max().unwrap()) * 9 / 255] as char).collect();
     println!("{} buckets in {:.2?}\n{bars}", wave.peak.len(), took);
+    if let Some(colors) = &wave.colors {
+        let chunk = colors.len().div_ceil(16);
+        let row: Vec<String> = colors.chunks(chunk).map(|c| format!("{:02x}{:02x}{:02x}", c[c.len() / 2][0], c[c.len() / 2][1], c[c.len() / 2][2])).collect();
+        println!("colours (red low, green mid, blue high) from start to end: {}", row.join(" "));
+    }
 }

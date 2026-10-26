@@ -77,7 +77,7 @@ pub fn parse_rekordbox(bytes: &[u8]) -> Option<crate::rekordbox::Analysed> {
         return None;
     }
     let colors = (body.len() == n * 5).then(|| body[n * 2..].chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect());
-    Some(crate::rekordbox::Analysed { wave: Waveform { peak: body[..n].to_vec(), rms: body[n..n * 2].to_vec(), colors: None }, colors })
+    Some(crate::rekordbox::Analysed { wave: Waveform { peak: body[..n].to_vec(), rms: body[n..n * 2].to_vec(), colors: None, heights: None }, colors })
 }
 
 pub fn store_rekordbox(dir: &Path, fingerprint: &str, found: &crate::rekordbox::Analysed) {
@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     fn wave() -> Waveform {
-        Waveform { peak: vec![9, 8, 7], rms: vec![3, 2, 1], colors: None }
+        Waveform { peak: vec![9, 8, 7], rms: vec![3, 2, 1], colors: None, heights: None }
     }
 
     #[test]

@@ -164,7 +164,7 @@ pub fn analysed(file: &Path, track: &Track) -> Option<Analysed> {
         Ok(Some(wave)) => {
             let (peak, rms) = wave.buckets(nullamp_audio::WAVEFORM_BUCKETS);
             log::info!("waveform of {} from the rekordbox analysis ({} columns)", file.display(), wave.heights.len());
-            Some(Analysed { wave: nullamp_audio::Waveform { peak, rms, colors: None }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
+            Some(Analysed { wave: nullamp_audio::Waveform { peak, rms, colors: None, heights: None }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
         }
         Ok(None) => None,
         Err(e) => {

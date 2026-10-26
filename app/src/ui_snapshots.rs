@@ -1347,7 +1347,9 @@ fn render_waveform_by_artwork_mode() {
     let id = h.state().player.lists[0].playlist.entries()[5].id;
     h.state_mut().player.play_entry(0, id, 0.0);
     settle(&mut h, 1500);
-    let mut wave = nullamp_audio::compute_waveform(&fixtures().join("beats_120_90.mp3"), true, &|| false).expect("fixture waveform");
+    // NULLAMP_WAVE_FILE draws another file, such as a longer one made for the purpose.
+    let file = std::env::var_os("NULLAMP_WAVE_FILE").map(PathBuf::from).unwrap_or_else(|| fixtures().join("beats_120_90.mp3"));
+    let mut wave = nullamp_audio::compute_waveform(&file, true, &|| false).expect("fixture waveform");
     h.state_mut().player.seek_to(2.6);
     h.state_mut().now.wave_colors = wave.colors.take();
     h.state_mut().now.waveform = Some(wave);
