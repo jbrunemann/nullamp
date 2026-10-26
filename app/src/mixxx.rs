@@ -32,7 +32,7 @@ fn info(t: &Track) -> TrackInfo {
 
 /// The files Mixxx keeps its library in on this platform, in the order they are tried. The
 /// sandboxed macOS build keeps it in its container, which macOS only lets another app read once
-/// the user has allowed it.
+/// the user has allowed it. On Linux the Flatpak build keeps it under its own app directory.
 fn default_locations() -> Vec<PathBuf> {
     let Some(dirs) = directories::BaseDirs::new() else { return Vec::new() };
     let folders = if cfg!(windows) {
@@ -40,7 +40,7 @@ fn default_locations() -> Vec<PathBuf> {
     } else if cfg!(target_os = "macos") {
         vec![dirs.data_dir().join("Mixxx"), dirs.home_dir().join("Library/Containers/org.mixxx.mixxx/Data/Library/Application Support/Mixxx")]
     } else {
-        vec![dirs.home_dir().join(".mixxx")]
+        vec![dirs.home_dir().join(".mixxx"), dirs.home_dir().join(".var/app/org.mixxx.Mixxx/.mixxx")]
     };
     folders.into_iter().map(|f| f.join("mixxxdb.sqlite")).collect()
 }
