@@ -505,6 +505,16 @@ pub fn on_dialog_result(app: &mut App, r: DialogResult) {
     }
 }
 
+/// Open a text file in the platform's default editor.
+pub fn open_in_editor(path: &Path) -> std::io::Result<std::process::Child> {
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open").arg("-t").arg(path).spawn();
+    #[cfg(target_os = "windows")]
+    return std::process::Command::new("cmd").args(["/C", "start", ""]).arg(path).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
 /// Reveal a file in the platform's file manager.
 pub fn reveal(path: &Path) {
     #[cfg(target_os = "macos")]

@@ -3430,6 +3430,8 @@ dependencies = [
  "nullamp-telegram",
  "nullamp-tracklists",
  "nullamp-update",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
  "pollster 0.4.0",
  "raw-window-handle",
  "rfd",
