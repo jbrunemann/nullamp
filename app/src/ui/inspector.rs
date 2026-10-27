@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use egui::{RichText, TextureHandle, Ui, vec2};
+use nullamp_audio::DetectedKey;
 use nullamp_core::time::format_clock;
 use nullamp_meta::{ArtworkKind, Edit, Field, FileMetadata, NewArtwork, WriteOptions};
 
@@ -21,6 +22,11 @@ const COMMENT_MAX_HEIGHT: f32 = 480.0;
 const COMMENT_MIN_HEIGHT: f32 = 44.0;
 /// Room kept below the comment for the Save / Cancel row, so the buttons stay in view.
 const ACTIONS_RESERVE: f32 = 44.0;
+
+/// Key and BPM hold a few characters, so their fields are short and what the audio suggests for
+/// them sits on the same row. The field gives way to the suggestion in a narrow panel, down to the floor.
+const SHORT_FIELD: f32 = 96.0;
+const SHORT_FIELD_MIN: f32 = 56.0;
 
 /// Where the scrolling content starts and how tall the visible panel is.
 #[derive(Clone, Copy)]
@@ -67,9 +73,35 @@ pub struct InspectorState {
     last_backup: Option<(PathBuf, PathBuf)>,
     restore_request: Option<u64>,
     cover_request: Option<u64>,
+    key_detection: KeyDetection,
+}
+
+/// The key of the one open file found by listening, asked for once it is clear the file has no key tag.
+#[derive(Default)]
+enum KeyDetection {
+    #[default]
+    NotAsked,
+    Asked,
+    /// `None`: no key found.
+    Done(Option<DetectedKey>),
+}
+
+/// What the audio suggests for a short field, as a button beside it.
+struct Suggestion {
+    value: String,
+    /// The button's text, and a shorter one for when the row is narrow.
+    long: String,
+    short: String,
+    tooltip: Option<&'static str>,
 }
 
 impl InspectorState {
+    /// What the field holds as typed so far.
+    #[cfg(test)]
+    pub(crate) fn field_value(&self, field: Field) -> &str {
+        self.fields.get(&field).map_or("", |f| f.value.as_str())
+    }
+
     fn is_loading(&self) -> bool {
         self.request.is_some() && self.loaded.len() + self.errors.len() < self.targets.len()
     }
@@ -259,6 +291,20 @@ fn save(app: &mut App) {
     app.workers.submit(Job::WriteTags { request, files, edit, options });
 }
 
+/// The key found for `path`; dropped when the panel has moved on to other files.
+pub fn on_key(app: &mut App, path: PathBuf, result: Result<Option<DetectedKey>, String>) {
+    if app.inspector.targets != [path] || !matches!(app.inspector.key_detection, KeyDetection::Asked) {
+        return;
+    }
+    match result {
+        Ok(key) => app.inspector.key_detection = KeyDetection::Done(key),
+        Err(e) => {
+            log::debug!("key: {e}");
+            app.inspector.key_detection = KeyDetection::Done(None);
+        }
+    }
+}
+
 pub fn on_result(app: &mut App, r: JobResult) {
     match r {
         JobResult::Inspected { request, path, meta, rekordbox } if app.inspector.request == Some(request) => {
@@ -433,11 +479,27 @@ fn header(app: &App, ui: &mut Ui) {
 
 fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
     let writable = app.inspector.loaded.values().all(|m| m.writable);
-    // The tempo found by listening, offered when it is the playing file that is open here.
-    let detected = match (app.inspector.targets.as_slice(), app.player.current.as_ref(), app.now.tempo) {
-        ([target], Some(c), Some(t)) if *target == c.path => Some(super::format_bpm(t.bpm)),
+    // A grid column is as wide as what it held last, so the room beside a short field is measured to the panel's visible edge.
+    let right_edge = ui.clip_rect().right();
+    ask_for_key(app, writable);
+    // What listening to the file suggests, offered beside the empty field. The tempo is the
+    // playing file's, so it is only offered when that is the file open here.
+    let bpm_suggestion = match (app.inspector.targets.as_slice(), app.player.current.as_ref(), app.now.tempo) {
+        ([target], Some(c), Some(t)) if *target == c.path => {
+            let bpm = super::format_bpm(t.bpm);
+            Some(Suggestion { long: format!("Detected {bpm} BPM: use it"), short: format!("Use {bpm}"), value: bpm, tooltip: None })
+        }
         _ => None,
     };
+    let key_suggestion = match app.inspector.key_detection {
+        KeyDetection::Done(Some(k)) => {
+            let name = nullamp_core::Key::new(k.tonic, k.minor).display(app.key_notation());
+            Some(Suggestion { long: format!("Detected {name}: use it"), short: format!("Use {name}"), value: name, tooltip: Some("Found by listening to the track. Usually right, but check it by ear.") })
+        }
+        _ => None,
+    };
+    // Both rows give their buttons the long text or the short one together, by the wider of the two.
+    let widest_long = [&bpm_suggestion, &key_suggestion].into_iter().flatten().map(|s| button_width(ui, &s.long)).fold(0.0, f32::max);
     egui::Grid::new("fields").num_columns(2).spacing([8.0, 4.0]).min_col_width(80.0).show(ui, |ui| {
         let mut pair_done = false;
         for field in Field::ALL {
@@ -467,15 +529,27 @@ fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
                 ui.label(label);
             }
             ui.vertical(|ui| {
-                let hint = if f.original == Original::Mixed && !f.touched { "‹multiple values›" } else { "" };
-                let edit = if field.is_multiline() {
+                let short = matches!(field, Field::Key | Field::Bpm);
+                let hint = match (f.original == Original::Mixed && !f.touched, short) {
+                    (false, _) => "",
+                    (true, false) => "‹multiple values›",
+                    (true, true) => "‹mixed›",
+                };
+                let r = if field.is_multiline() {
                     let above = ui.cursor().top() - viewport.content_top;
                     let height = (viewport.height - above - ACTIONS_RESERVE).clamp(COMMENT_MIN_HEIGHT, COMMENT_MAX_HEIGHT);
-                    egui::TextEdit::multiline(&mut f.value).min_size(vec2(0.0, height))
+                    let edit = egui::TextEdit::multiline(&mut f.value).min_size(vec2(0.0, height));
+                    ui.add_enabled(writable, edit.desired_width(f32::INFINITY).hint_text(hint))
+                } else if short {
+                    let suggestion = match field {
+                        Field::Key => key_suggestion.as_ref(),
+                        _ => bpm_suggestion.as_ref(),
+                    };
+                    let suggestion = suggestion.filter(|_| writable && f.value.trim().is_empty());
+                    ui.horizontal(|ui| short_edit(ui, f, writable, hint, suggestion, Room { right_edge, widest_long })).inner
                 } else {
-                    egui::TextEdit::singleline(&mut f.value)
+                    ui.add_enabled(writable, egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY).hint_text(hint))
                 };
-                let r = ui.add_enabled(writable, edit.desired_width(f32::INFINITY).hint_text(hint));
                 if r.changed() {
                     f.touched = match &f.original {
                         Original::Same(v) => *v != f.value,
@@ -487,22 +561,64 @@ fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
                 {
                     ui.label(RichText::new(e).small().color(theme::err()));
                 }
-                if field == Field::Bpm
-                    && writable
-                    && f.value.trim().is_empty()
-                    && let Some(d) = &detected
-                    && ui.small_button(format!("Detected {d} BPM: use it")).clicked()
-                {
-                    f.value = d.clone();
-                    f.touched = match &f.original {
-                        Original::Same(v) => *v != f.value,
-                        Original::Mixed => true,
-                    };
-                }
             });
             ui.end_row();
         }
     });
+}
+
+/// Asks for the key of the one open file when its tags have none, once per opening of the file.
+fn ask_for_key(app: &mut App, writable: bool) {
+    let st = &app.inspector;
+    let ([target], KeyDetection::NotAsked) = (st.targets.as_slice(), &st.key_detection) else { return };
+    let untagged = st.fields.get(&Field::Key).is_some_and(|f| matches!(&f.original, Original::Same(v) if v.trim().is_empty()));
+    if !untagged || !writable {
+        return;
+    }
+    let path = target.clone();
+    app.inspector.key_detection = KeyDetection::Asked;
+    app.workers.request_key(path);
+}
+
+/// Where the short fields' rows end, and how wide the widest long button text of them is.
+#[derive(Clone, Copy)]
+struct Room {
+    right_edge: f32,
+    widest_long: f32,
+}
+
+fn button_width(ui: &Ui, text: &str) -> f32 {
+    // A small button only has less padding; its text is the button text.
+    let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
+    galley.size().x + 2.0 * ui.spacing().button_padding.x + 2.0
+}
+
+/// A short field with the audio's suggestion for it in a button on the same row. The field keeps
+/// its width as long as the long button text fits beside it, else the text shortens, and then the
+/// field gives way.
+fn short_edit(ui: &mut Ui, f: &mut FieldState, writable: bool, hint: &str, suggestion: Option<&Suggestion>, room: Room) -> egui::Response {
+    let spacing = ui.spacing().item_spacing.x;
+    let free = (room.right_edge - ui.cursor().left()).max(0.0);
+    let (text, width) = match suggestion {
+        Some(s) if free >= SHORT_FIELD + spacing + room.widest_long => (Some(&s.long), SHORT_FIELD),
+        Some(s) => (Some(&s.short), (free - spacing - button_width(ui, &s.short)).clamp(SHORT_FIELD_MIN, SHORT_FIELD)),
+        None => (None, SHORT_FIELD.min(free)),
+    };
+    let r = ui.add_enabled(writable, egui::TextEdit::singleline(&mut f.value).desired_width(width).hint_text(hint));
+    if let (Some(s), Some(text)) = (suggestion, text) {
+        let mut button = ui.small_button(text);
+        if let Some(tip) = s.tooltip {
+            button = button.on_hover_text(tip);
+        }
+        if button.clicked() {
+            f.value = s.value.clone();
+            f.touched = match &f.original {
+                Original::Same(v) => *v != f.value,
+                Original::Mixed => true,
+            };
+        }
+    }
+    r
 }
 
 fn number_edit(ui: &mut Ui, f: &mut FieldState, writable: bool) {

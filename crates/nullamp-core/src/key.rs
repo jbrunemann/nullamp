@@ -26,6 +26,11 @@ const MAJOR: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A",
 const MINOR: [&str; 12] = ["Cm", "C#m", "Dm", "D#m", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
 
 impl Key {
+    /// The key with this tonic (pitch class, C = 0, taken modulo 12) and mode.
+    pub fn new(tonic: u8, minor: bool) -> Key {
+        Key { pitch: tonic % 12, minor }
+    }
+
     /// A key from a tag value in Camelot (`8A`), Open Key (`1m`) or musical notation (`Am`,
     /// `F# minor`, `Bb`). `None` for anything else, including the ID3 "off key" marker `o`.
     pub fn parse(text: &str) -> Option<Key> {
@@ -112,6 +117,15 @@ impl Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_from_its_tonic_and_mode_names_itself_in_both_notations() {
+        assert_eq!(Key::new(9, true).camelot(), "8A");
+        assert_eq!(Key::new(0, false).musical(), "C");
+        assert_eq!(Key::new(6, true).display(KeyNotation::Musical), "F#m");
+        assert_eq!(Key::new(21, false), Key::new(9, false));
+        assert_eq!(Key::parse(&Key::new(1, true).camelot()), Some(Key::new(1, true)));
+    }
 
     #[test]
     fn camelot_codes_match_the_wheel() {

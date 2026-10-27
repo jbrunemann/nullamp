@@ -14,6 +14,7 @@ use crate::paths::AppPaths;
 pub enum Kind {
     Waveforms,
     Tempos,
+    Keys,
     Rekordbox,
     TrackCovers,
     NowPlaying,
@@ -22,12 +23,13 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Waveforms, Kind::Tempos, Kind::Rekordbox, Kind::TrackCovers, Kind::NowPlaying, Kind::Leftovers];
+    pub const ALL: [Kind; 7] = [Kind::Waveforms, Kind::Tempos, Kind::Keys, Kind::Rekordbox, Kind::TrackCovers, Kind::NowPlaying, Kind::Leftovers];
 
     pub fn label(self) -> &'static str {
         match self {
             Kind::Waveforms => "Waveforms",
             Kind::Tempos => "Tempo (BPM)",
+            Kind::Keys => "Musical key",
             Kind::Rekordbox => "DJ software data",
             Kind::TrackCovers => "Mix track covers",
             Kind::NowPlaying => "Now Playing covers",
@@ -40,6 +42,7 @@ impl Kind {
         match self {
             Kind::Waveforms => "Waveform overviews of decoded files. Made again the next time a track plays.",
             Kind::Tempos => "Detected tempos, including \"no clear beat\". Detected again when a track plays. Tempos already saved in a playlist stay.",
+            Kind::Keys => "Detected keys, including \"no key found\". Detected again when the inspector opens a file without a key tag. Keys already written to a file stay.",
             Kind::Rekordbox => "Waveforms, key, BPM, rating and colour copied from rekordbox and Mixxx. Read again when a file plays from its library or stick, so files whose stick is away lose them.",
             Kind::TrackCovers => "Covers found online for the tracks inside mixes, and the tracks nothing was found for. Looked up again when a track becomes active.",
             Kind::NowPlaying => "Cover images handed to the macOS Now Playing overlay. Written again when a track plays.",
@@ -61,6 +64,7 @@ fn classify(cache: &Path, path: &Path) -> Kind {
     match (parts.as_slice(), extension) {
         (["waveforms", _], Some("wf")) => Kind::Waveforms,
         (["waveforms", _], Some("bpm")) => Kind::Tempos,
+        (["waveforms", _], Some("key")) => Kind::Keys,
         (["waveforms", _], Some("rwf" | "rbi")) => Kind::Rekordbox,
         (["artwork", "tracks", _], _) => Kind::TrackCovers,
         (["artwork", _], _) => Kind::NowPlaying,
@@ -158,6 +162,7 @@ mod tests {
             ("waveforms/a.wf", 10),
             ("waveforms/b.wf", 20),
             ("waveforms/a.bpm", 12),
+            ("waveforms/a.key", 11),
             ("waveforms/a.rwf", 5),
             ("waveforms/a.rbi", 7),
             ("artwork/tracks/a.jpg", 100),
@@ -177,6 +182,7 @@ mod tests {
         let paths = seeded(dir.path());
         assert_eq!(usage(&paths, Kind::Waveforms), Usage { entries: 2, bytes: 30 });
         assert_eq!(usage(&paths, Kind::Tempos), Usage { entries: 1, bytes: 12 });
+        assert_eq!(usage(&paths, Kind::Keys), Usage { entries: 1, bytes: 11 });
         assert_eq!(usage(&paths, Kind::Rekordbox), Usage { entries: 2, bytes: 12 });
         assert_eq!(usage(&paths, Kind::TrackCovers), Usage { entries: 2, bytes: 101 });
         assert_eq!(usage(&paths, Kind::NowPlaying), Usage { entries: 1, bytes: 50 });
@@ -214,7 +220,7 @@ mod tests {
     fn clearing_everything_leaves_nothing_counted() {
         let dir = tempfile::tempdir().unwrap();
         let paths = seeded(dir.path());
-        assert_eq!(clear(&paths, &Kind::ALL), 10);
+        assert_eq!(clear(&paths, &Kind::ALL), 11);
         assert!(scan(&paths).iter().all(|(_, u)| *u == Usage::default()));
     }
 
