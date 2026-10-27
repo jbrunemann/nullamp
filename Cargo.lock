@@ -3478,6 +3478,7 @@ version = "2.1.0"
 dependencies = [
  "android-activity",
  "nullamp",
+ "nullamp-sysmedia",
 ]
 
 [[package]]
@@ -3588,7 +3589,9 @@ dependencies = [
 name = "nullamp-sysmedia"
 version = "2.1.0"
 dependencies = [
+ "jni",
  "log",
+ "ndk-context",
  "nullamp-core",
  "souvlaki",
 ]

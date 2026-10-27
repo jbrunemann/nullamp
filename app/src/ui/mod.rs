@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "android")]
 mod android_dialogs;
+#[cfg(target_os = "android")]
+pub mod background;
 pub mod deck;
 pub mod dialogs;
 pub mod file_browser;
@@ -1182,6 +1184,9 @@ impl App {
             Status::Paused => PlaybackState::Paused { position },
             Status::Stopped => PlaybackState::Stopped,
         };
+        if matches!(state, PlaybackState::Playing { .. }) {
+            crate::request_notification_permission();
+        }
         if let Some(s) = self.sysmedia.as_mut() {
             s.set_playback(state);
         }

@@ -17,6 +17,7 @@ update-check = ["nullamp/update-check"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 nullamp = { path = "../app", default-features = false }
+nullamp-sysmedia = { path = "../crates/nullamp-sysmedia" }
 android-activity = { version = "0.6", features = ["native-activity"] }
 
 [package.metadata.android]
@@ -45,6 +46,19 @@ name = "android.permission.READ_MEDIA_AUDIO"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.READ_EXTERNAL_STORAGE"
 max_sdk_version = 32
+
+# The media service: plays in the background with a notification and the lock screen controls (android/java/).
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.POST_NOTIFICATIONS"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WAKE_LOCK"
 
 # Lists any folder and writes tags to files other apps made. A prototype's shortcut: Play does not allow it for most apps.
 [[package.metadata.android.uses_permission]]

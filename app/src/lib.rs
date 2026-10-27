@@ -221,6 +221,19 @@ fn open_all_files_page(app: &android_activity::AndroidApp) -> jni::errors::Resul
     })
 }
 
+/// Android 13 and later show the notification with the lock screen player only after the user allows notifications;
+/// asked when playback starts the first time.
+#[cfg(target_os = "android")]
+pub(crate) fn request_notification_permission() {
+    static ASKED: std::sync::Once = std::sync::Once::new();
+    if let Some(app) = ANDROID_APP.get() {
+        ASKED.call_once(|| nullamp_sysmedia::ask_for_notifications(app.activity_as_ptr()));
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn request_notification_permission() {}
+
 /// The Android app: the `android` crate hands its activity in. Everything lives in the app's private folder.
 /// Files are picked in the app's own file browser (`ui::file_browser`), which needs the "All files access" permission.
 #[cfg(target_os = "android")]
@@ -251,7 +264,7 @@ pub fn run_android(android_app: android_activity::AndroidApp) {
         android_app: Some(android_app),
         ..Default::default()
     };
-    if let Err(e) = eframe::run_native("Nullamp", options, Box::new(|cc| Ok(Box::new(ui::App::new(cc, store))))) {
+    if let Err(e) = eframe::run_native("Nullamp", options, Box::new(|cc| Ok(Box::new(ui::background::Shared::new(ui::App::new(cc, store)))))) {
         log::error!("nullamp stopped: {e}");
     }
 }

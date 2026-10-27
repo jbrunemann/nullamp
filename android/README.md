@@ -1,8 +1,8 @@
 # Nullamp for Android (prototype)
 
-The desktop UI in `app/`, run as a NativeActivity through eframe and wgpu (Vulkan). Only pure Rust goes in: no system file
-picker, no media session, no SQLite, no `curl`. That leaves out the rekordbox desktop library and the Mixxx library
-(C, SQLite), and the lock screen controls (need Java).
+The desktop UI in `app/`, run as a NativeActivity through eframe and wgpu (Vulkan). Apart from the media service below
+only pure Rust goes in: no system file picker, no SQLite, no `curl`. That leaves out the rekordbox desktop library and the
+Mixxx library (C, SQLite).
 The online features (cover lookup, update check, Shazam, 1001Tracklists) ask over HTTPS through `nullamp-http`, which uses
 `ureq` and rustls here (`ring` is C, built by the NDK) because Android has no `curl`. They need the INTERNET permission.
 
@@ -15,6 +15,35 @@ sdkmanager --install "ndk;27.3.13750724"      # any recent NDK
 android/build.sh install                      # builds target/release/apk/nullamp.apk, installs it with adb
 adb shell am start -n dev.nullamp.player/android.app.NativeActivity
 ```
+
+## Media session and background playback
+
+The lock screen and notification player, headset, Bluetooth and car buttons, audio focus and playback with the screen
+off need a foreground service and a `MediaSession`, which are Java classes. They are two small files in `android/java/`
+(no Gradle, no Media3, only the platform API):
+
+- `MediaService`: a foreground service of type `mediaPlayback` (API 34) that owns the `MediaSession`, the media style
+  notification (previous, play/pause, next), audio focus (a lasting loss pauses, a short one pauses and resumes), the
+  pause on unplugged headphones and a partial wake lock while playing. Paused, the notification can be swiped away;
+  stopped, the service ends.
+- `MediaBridge`: what Rust calls (`setMetadata`, `setPlayback`, `askForNotifications`) and the native method
+  (`nativeCommand`) the service calls back for every press.
+
+`crates/nullamp-sysmedia/src/android.rs` is the Rust side (JNI through the application context, the class found
+through its class loader). `Java_dev_nullamp_player_MediaBridge_nativeCommand` is exported by `android/src/lib.rs`;
+`MediaBridge` calls `System.loadLibrary`, because NativeActivity loads the library without registering it with the
+class loader. `cargo-apk` can add neither a service nor a `classes.dex`, so `android/package.sh` (run by `build.sh`)
+compiles the Java with `javac` and `d8`, adds the service to the manifest cargo-apk wrote, and packs, aligns and signs
+the APK again.
+
+eframe drops its window while the activity is stopped and runs no frames, so `App::logic` (next track, presses from
+the service) would stop. `ui::background::Shared` holds the app behind a mutex and a thread runs `process_events` every
+200 ms while no frame has run for 600 ms.
+
+Android 13 and later need the user to allow notifications for the player to show; the prompt comes with the first
+playback. Without it the session still works (headset buttons, background playback), only the notification is hidden.
+
+Test without a headset: `adb shell cmd media_session dispatch play|pause|next|previous`.
 
 ## Releasing
 
@@ -56,7 +85,8 @@ permission to most apps, so a store build would need the system picker and Java 
 ## Known gaps
 
 - Buttons are desktop sized, and hover and right-click interactions do not exist on touch.
-- Playback stops with the screen: no foreground service, no audio focus.
+- Audio focus and the notification swipe-away are untested on a device (the emulator's simulated call does not take
+  focus).
 - The LCD shows no title at phone width, and its hint text still says "press Ctrl+O".
 - Playlist rows cannot be dragged to reorder (a drag scrolls); use the up and down buttons.
 - Debug logs: `adb logcat -s nullamp`.

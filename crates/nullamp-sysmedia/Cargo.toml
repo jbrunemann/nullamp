@@ -14,3 +14,8 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 
 [target.'cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))'.dependencies]
 souvlaki = "0.8.3"
+
+# The Java side (`android/java/`) is reached over JNI with the VM and activity android-activity hands to ndk-context.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+ndk-context = "0.1"

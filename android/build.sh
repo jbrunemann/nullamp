@@ -12,7 +12,7 @@
 #
 #   CARGO_APK_RELEASE_KEYSTORE=/path/to/release.jks CARGO_APK_RELEASE_KEYSTORE_PASSWORD=... android/build.sh
 #
-# Needs: Android SDK with an NDK, `cargo install cargo-apk`, `rustup target add aarch64-linux-android`.
+# Needs: a JDK (the media service is Java, see package.sh), Android SDK with an NDK, `cargo install cargo-apk`, `rustup target add aarch64-linux-android`.
 set -e
 cd "$(dirname "$0")/.."
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
@@ -30,6 +30,7 @@ if [ "$1" = store ]; then
 else
     cargo apk build -p nullamp-android --release
 fi
+android/package.sh
 if [ "$1" = install ]; then
     "$ANDROID_HOME/platform-tools/adb" install -r target/release/apk/nullamp.apk
 fi

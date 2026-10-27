@@ -10,8 +10,9 @@
 //! while the window is unfocused and coexist with other players the way the OS
 //! arbitrates them (the most recent player owns the keys).
 //!
-//! Android has no backend yet: [`SystemMedia`] there does nothing, since the lock screen and headset buttons
-//! need a Java `MediaSession`.
+//! - Android: a foreground service with a `MediaSession` (lock screen, headset and Bluetooth buttons, the system
+//!   media controls), audio focus and a notification. They are Java classes, so the work is in `android/java/`; this
+//!   crate calls them over JNI and takes the presses back through [`on_native_command`] (see `android.rs`).
 
 use std::path::PathBuf;
 #[cfg(not(target_os = "android"))]
@@ -53,31 +54,16 @@ pub enum PlaybackState {
 #[cfg(not(target_os = "android"))]
 const DEFAULT_SEEK: f64 = 10.0;
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{SystemMedia, ask_for_notifications, on_native_command};
+
 #[cfg(not(target_os = "android"))]
 pub struct SystemMedia {
     controls: Option<MediaControls>,
     last_metadata: Option<NowPlaying>,
     last_state: Option<PlaybackState>,
-}
-
-#[cfg(target_os = "android")]
-pub struct SystemMedia;
-
-#[cfg(target_os = "android")]
-impl SystemMedia {
-    pub fn new(_handler: impl Fn(SystemEvent) + Send + 'static, _hwnd: Option<*mut std::ffi::c_void>) -> Self {
-        SystemMedia
-    }
-
-    pub fn is_available(&self) -> bool {
-        false
-    }
-
-    pub fn set_metadata(&mut self, _now: &NowPlaying) {}
-
-    pub fn clear_metadata(&mut self) {}
-
-    pub fn set_playback(&mut self, _state: PlaybackState) {}
 }
 
 #[cfg(not(target_os = "android"))]
@@ -189,6 +175,22 @@ fn signed(dir: SeekDirection, secs: f64) -> f64 {
     }
 }
 
+/// What `MediaBridge.nativeCommand` of the Android glue sends: the codes are the constants of `MediaBridge.java`.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn command_from_code(code: i32, arg: f64) -> Option<Command> {
+    Some(match code {
+        1 => Command::Play,
+        2 => Command::Pause,
+        3 => Command::PlayPause,
+        4 => Command::Next,
+        5 => Command::Previous,
+        6 => Command::Stop,
+        7 => Command::SeekTo(arg.max(0.0)),
+        8 => Command::SeekBy(arg),
+        _ => return None,
+    })
+}
+
 /// The `file://` URI of an existing file, percent-encoded.
 pub fn file_url(path: &std::path::Path) -> Option<String> {
     let abs = std::fs::canonicalize(path).ok()?;
@@ -222,6 +224,15 @@ mod tests {
             Some(SystemEvent::Command(Command::SeekTo(1.5)))
         );
         assert_eq!(map_event(MediaControlEvent::OpenUri("file:///a.mp3".into())), Some(SystemEvent::OpenUri("file:///a.mp3".into())));
+    }
+
+    #[test]
+    fn android_codes_map_to_commands() {
+        assert_eq!(command_from_code(3, 0.0), Some(Command::PlayPause));
+        assert_eq!(command_from_code(7, 12.5), Some(Command::SeekTo(12.5)));
+        assert_eq!(command_from_code(7, -1.0), Some(Command::SeekTo(0.0)));
+        assert_eq!(command_from_code(8, -10.0), Some(Command::SeekBy(-10.0)));
+        assert_eq!(command_from_code(99, 0.0), None);
     }
 
     #[test]

@@ -19,7 +19,7 @@ A fast, retro-inspired desktop music player with first-class DJ mix (setlist) su
 | `crates/nullamp-core` | Pure logic, no I/O: playlists, play order (shuffle/repeat), setlists and validation, M3U, cue sheets, pasted-tracklist parser, commands and media-key dedupe |
 | `crates/nullamp-audio` | Audio engine: symphonia decoding on its own thread, rubato resampling, rtrb ring buffer, cpal output, gapless preload, device recovery; offline analysis (waveform, tempo, key, where the tracks of a mix start) |
 | `crates/nullamp-meta` | Tags via lofty, ID3 chapters via id3, artwork, technical info, safe tag writing with backups |
-| `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki |
+| `crates/nullamp-sysmedia` | OS media keys and Now Playing via souvlaki; on Android a JNI client of the Java media service in `android/java/` |
 | `crates/nullamp-http` | The one HTTP client of the online crates: `send(Request)` runs `curl` (no TLS stack here); with the `rustls` feature, which the Android build turns on, `ureq` instead. Redirects, status, size limit, form and raw bodies; tested against a local server |
 | `crates/nullamp-artwork` | Cover of one track of a mix by artist and title: Deezer search, then iTunes Search, via `nullamp-http`; result matching |
 | `crates/nullamp-shazam` | Names the tracks of a mix with Shazam: signatures of 12 s clips in the Shazam apps' format, posted via `nullamp-http`, and the rule that several clips must agree |
