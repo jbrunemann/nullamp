@@ -353,7 +353,7 @@ If macOS refuses access (the Mac App Store version of Mixxx keeps its library in
 ### What Nullamp uses from them
 
 - **Key, BPM, year and the like** fill in what a file's own tags lack. The tags always win where they have a value.
-- **Waveforms:** the timeline shows rekordbox's or Mixxx's coloured waveform instead of Nullamp's own. Turn this off with **Use rekordbox's and Mixxx's waveform analysis** on the rekordbox tab.
+- **Waveforms:** the timeline shows rekordbox's or Mixxx's coloured waveform instead of Nullamp's own. This is off by default; turn it on with **Use rekordbox's and Mixxx's waveform analysis** on the rekordbox tab.
 - **Rating and colour** are shown in the Inspector under **From DJ software**.
 
 This works for any file the programs know, wherever you add it from. Nullamp also caches what it learned by the content of the file, so a copy of the file on another disk keeps its key, BPM and waveform even when the stick is away or the program is closed.

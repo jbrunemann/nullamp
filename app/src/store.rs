@@ -135,7 +135,7 @@ impl Default for Settings {
             camelot: true,
             update_url: DEFAULT_UPDATE_URL.into(),
             online_artwork: true,
-            rekordbox_waveform: true,
+            rekordbox_waveform: false,
             rekordbox_key: String::new(),
             tracklists_guid: String::new(),
             telegram_api_id: String::new(),

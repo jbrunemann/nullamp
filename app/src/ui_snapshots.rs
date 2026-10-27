@@ -376,6 +376,7 @@ fn rekordbox_waveform_is_cached_for_the_same_file_elsewhere() {
     std::fs::copy(&on_stick, &elsewhere).unwrap();
 
     let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    h.state_mut().settings.rekordbox_waveform = true;
     play_file(&mut h, on_stick.clone());
     let from_stick = h.state().now.waveform.clone().expect("waveform from the stick");
     assert!(h.state().now.wave_colors.is_some(), "rekordbox's colours");
