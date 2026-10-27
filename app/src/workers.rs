@@ -8,6 +8,9 @@
 //! - *tempo* analysis has a thread of its own as well, so it neither waits for a waveform nor
 //!   cancels one. Both start after the track has been handed to the audio engine and never
 //!   delay playback;
+//! - *key* detection (the inspector offering the key of a file that has no key tag) decodes the
+//!   whole file for a fraction of a second, so it has a thread of its own and a newer request
+//!   replaces the running one;
 //! - *online* artwork lookups (the tracks of a mix, and the inspector's "Find online") wait on
 //!   the network for seconds, so they have a thread of their own too and answer in the order
 //!   they were asked;
@@ -30,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, select_biased};
-use nullamp_audio::{Tempo, TempoError, Waveform, WaveformError};
+use nullamp_audio::{DetectedKey, KeyError, Tempo, TempoError, Waveform, WaveformError};
 use nullamp_core::setlist::{MixInfo, Provenance};
 use nullamp_core::{EntryId, Setlist, TrackInfo, cue, m3u, tracklist_text};
 use nullamp_meta::{Edit, FileMetadata, FileStamp, WriteOptions};
@@ -144,6 +147,11 @@ struct TempoRequest {
     path: PathBuf,
     /// One track of a mix: its start and end in seconds. `None` analyses the file as a whole.
     span: Option<(f64, f64)>,
+}
+
+struct KeyRequest {
+    generation: u64,
+    path: PathBuf,
 }
 
 struct EntryArtRequest {
@@ -271,6 +279,9 @@ pub enum JobResult {
     /// asked for), `Ok(None)` for no clear beat. A whole-file request is not answered when the
     /// file's tags already state a BPM, and abandoned requests send nothing.
     Tempo { token: u64, span: Option<(f64, f64)>, result: Result<Option<Tempo>, String> },
+    /// Key of the file `path` found by listening to it, `Ok(None)` for none found. Abandoned
+    /// requests send nothing.
+    Key { path: PathBuf, result: Result<Option<DetectedKey>, String> },
     /// `done` of the `total` clips of an [`Workers::identify`] request have been asked about.
     IdentifyProgress { request: u64, done: usize, total: usize },
     /// What Shazam says about one track of the request.
@@ -304,6 +315,8 @@ pub struct Workers {
     waveform_generation: Arc<AtomicU64>,
     tempo: Sender<TempoRequest>,
     tempo_generation: Arc<AtomicU64>,
+    key: Sender<KeyRequest>,
+    key_generation: Arc<AtomicU64>,
     online: Sender<OnlineRequest>,
     identify: Sender<IdentifyRequest>,
     /// The identify request that may run; any other one stops at its next step.
@@ -443,6 +456,28 @@ impl Workers {
                     }
                 })
                 .expect("spawn tempo worker");
+        }
+
+        let key_generation = Arc::new(AtomicU64::new(0));
+        let (key, key_rx) = crossbeam_channel::unbounded::<KeyRequest>();
+        {
+            let (tx, w, generation, dir) = (results_tx.clone(), Arc::clone(&waker), Arc::clone(&key_generation), paths.waveform_cache());
+            std::thread::Builder::new()
+                .name("nullamp-key".into())
+                .spawn(move || {
+                    while let Ok(mut request) = key_rx.recv() {
+                        while let Ok(newer) = key_rx.try_recv() {
+                            request = newer;
+                        }
+                        if let Some(result) = run_key(&dir, &generation, request) {
+                            if tx.send(result).is_err() {
+                                return;
+                            }
+                            w();
+                        }
+                    }
+                })
+                .expect("spawn key worker");
         }
 
         let (online, online_rx) = crossbeam_channel::unbounded::<OnlineRequest>();
@@ -662,6 +697,8 @@ impl Workers {
             waveform_generation,
             tempo,
             tempo_generation,
+            key,
+            key_generation,
             online,
             identify,
             identify_current,
@@ -806,6 +843,14 @@ impl Workers {
         let _ = self.tempo.send(TempoRequest { generation, token, path, span });
     }
 
+    /// Compute (or load from the cache) the key of the whole file `path`. An analysis already
+    /// running for an earlier request stops at its next packet, so only the newest request is
+    /// ever answered.
+    pub fn request_key(&self, path: PathBuf) {
+        let generation = self.key_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.key.send(KeyRequest { generation, path });
+    }
+
     /// Queue tag reads for playlist rows, in chunks so other work interleaves.
     pub fn scan(&self, paths: Vec<PathBuf>) {
         let generation = self.scan_generation.load(Ordering::Relaxed);
@@ -891,6 +936,27 @@ fn run_tempo(dir: &Path, current: &AtomicU64, request: TempoRequest) -> Option<J
         }
         Err(TempoError::Cancelled) => None,
         Err(e) => Some(JobResult::Tempo { token, span, result: Err(e.to_string()) }),
+    }
+}
+
+/// `None` when a newer request replaced this one while it ran. A file that cannot be read or has no
+/// notes in it is answered (`Ok(None)`, cached), so it is not tried again.
+fn run_key(dir: &Path, current: &AtomicU64, request: KeyRequest) -> Option<JobResult> {
+    let KeyRequest { generation, path } = request;
+    let fingerprint = store::fingerprint(&path).ok();
+    if let Some(key) = fingerprint.as_deref().and_then(|fp| waveform_cache::load_key(dir, fp)) {
+        return Some(JobResult::Key { path, result: Ok(key) });
+    }
+    let cancelled = || current.load(Ordering::Relaxed) != generation;
+    match nullamp_audio::compute_key(&path, None, &cancelled) {
+        Ok(key) => {
+            if let Some(fp) = fingerprint {
+                waveform_cache::store_key(dir, &fp, key);
+            }
+            Some(JobResult::Key { path, result: Ok(key) })
+        }
+        Err(KeyError::Cancelled) => None,
+        Err(e) => Some(JobResult::Key { path, result: Err(e.to_string()) }),
     }
 }
 

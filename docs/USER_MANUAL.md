@@ -283,8 +283,8 @@ Open the **Inspector** (the button, or ⌘I). It shows the selected file in the 
 
 Title, artist, album, date or year, genre, BPM, key, track number and total, and comment. Change what you like and press **Save**. **Cancel** discards your edits, and **Reload** reads the file again.
 
-- **BPM:** when the field is empty and Nullamp has detected the tempo of the playing file, a **Detected N BPM: use it** button fills it in. MP3 and M4A store whole numbers only. Enter `-1` to switch tempo display and detection off for a file.
-- **Key:** type it as a Camelot code (`8A`), an Open Key code (`1m`) or a name (`Am`, `F# minor`, `Bb`). It is written as you type it.
+- **BPM:** when the field is empty and Nullamp has detected the tempo of the playing file, a **Detected N BPM: use it** button beside the field fills it in. MP3 and M4A store whole numbers only. Enter `-1` to switch tempo display and detection off for a file.
+- **Key:** type it as a Camelot code (`8A`), an Open Key code (`1m`) or a name (`Am`, `F# minor`, `Bb`). It is written as you type it. When a single file has no key tag, Nullamp listens to it and a **Detected 8A: use it** button beside the field fills the key in (as a Camelot code or a name, following the `camelot` setting). The detection suits dance music and is a good guess, not a certainty: about four in five keys agree with rekordbox's, relative major and minor keys are the usual mix-up, and major keys are reported less often than they occur. Check it by ear before you write it. In a narrow window both buttons shorten to **Use 124** and **Use 8A**.
 
 ### Several files at once
 

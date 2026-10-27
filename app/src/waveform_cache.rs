@@ -1,4 +1,4 @@
-//! Disk cache of what the background analysis finds in a file (waveform overview, tempo), so
+//! Disk cache of what the background analysis finds in a file (waveform overview, tempo, key), so
 //! a file is only decoded for it once.
 //!
 //! Entries are keyed by the file's content fingerprint (see `store::fingerprint`), which
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use nullamp_audio::{Tempo, Waveform};
+use nullamp_audio::{DetectedKey, Tempo, Waveform};
 
 /// Entries not used for this long are removed at startup. A few KB each; this only keeps
 /// the folder from collecting every file ever played.
@@ -124,6 +124,28 @@ pub fn store_tempo(dir: &Path, fingerprint: &str, tempo: Option<Tempo>) {
     write_entry(&entry_as(dir, fingerprint, "bpm"), &bytes);
 }
 
+/// Magic of the key entries. The number is the version of the detector: a better one gets a new
+/// number, and what an older one found is then a miss and analysed again.
+const KEY_MAGIC: &[u8; 4] = b"NKY1";
+
+/// `Some(None)` is a cached "no key found", so such a file is not analysed again; `None` is a miss.
+pub fn load_key(dir: &Path, fingerprint: &str) -> Option<Option<DetectedKey>> {
+    let bytes = read_entry(&entry_as(dir, fingerprint, "key"))?;
+    let [m0, m1, m2, m3, found, tonic, minor, c0, c1, c2, c3] = bytes[..] else { return None };
+    if &[m0, m1, m2, m3] != KEY_MAGIC || tonic > 11 || minor > 1 {
+        return None;
+    }
+    Some((found == 1).then_some(DetectedKey { tonic, minor: minor == 1, confidence: f32::from_le_bytes([c0, c1, c2, c3]) }))
+}
+
+pub fn store_key(dir: &Path, fingerprint: &str, key: Option<DetectedKey>) {
+    let k = key.unwrap_or(DetectedKey { tonic: 0, minor: false, confidence: 0.0 });
+    let mut bytes = KEY_MAGIC.to_vec();
+    bytes.extend_from_slice(&[u8::from(key.is_some()), k.tonic, u8::from(k.minor)]);
+    bytes.extend_from_slice(&k.confidence.to_le_bytes());
+    write_entry(&entry_as(dir, fingerprint, "key"), &bytes);
+}
+
 /// Remove entries unused for `max_age`. Returns how many went.
 pub fn prune(dir: &Path, max_age: Duration) -> usize {
     let Ok(read) = fs::read_dir(dir) else { return 0 };
@@ -195,6 +217,21 @@ mod tests {
         assert_eq!(load_tempo(dir.path(), "none"), Some(None));
         fs::write(entry_as(dir.path(), "abc", "bpm"), b"NBP1xx").unwrap();
         assert_eq!(load_tempo(dir.path(), "abc"), None, "damage is a miss");
+    }
+
+    #[test]
+    fn key_round_trips_including_no_key() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_key(dir.path(), "abc"), None);
+        let key = DetectedKey { tonic: 9, minor: true, confidence: 0.81 };
+        store_key(dir.path(), "abc", Some(key));
+        store_key(dir.path(), "none", None);
+        assert_eq!(load_key(dir.path(), "abc"), Some(Some(key)));
+        assert_eq!(load_key(dir.path(), "none"), Some(None));
+        fs::write(entry_as(dir.path(), "abc", "key"), b"NKY1xx").unwrap();
+        assert_eq!(load_key(dir.path(), "abc"), None, "damage is a miss");
+        fs::write(entry_as(dir.path(), "abc", "key"), [b'N', b'K', b'Y', b'1', 1, 12, 0, 0, 0, 0, 0]).unwrap();
+        assert_eq!(load_key(dir.path(), "abc"), None, "a tonic that does not exist is a miss");
     }
 
     #[test]
