@@ -283,8 +283,8 @@ Open the **Inspector** (the button, or ⌘I). It shows the selected file in the 
 
 Title, artist, album, date or year, genre, BPM, key, track number and total, and comment. Change what you like and press **Save**. **Cancel** discards your edits, and **Reload** reads the file again.
 
-- **BPM:** when the field is empty and Nullamp has detected the tempo of the playing file, a **Detected N BPM: use it** button fills it in. MP3 and M4A store whole numbers only. Enter `-1` to switch tempo display and detection off for a file.
-- **Key:** type it as a Camelot code (`8A`), an Open Key code (`1m`) or a name (`Am`, `F# minor`, `Bb`). It is written as you type it.
+- **BPM:** when the field is empty and Nullamp has detected the tempo of the playing file, a **Detected N BPM: use it** button beside the field fills it in. MP3 and M4A store whole numbers only. Enter `-1` to switch tempo display and detection off for a file.
+- **Key:** type it as a Camelot code (`8A`), an Open Key code (`1m`) or a name (`Am`, `F# minor`, `Bb`). It is written as you type it. When a single file has no key tag, Nullamp listens to it and a **Detected 8A: use it** button beside the field fills the key in (as a Camelot code or a name, following the `camelot` setting). The detection suits dance music and is a good guess, not a certainty: about four in five keys agree with rekordbox's, relative major and minor keys are the usual mix-up, and major keys are reported less often than they occur. Check it by ear before you write it. In a narrow window both buttons shorten to **Use 124** and **Use 8A**.
 
 ### Several files at once
 
@@ -353,7 +353,7 @@ If macOS refuses access (the Mac App Store version of Mixxx keeps its library in
 ### What Nullamp uses from them
 
 - **Key, BPM, year and the like** fill in what a file's own tags lack. The tags always win where they have a value.
-- **Waveforms:** the timeline shows rekordbox's or Mixxx's coloured waveform instead of Nullamp's own. Turn this off with **Use rekordbox's and Mixxx's waveform analysis** on the rekordbox tab.
+- **Waveforms:** the timeline shows rekordbox's or Mixxx's coloured waveform instead of Nullamp's own. This is off by default; turn it on with **Use rekordbox's and Mixxx's waveform analysis** on the rekordbox tab.
 - **Rating and colour** are shown in the Inspector under **From DJ software**.
 
 This works for any file the programs know, wherever you add it from. Nullamp also caches what it learned by the content of the file, so a copy of the file on another disk keeps its key, BPM and waveform even when the stick is away or the program is closed.

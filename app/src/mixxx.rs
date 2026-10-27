@@ -32,7 +32,7 @@ fn info(t: &Track) -> TrackInfo {
 
 /// The files Mixxx keeps its library in on this platform, in the order they are tried. The
 /// sandboxed macOS build keeps it in its container, which macOS only lets another app read once
-/// the user has allowed it.
+/// the user has allowed it. On Linux the Flatpak build keeps it under its own app directory.
 fn default_locations() -> Vec<PathBuf> {
     let Some(dirs) = directories::BaseDirs::new() else { return Vec::new() };
     let folders = if cfg!(windows) {
@@ -40,7 +40,7 @@ fn default_locations() -> Vec<PathBuf> {
     } else if cfg!(target_os = "macos") {
         vec![dirs.data_dir().join("Mixxx"), dirs.home_dir().join("Library/Containers/org.mixxx.mixxx/Data/Library/Application Support/Mixxx")]
     } else {
-        vec![dirs.home_dir().join(".mixxx")]
+        vec![dirs.home_dir().join(".mixxx"), dirs.home_dir().join(".var/app/org.mixxx.Mixxx/.mixxx")]
     };
     folders.into_iter().map(|f| f.join("mixxxdb.sqlite")).collect()
 }
@@ -237,7 +237,7 @@ impl Mixxx {
             Ok(Some(wave)) => {
                 let (peak, rms) = wave.buckets(nullamp_audio::WAVEFORM_BUCKETS);
                 log::info!("waveform of {} from the Mixxx analysis ({} columns{})", file.display(), wave.heights.len(), if wave.bands.is_some() { ", coloured" } else { "" });
-                Some(Analysed { wave: nullamp_audio::Waveform { peak, rms, colors: None }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
+                Some(Analysed { wave: nullamp_audio::Waveform { peak, rms, colors: None, heights: None }, colors: wave.bucket_colors(nullamp_audio::WAVEFORM_BUCKETS) })
             }
             Ok(None) => None,
             Err(e) => {

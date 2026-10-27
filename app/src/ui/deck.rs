@@ -122,21 +122,22 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
 
     // Big time readout (click toggles elapsed / remaining).
     // On a very narrow display the clock gives up some height, and so width, to keep room for the tempo and the output.
-    let digits_h = (34.0_f32).min(((inner.width() - 18.0 - COMPACT_COLUMN) / widgets::seven_segment_width("-188:88", 1.0)).max(22.0));
+    let digits_h = (34.0_f32).min(((inner.width() - 18.0 - COMPACT_COLUMN) / widgets::seven_segment_width("-8:88:88", 1.0)).max(22.0));
     let (time_text, shown_secs) = match (app.show_remaining, dur) {
         (true, Some(d)) => (format!("-{}", lcd_clock(d - pos)), d - pos),
         _ => (format!(" {}", lcd_clock(pos)), pos),
     };
     let time_origin = pos2(inner.left(), inner.top() + 2.0);
-    let w = widgets::seven_segment_width("-188:88", digits_h);
+    let w = widgets::seven_segment_width("-8:88:88", digits_h);
     // Unlit "8"s behind the digits for the LCD look.
-    // The first minute cell is a "1"-only digit, so its ghost shows just those two segments.
-    let ghost = format!("{}188:88", &time_text[..1]);
-    widgets::seven_segment(&p, time_origin, digits_h, &ghost, theme::LCD_OFF, Color32::TRANSPARENT);
+    let ghost = format!("{}8:88:88", &time_text[..1]);
+    // Right-aligned, so the last digit lines up with the visualizer's right edge whether or not there is a minus sign.
+    let digits_origin = pos2(time_origin.x + w - widgets::seven_segment_width(&ghost, digits_h), time_origin.y);
+    widgets::seven_segment(&p, digits_origin, digits_h, &ghost, theme::LCD_OFF, Color32::TRANSPARENT);
     let lit = if status == Status::Stopped { theme::LCD_MID } else { theme::LCD_FG };
     // Past the display's range the digits blink slowly, like an old stereo's error state.
     if shown_secs < LCD_MAX_SECS as f64 || slow_blink(ui) {
-        widgets::seven_segment(&p, time_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
+        widgets::seven_segment(&p, digits_origin, digits_h, &time_text, lit, Color32::TRANSPARENT);
     }
     let time_rect = Rect::from_min_size(time_origin, vec2(w, digits_h));
     let resp = ui.interact(time_rect, egui::Id::unique("lcd-time"), Sense::click());
@@ -534,16 +535,16 @@ fn slow_blink(ui: &Ui) -> bool {
     (ui.input(|i| i.time) * 0.5).fract() < 0.5
 }
 
-/// 199:59, the last value the 3½ digit clock can show.
-const LCD_MAX_SECS: u64 = 199 * 60 + 59;
+/// 9:59:59, the last value the clock can show.
+const LCD_MAX_SECS: u64 = 9 * 3600 + 59 * 60 + 59;
 
-/// Total minutes and seconds in a fixed "1mm:ss" field, like a 3½ digit LCD: the first cell can
-/// only show a 1, so 199:59 is the limit (hours roll into the minutes). Unused leading minute
-/// digits are `_`, which draws as an unlit cell.
+/// The time in a fixed "h:mm:ss" field. Under an hour the hour cell and its colon stay unlit and the
+/// minutes are unpadded, so the digits never move when the hour rolls over. `_` is an unlit digit cell
+/// and `;` an unlit colon cell.
 fn lcd_clock(secs: f64) -> String {
     let total = (secs.max(0.0) as u64).min(LCD_MAX_SECS);
-    let (m, s) = (total / 60, total % 60);
-    if m >= 100 { format!("1{:02}:{s:02}", m - 100) } else { format!("_{m:_>2}:{s:02}") }
+    let (h, m, s) = (total / 3600, (total / 60) % 60, total % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("_;{m:_>2}:{s:02}") }
 }
 
 /// Line 1: what is playing (the constituent track for mixes, in amber).
@@ -835,6 +836,8 @@ const WAVE_REVEAL_EDGE: f32 = 40.0;
 /// One column per point; each takes the loudest of the buckets it covers, so a long mix stays
 /// readable and a short track does not turn into a staircase. With rekordbox's `colors` (one per bucket) each column
 /// takes the colour of its loudest bucket and is drawn much brighter than the faint LCD tint of a decoded waveform.
+/// Our own analysis brings `heights` as well (the mean peak of each bucket, as Mixxx draws it): the columns are then one
+/// layer of those, linear, instead of the peak and RMS layers.
 /// Only the left `revealed` (0 to 1) of the bar is drawn, with a soft edge.
 fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, colors: Option<&[[u8; 3]]>, pixels_per_point: f32, revealed: f32) {
     let inner = bar.shrink(1.0);
@@ -853,6 +856,8 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
     let height = |v: u8| (f32::from(v) / top).powf(0.6) * half;
     let (peak_color, rms_color) = (theme::LCD_FG.gamma_multiply(0.05), theme::LCD_FG.gamma_multiply(0.10));
     let colors = colors.filter(|c| c.len() >= n);
+    let heights = wave.heights.as_deref().filter(|h| h.len() >= n && colors.is_some());
+    let mixxx_top = f32::from(heights.map_or(1, |h| h.iter().copied().max().unwrap_or(0).max(1)));
     let mut mesh = egui::Mesh::default();
     // The edge starts off the left end and finishes off the right end, so the first and last columns fade in and out too.
     let edge_x = inner.left() - WAVE_REVEAL_EDGE + revealed * (inner.width() + WAVE_REVEAL_EDGE);
@@ -863,7 +868,7 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
         let x1 = (inner.left() + (c + 1) as f32 * width).round_to_pixels(pixels_per_point).max(x0 + 1.0 / pixels_per_point);
         let (peak_color, rms_color) = match colors {
             Some(colors) => {
-                let loudest_bucket = (lo..hi).max_by_key(|&i| wave.peak[i]).unwrap_or(lo);
+                let loudest_bucket = (lo..hi).max_by_key(|&i| heights.map_or(wave.peak[i], |h| h[i])).unwrap_or(lo);
                 let [r, g, b] = colors[loudest_bucket];
                 let color = Color32::from_rgb(r, g, b);
                 // The ends fade to the bar's background so the time labels stay readable.
@@ -871,13 +876,22 @@ fn draw_waveform(p: &egui::Painter, bar: Rect, wave: &nullamp_audio::Waveform, c
                 // Smoothstep, squared: dark under the label, full strength once clear of it.
                 let t = from_end.min(1.0);
                 let fade = (t * t * (3.0 - 2.0 * t)).powi(2);
-                (color.gamma_multiply(0.30 * fade), color.gamma_multiply(0.75 * fade))
+                if heights.is_some() {
+                    (Color32::TRANSPARENT, color.gamma_multiply(0.85 * fade))
+                } else {
+                    (color.gamma_multiply(0.30 * fade), color.gamma_multiply(0.75 * fade))
+                }
             }
             None => (peak_color, rms_color),
         };
         let shown = ((edge_x - x0) / WAVE_REVEAL_EDGE).clamp(0.0, 1.0);
         if shown <= 0.0 {
             break;
+        }
+        if let Some(heights) = heights {
+            let h = (f32::from(loudest(heights, lo, hi)) / mixxx_top * half).max(0.5);
+            mesh.add_colored_rect(Rect::from_min_max(pos2(x0, mid - h), pos2(x1, mid + h)), rms_color.gamma_multiply(shown));
+            continue;
         }
         for (values, color) in [(&wave.peak, peak_color.gamma_multiply(shown)), (&wave.rms, rms_color.gamma_multiply(shown))] {
             let h = height(loudest(values, lo, hi)).max(0.5);
@@ -1019,13 +1033,13 @@ mod tests {
     use super::lcd_clock;
 
     #[test]
-    fn lcd_clock_is_a_three_and_a_half_digit_field() {
-        assert_eq!(lcd_clock(0.0), "__0:00");
-        assert_eq!(lcd_clock(261.0), "__4:21");
-        assert_eq!(lcd_clock(45.0 * 60.0), "_45:00");
-        assert_eq!(lcd_clock(6000.0), "100:00");
-        assert_eq!(lcd_clock(7200.0), "120:00");
-        assert_eq!(lcd_clock(f64::MAX), "199:59");
-        assert_eq!(lcd_clock(-3.0), "__0:00");
+    fn lcd_clock_shows_hours_in_its_first_cell() {
+        assert_eq!(lcd_clock(0.0), "_;_0:00");
+        assert_eq!(lcd_clock(261.0), "_;_4:21");
+        assert_eq!(lcd_clock(45.0 * 60.0), "_;45:00");
+        assert_eq!(lcd_clock(3600.0), "1:00:00");
+        assert_eq!(lcd_clock(72.0 * 60.0), "1:12:00");
+        assert_eq!(lcd_clock(f64::MAX), "9:59:59");
+        assert_eq!(lcd_clock(-3.0), "_;_0:00");
     }
 }

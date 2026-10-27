@@ -834,6 +834,7 @@ impl App {
                     }
                 }
             }
+            JobResult::Key { path, result } => inspector::on_key(self, path, result),
             JobResult::SetlistSaved(r) => {
                 if let Err(e) = r {
                     self.error(format!("Cannot save setlist: {e}"));

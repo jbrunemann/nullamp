@@ -376,6 +376,7 @@ fn rekordbox_waveform_is_cached_for_the_same_file_elsewhere() {
     std::fs::copy(&on_stick, &elsewhere).unwrap();
 
     let mut h = Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_eframe(|cc| App::new(cc, store));
+    h.state_mut().settings.rekordbox_waveform = true;
     play_file(&mut h, on_stick.clone());
     let from_stick = h.state().now.waveform.clone().expect("waveform from the stick");
     assert!(h.state().now.wave_colors.is_some(), "rekordbox's colours");
@@ -1134,6 +1135,126 @@ fn mix_tempo_follows_the_active_track() {
     h.state_mut().player.stop();
 }
 
+/// A mono 16-bit WAV of `seconds` of triads in the key of `tonic` (C = 0), with a bass drum on every beat of `bpm`
+/// when given, for the key and the tempo to be found in.
+fn synth_track(path: &Path, tonic: u8, minor: bool, bpm: Option<f64>, seconds: f64) {
+    const RATE: f64 = 22_050.0;
+    let third = if minor { 3 } else { 4 };
+    let chords: [(i32, i32); 4] = [(0, third), (5, 4), (7, 4), (0, third)];
+    let freq = |semitone: i32| 440.0 * 2f64.powf((f64::from(tonic) + 48.0 + f64::from(semitone) - 69.0) / 12.0);
+    let total = (seconds * RATE) as usize;
+    let tau = std::f64::consts::TAU;
+    let samples: Vec<i16> = (0..total)
+        .map(|i| {
+            let t = i as f64 / RATE;
+            let (root, interval) = chords[(i * chords.len() / total).min(chords.len() - 1)];
+            let mut v = 0.0;
+            for (note, weight) in [(root, 1.0), (root + interval, 0.8), (root + 7, 0.9)] {
+                for h in 1..=4 {
+                    v += weight / f64::from(h) * (tau * freq(note) * f64::from(h) * t).sin();
+                }
+            }
+            v *= 0.08;
+            if let Some(bpm) = bpm {
+                let since = t % (60.0 / bpm);
+                v += 0.6 * (-since * 30.0).exp() * (tau * 55.0 * since).sin();
+            }
+            (v.clamp(-1.0, 1.0) * 30_000.0) as i16
+        })
+        .collect();
+    let data = samples.len() as u32 * 2;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&[1, 0, 1, 0]);
+    wav.extend_from_slice(&(RATE as u32).to_le_bytes());
+    wav.extend_from_slice(&(RATE as u32 * 2).to_le_bytes());
+    wav.extend_from_slice(&[2, 0, 16, 0]);
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data.to_le_bytes());
+    wav.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+    std::fs::write(path, wav).unwrap();
+}
+
+/// Add `path` to the first list and open it in the inspector without playing it.
+fn inspect_file(h: &mut Harness<'_, App>, path: PathBuf) {
+    let app = h.state_mut();
+    app.setlist_open = false;
+    app.inspector_open = true;
+    let id = app.player.lists[0].playlist.add_paths([path])[0];
+    app.selection.ids = [id].into();
+    app.selection.cursor = Some(id);
+    crate::ui::inspect_selection(app);
+    settle(h, 1500);
+}
+
+/// A file without a key tag gets its key found when the inspector opens it, and offers it beside the
+/// field; a file that has one is left alone, and the result is cached so the next look is instant.
+#[test]
+fn inspector_offers_the_detected_key_for_a_file_without_one() {
+    use egui_kittest::kittest::Queryable;
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let cache = store.paths.waveform_cache();
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 740.0)).with_accessibility_check(false).build_eframe(|cc| App::new(cc, store));
+    let keys_cached = || std::fs::read_dir(&cache).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "key")).count()).unwrap_or(0);
+
+    let plain = dir.path().join("plain.wav");
+    synth_track(&plain, 9, true, None, 12.0);
+    inspect_file(&mut h, plain.clone());
+    h.get_by_label("Detected 8A: use it").click();
+    h.run();
+    assert_eq!(h.state().inspector.field_value(nullamp_meta::Field::Key), "8A", "the button fills the field");
+    assert_eq!(keys_cached(), 1, "the key is cached");
+
+    // The same file again is answered from the cache, with the same offer.
+    h.state_mut().inspector_open = false;
+    inspect_file(&mut h, plain);
+    assert!(h.query_by_label("Detected 8A: use it").is_some());
+
+    // A file with a key tag is not analysed and offers nothing.
+    let tagged = dir.path().join("tagged.wav");
+    synth_track(&tagged, 2, false, None, 12.0);
+    let edit = nullamp_meta::Edit { fields: [(nullamp_meta::Field::Key, Some("Em".to_owned()))].into(), ..Default::default() };
+    nullamp_meta::write(&tagged, nullamp_meta::stamp(&tagged).unwrap(), &edit, &Default::default()).unwrap();
+    inspect_file(&mut h, tagged);
+    assert!(h.query_by_label("Detected 10B: use it").is_none() && h.query_by_label("Detected 5A: use it").is_none(), "the tag is the user's word");
+    assert_eq!(keys_cached(), 1, "nothing was analysed for it");
+}
+
+/// Key and tempo suggestions beside their short fields, at the panel's usual width and narrower.
+#[test]
+#[ignore]
+fn render_inspector_suggestions() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Nightdrive.wav");
+    synth_track(&file, 9, true, Some(124.0), 20.0);
+    for (width, name) in [(1180.0, "wide"), (900.0, "medium"), (440.0, "narrow"), (360.0, "tiny")] {
+        let store = seeded_store(dir.path(), "dark");
+        let mut h = Harness::builder().with_size(egui::vec2(width, 740.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+        play_file(&mut h, file.clone());
+        {
+            let app = h.state_mut();
+            app.setlist_open = false;
+            app.inspector_open = true;
+            let id = app.player.lists[0].playlist.entries().last().unwrap().id;
+            app.selection.ids = [id].into();
+            app.selection.cursor = Some(id);
+            crate::ui::inspect_selection(app);
+        }
+        settle(&mut h, 1500);
+        // In a narrow window the inspector replaces the playlist once it is asked for.
+        if !h.state().plan.inspector {
+            h.state_mut().toggle_side(crate::ui::sections::Section::Inspector);
+            settle(&mut h, 300);
+        }
+        save(&mut h, &format!("10-inspector-suggestions-{name}.png"));
+        h.state_mut().player.stop();
+    }
+}
+
 /// The deck's format line with a detected tempo, and the inspector offering it for the tag.
 #[test]
 #[ignore]
@@ -1347,7 +1468,9 @@ fn render_waveform_by_artwork_mode() {
     let id = h.state().player.lists[0].playlist.entries()[5].id;
     h.state_mut().player.play_entry(0, id, 0.0);
     settle(&mut h, 1500);
-    let mut wave = nullamp_audio::compute_waveform(&fixtures().join("beats_120_90.mp3"), true, &|| false).expect("fixture waveform");
+    // NULLAMP_WAVE_FILE draws another file, such as a longer one made for the purpose.
+    let file = std::env::var_os("NULLAMP_WAVE_FILE").map(PathBuf::from).unwrap_or_else(|| fixtures().join("beats_120_90.mp3"));
+    let mut wave = nullamp_audio::compute_waveform(&file, true, &|| false).expect("fixture waveform");
     h.state_mut().player.seek_to(2.6);
     h.state_mut().now.wave_colors = wave.colors.take();
     h.state_mut().now.waveform = Some(wave);
@@ -1505,4 +1628,26 @@ fn render_file_browser() {
     });
     settle(&mut h, 800);
     save(&mut h, "41-file-browser-save.png");
+}
+
+/// The clock below an hour, just past it, counting down, and at its limit. The fixture is seconds long, so
+/// the stream's duration is overridden and the position is pinned.
+#[test]
+#[ignore]
+fn render_clock_hours() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(1180.0, 300.0)).with_pixels_per_point(2.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    play_file(&mut h, fixtures().join("beat_120.mp3"));
+    // (position, duration, counting down, name)
+    for (secs, duration, remaining, name) in [(261.0, 40_000.0, false, "a"), (72.0 * 60.0, 40_000.0, false, "b"), (9.0 * 3600.0 + 59.0 * 60.0 + 59.0, 40_000.0, false, "c"), (4.0 * 60.0 + 21.0, 25.0 * 60.0, true, "d"), (72.0 * 60.0, 40_000.0, true, "e")] {
+        h.state_mut().player.current.as_mut().unwrap().info.as_mut().unwrap().duration = Some(duration);
+        h.state_mut().show_remaining = remaining;
+        // The engine's own events keep resetting the pending position, so pin it right before the render.
+        h.state_mut().player.pending_position = Some(secs);
+        h.step();
+        h.state_mut().player.pending_position = Some(secs);
+        save(&mut h, &format!("12-clock-{name}.png"));
+    }
+    h.state_mut().player.stop();
 }

@@ -16,9 +16,13 @@
 //!   has already moved away from.
 //! - A preloaded next track is decoded into the same buffer for gapless transitions.
 
+mod bands;
 mod decode;
 mod engine;
+mod fidlib;
 mod fingerprint;
+mod key;
+mod key_qm;
 mod kind;
 mod mono;
 mod output;
@@ -36,6 +40,8 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::engine::Cmd;
 use crate::output::Shared;
 pub use crate::fingerprint::{Fingerprint, FingerprintError, MAX_SECONDS as FINGERPRINT_SECONDS, compute as compute_fingerprint};
+pub use crate::key::{DetectedKey, KeyError, compute as compute_key};
+pub use crate::key_qm::compute as compute_qm_key;
 pub use crate::kind::OutputKind;
 pub use crate::mono::{MonoError, decode_clips};
 pub use crate::output::OutputDevice;

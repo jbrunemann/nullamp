@@ -3434,7 +3434,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -3474,7 +3474,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-android"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "android-activity",
  "nullamp",
@@ -3482,7 +3482,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-artwork"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "nullamp-http",
  "serde_json",
@@ -3491,7 +3491,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-audio"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "audioadapter-buffers",
  "base64 0.22.1",
@@ -3503,6 +3503,7 @@ dependencies = [
  "realfft",
  "rtrb",
  "rubato 5.0.1",
+ "rustfft",
  "rusty-chromaprint",
  "symphonia",
  "tempfile",
@@ -3511,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "percent-encoding",
  "regex",
@@ -3522,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-http"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "thiserror 2.0.21",
  "ureq",
@@ -3530,7 +3531,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-meta"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "id3",
  "lofty",
@@ -3542,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-mixxx"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "flate2",
  "rusqlite",
@@ -3552,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-rekordbox"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "nullamp-audio",
  "rusqlite",
@@ -3563,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-shazam"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "base64 0.22.1",
  "nullamp-audio",
@@ -3576,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-spotify"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "nullamp-http",
  "serde_json",
@@ -3585,7 +3586,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-sysmedia"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "log",
  "nullamp-core",
@@ -3594,7 +3595,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-telegram"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "env_logger",
  "grammers-client",
@@ -3609,7 +3610,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-tracklists"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "nullamp-http",
  "regex",
@@ -3618,7 +3619,7 @@ dependencies = [
 
 [[package]]
 name = "nullamp-update"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "nullamp-http",
  "serde_json",
