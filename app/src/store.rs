@@ -102,6 +102,10 @@ pub struct Settings {
     /// The Mixxx library has been opened once, so its key and BPM fill in files from then on. Off,
     /// nothing reads Mixxx's database.
     pub mixxx: bool,
+    /// The user has acknowledged that downloading from SoundCloud bypasses the stream-only policy of
+    /// the site; the confirmation dialog is skipped from then on.
+    #[serde(default)]
+    pub soundcloud_accepted: bool,
 }
 
 impl Default for Settings {
@@ -145,6 +149,7 @@ impl Default for Settings {
             telegram_dir: None,
             mixxx: false,
             read_dj_data: true,
+            soundcloud_accepted: false,
         }
     }
 }

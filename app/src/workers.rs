@@ -211,6 +211,14 @@ struct SpotifyRequest {
     link: String,
 }
 
+/// A request to download a public SoundCloud track or set.
+struct SoundCloudRequest {
+    request: u64,
+    url: String,
+    /// Playlist index to add the finished file to.
+    target_list: usize,
+}
+
 enum OnlineRequest {
     EntryArt(EntryArtRequest),
     TrackCover { request: u64, artist: String, title: String },
@@ -300,6 +308,10 @@ pub enum JobResult {
     TracklistPage { request: u64, result: Result<nullamp_tracklists::Tracklist, String> },
     /// The answer to [`Workers::fetch_spotify`].
     Spotify { request: u64, result: Result<nullamp_spotify::Playlist, String> },
+    /// A progress tick of a [`Workers::fetch_soundcloud`] request.
+    SoundCloudProgress { request: u64, update: crate::ui::soundcloud::Update },
+    /// The result of a [`Workers::fetch_soundcloud`] request: a saved file, or the error.
+    SoundCloudDone { request: u64, target_list: usize, result: Result<crate::ui::soundcloud::Done, String> },
     /// Something the Telegram thread reports: a sign-in step, or progress of a track being asked for.
     Telegram(nullamp_telegram::Event),
     /// The picture of result `index` of the list the bot offered to ask `request`.
@@ -329,6 +341,9 @@ pub struct Workers {
     locate_current: Arc<AtomicU64>,
     tracklists: Sender<TracklistRequest>,
     spotify: Sender<SpotifyRequest>,
+    soundcloud: Sender<SoundCloudRequest>,
+    /// Where downloaded sets are saved and the client_id cache lives.
+    soundcloud_paths: (PathBuf, PathBuf),
     /// The login to Telegram and the questions to its bot; its answers come as [`JobResult::Telegram`].
     pub telegram: nullamp_telegram::Telegram,
     pub results: Receiver<JobResult>,
@@ -669,6 +684,35 @@ impl Workers {
                 .expect("spawn spotify worker");
         }
 
+        let (soundcloud, soundcloud_rx) = crossbeam_channel::unbounded::<SoundCloudRequest>();
+        let soundcloud_music = paths.music().join("SoundCloud");
+        let soundcloud_cache = paths.cache.join("soundcloud");
+        {
+            let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
+            let (music, cache) = (soundcloud_music.clone(), soundcloud_cache.clone());
+            std::thread::Builder::new()
+                .name("nullamp-soundcloud".into())
+                .spawn(move || {
+                    while let Ok(SoundCloudRequest { request, url, target_list }) = soundcloud_rx.recv() {
+                        let (tx_tick, w_tick) = (tx.clone(), Arc::clone(&w));
+                        let send_tick = move |update: crate::ui::soundcloud::Update| {
+                            if tx_tick.send(JobResult::SoundCloudProgress { request, update }).is_ok() {
+                                w_tick();
+                            }
+                        };
+                        let result = run_soundcloud(&url, &music, &cache, send_tick);
+                        if let Err(e) = &result {
+                            log::warn!("SoundCloud download {url}: {e}");
+                        }
+                        if tx.send(JobResult::SoundCloudDone { request, target_list, result }).is_err() {
+                            return;
+                        }
+                        w();
+                    }
+                })
+                .expect("spawn soundcloud worker");
+        }
+
         let telegram = {
             let (tx, w) = (results_tx.clone(), Arc::clone(&waker));
             nullamp_telegram::Telegram::start(paths.telegram_session(), move |event| {
@@ -708,6 +752,8 @@ impl Workers {
             locate_current,
             tracklists,
             spotify,
+            soundcloud,
+            soundcloud_paths: (soundcloud_music, soundcloud_cache),
             telegram,
             results,
             scan_generation,
@@ -795,6 +841,19 @@ impl Workers {
     /// Read the public Spotify playlist `link` names; answered with [`JobResult::Spotify`] under `request`.
     pub fn fetch_spotify(&self, request: u64, link: String) {
         let _ = self.spotify.send(SpotifyRequest { request, link });
+    }
+
+    /// Download the SoundCloud track or set at `url`, placing it in the user's `SoundCloud/` folder
+    /// and adding it to `target_list` on completion. Progress ticks arrive as
+    /// [`JobResult::SoundCloudProgress`] and the end as [`JobResult::SoundCloudDone`], under `request`.
+    pub fn fetch_soundcloud(&self, request: u64, url: String, target_list: usize) {
+        let _ = self.soundcloud.send(SoundCloudRequest { request, url, target_list });
+    }
+
+    /// Where downloaded sets land. Used by tests and by the UI's error messages.
+    #[allow(dead_code)]
+    pub fn soundcloud_music(&self) -> &Path {
+        &self.soundcloud_paths.0
     }
 
     /// Find a cover for one file, for the user to add to its artwork. Answered with
@@ -1095,6 +1154,64 @@ fn look_up_track_cover(artist: &str, title: &str) -> Result<Option<OnlineCover>,
     let source = format!("{} by {} on {}", found.candidate.release, found.candidate.artist, found.source.name());
     log::info!("artwork for {artist} - {title}: {source}");
     Ok(Some(OnlineCover { data: Arc::from(bytes), mime, source }))
+}
+
+/// Drives one SoundCloud download: delegates to the `nullamp-soundcloud` crate, translates its
+/// progress ticks into the UI's own `Update` enum (so they can cross the channel) and tags the
+/// finished file with artist, title and SoundCloud's cover so the library shows it right away.
+fn run_soundcloud(url: &str, music: &Path, cache: &Path, send_tick: impl Fn(crate::ui::soundcloud::Update) + Send) -> Result<crate::ui::soundcloud::Done, String> {
+    use nullamp_soundcloud::Step;
+    let mut artist = String::new();
+    let mut title = String::new();
+    let outcome = nullamp_soundcloud::download(url, music, Some(cache), |step| match step {
+        Step::LookingUpClientId => send_tick(crate::ui::soundcloud::Update::LookingUpClientId),
+        Step::Resolving => send_tick(crate::ui::soundcloud::Update::Resolving),
+        Step::Streaming { track, segments } => {
+            artist = track.artist.clone();
+            title = track.title.clone();
+            send_tick(crate::ui::soundcloud::Update::Streaming { title: track.title.clone(), artist: track.artist.clone(), segments });
+        }
+        Step::Segment { done, total, bytes } => send_tick(crate::ui::soundcloud::Update::Segment { done, total, bytes }),
+        Step::Done { .. } => {}
+    })
+    .map_err(|e| e.to_string())?;
+    log::info!("SoundCloud: saved {} ({} bytes)", outcome.path.display(), outcome.bytes);
+    tag_downloaded(&outcome.path, &outcome.track);
+    Ok(crate::ui::soundcloud::Done { path: outcome.path, artist, title })
+}
+
+/// Write Artist, Title, Album="SoundCloud" and the cover into the downloaded file, in one write
+/// because the file can be hundreds of megabytes. A failure is logged, not fatal: the audio plays
+/// either way and the user can edit tags later.
+fn tag_downloaded(path: &Path, track: &nullamp_soundcloud::Track) {
+    let (artist, title, artwork_url) = (track.artist.as_str(), track.title.as_str(), track.artwork_url.as_deref());
+    let mut edit = Edit::default();
+    if !artist.is_empty() {
+        edit.fields.insert(nullamp_meta::Field::Artist, Some(artist.to_owned()));
+    }
+    if !title.is_empty() {
+        edit.fields.insert(nullamp_meta::Field::Title, Some(title.to_owned()));
+    }
+    edit.fields.insert(nullamp_meta::Field::Album, Some("SoundCloud".into()));
+    if let Some(url) = artwork_url {
+        match nullamp_artwork::download(url, concat!("Nullamp/", env!("CARGO_PKG_VERSION"))) {
+            Ok(bytes) => {
+                let mime = if bytes.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" };
+                edit.artwork = Some(vec![nullamp_meta::NewArtwork { kind: nullamp_meta::ArtworkKind::FrontCover, mime: Some(mime.into()), description: None, data: Arc::from(bytes) }]);
+            }
+            Err(e) => log::warn!("SoundCloud: cannot fetch the cover {url}: {e}"),
+        }
+    }
+    let stamp = match nullamp_meta::stamp(path) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("SoundCloud: cannot stat {} to tag it: {e}", path.display());
+            return;
+        }
+    };
+    if let Err(e) = nullamp_meta::write(path, stamp, &edit, &WriteOptions::default()) {
+        log::warn!("SoundCloud: cannot tag {}: {e}", path.display());
+    }
 }
 
 fn entry_art_from(bytes: &[u8], file: PathBuf) -> Option<EntryArt> {

@@ -423,7 +423,8 @@ pub fn read(path: &Path) -> Result<FileMetadata, MetaError> {
         format: format_name(tagged.file_type()),
         duration: (duration > 0.0).then_some(duration),
         bitrate_kbps: props.overall_bitrate(),
-        audio_bitrate_kbps: props.audio_bitrate(),
+        // lofty reports 0 for a fragmented MP4 (it divides the first fragment by the whole length).
+        audio_bitrate_kbps: props.audio_bitrate().filter(|&b| b > 0),
         vbr: if is_mp3 { detect_mp3_vbr(path) } else { None },
         sample_rate: props.sample_rate(),
         channels: props.channels(),
@@ -458,7 +459,7 @@ pub fn read_track_info(path: &Path) -> Result<TrackInfo, MetaError> {
         album: get(ItemKey::AlbumTitle),
         year: tag.and_then(|t| Field::Date.get(t)).and_then(parse_year),
         duration: (duration > 0.0).then_some(duration),
-        bitrate: tagged.properties().audio_bitrate().or(tagged.properties().overall_bitrate()),
+        bitrate: tagged.properties().audio_bitrate().filter(|&b| b > 0).or(tagged.properties().overall_bitrate()),
         bpm: tag.and_then(|t| Field::Bpm.get(t)).and_then(parse_bpm),
         bpm_detected: false,
         bpm_off: tag.and_then(|t| Field::Bpm.get(t)).is_some_and(is_bpm_off),
@@ -667,6 +668,17 @@ mod tests {
             assert_eq!(quick, full, "{name}");
         }
         assert_eq!(read_track_info(&fixture("tagged_v23.mp3")).unwrap().year, Some(2024));
+    }
+
+    #[test]
+    fn a_fragmented_mp4_does_not_show_a_bitrate_of_zero() {
+        // A SoundCloud set is a fragmented MP4 whose header holds the whole length: lofty divides the
+        // first fragment by it and reports 0 kbit/s. The fixture is one fragment under a 5 minute header.
+        let path = fixture("tone_fragmented.m4a");
+        let meta = read(&path).unwrap();
+        assert_eq!(meta.technical.audio_bitrate_kbps, None);
+        assert_eq!(meta.track_info().bitrate, meta.technical.bitrate_kbps, "falls back to the overall bitrate");
+        assert_eq!(read_track_info(&path).unwrap().bitrate, meta.technical.bitrate_kbps);
     }
 
     #[test]

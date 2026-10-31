@@ -1222,6 +1222,25 @@ fn inspector_offers_the_detected_key_for_a_file_without_one() {
     inspect_file(&mut h, tagged);
     assert!(h.query_by_label("Detected 10B: use it").is_none() && h.query_by_label("Detected 5A: use it").is_none(), "the tag is the user's word");
     assert_eq!(keys_cached(), 1, "nothing was analysed for it");
+
+    // A file playing as a mix is not asked either: one key for a whole mix means nothing.
+    let mix = dir.path().join("mix.wav");
+    synth_track(&mix, 4, false, None, 12.0);
+    {
+        let app = h.state_mut();
+        let id = app.player.lists[0].playlist.add_paths([mix.clone()])[0];
+        app.player.play_entry(0, id, 0.0);
+    }
+    settle(&mut h, 1000);
+    h.state_mut().mix.pinned = true;
+    settle(&mut h, 200);
+    assert!(h.state().mix.is_mix);
+    h.state_mut().inspector_open = false;
+    inspect_file(&mut h, mix);
+    assert!(h.state().mix.is_mix);
+    // The playing file's tempo may be offered; a key never is.
+    assert!(h.query_all_by_label_contains("Detected 4").next().is_none() && h.query_all_by_label_contains("A: use it").next().is_none(), "no key is offered for a mix");
+    assert_eq!(keys_cached(), 1, "nothing was analysed for the mix");
 }
 
 /// Key and tempo suggestions beside their short fields, at the panel's usual width and narrower.
