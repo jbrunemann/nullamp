@@ -1608,6 +1608,39 @@ fn render_narrow_windows() {
     }
 }
 
+/// The SoundCloud download dialog at phone size: first use (with the notice), then busy with a long title.
+#[test]
+#[ignore]
+fn render_soundcloud_dialog_narrow() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seeded_store(dir.path(), "dark");
+    let mut h = Harness::builder().with_size(egui::vec2(360.0, 780.0)).with_pixels_per_point(3.0).with_theme(egui::Theme::Dark).wgpu().build_eframe(|cc| App::new(cc, store));
+    settle(&mut h, 500);
+    crate::ui::soundcloud::open(h.state_mut());
+    settle(&mut h, 300);
+    save(&mut h, "50-soundcloud-first.png");
+    {
+        let app = h.state_mut();
+        app.settings.soundcloud_accepted = true;
+        let dl = app.dialogs.soundcloud.as_mut().unwrap();
+        dl.url = "https://soundcloud.com/chris-stassy/some-very-long-set-name-for-the-test".into();
+        dl.request = Some(1);
+        dl.label = Some("CHRIS STASSY - A Very Long Set Title That Goes On And On".into());
+        dl.progress.segments_total = 919;
+        dl.progress.segments_done = 100;
+        dl.progress.bytes = 20 << 20;
+    }
+    settle(&mut h, 300);
+    save(&mut h, "51-soundcloud-busy.png");
+    {
+        let dl = h.state_mut().dialogs.soundcloud.as_mut().unwrap();
+        dl.request = None;
+        dl.error = Some("SoundCloud answered with an error for this link, so nothing could be downloaded at all.".into());
+    }
+    settle(&mut h, 300);
+    save(&mut h, "52-soundcloud-error.png");
+}
+
 /// The in-window file browser (what Android uses instead of a file dialog), at phone size.
 #[test]
 #[ignore]

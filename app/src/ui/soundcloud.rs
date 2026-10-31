@@ -80,7 +80,8 @@ pub fn modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
             ui.label(RichText::new(error).small().color(theme::err()));
         }
         if busy {
-            ui.horizontal(|ui| {
+            // Wrapping, or a long title makes the row, and with it the dialog, wider than a phone.
+            ui.horizontal_wrapped(|ui| {
                 ui.spinner();
                 ui.label(RichText::new(progress_line(&dl.progress, dl.label.as_deref())).small().color(theme::text_dim()));
             });
