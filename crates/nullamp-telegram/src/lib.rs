@@ -554,7 +554,21 @@ async fn start(conn: &mut Conn, ask: &Ask, alive: &dyn Fn() -> bool, emit: &dyn 
     log::info!("Telegram: asking @{} for \"{}\" (inline query), waiting {} s", ask.bot, ask.text, ask.wait.as_secs());
     emit(Progress::Sent);
     let request = tl::functions::messages::GetInlineBotResults { bot: bot_ref.into(), peer: bot_ref.into(), geo_point: None, query: ask.text.clone(), offset: String::new() };
-    let query = client.invoke(&request);
+    // Telegram gives a bot about 10 s to answer an inline query and then reports BOT_RESPONSE_TIMEOUT. A
+    // bot that fetches its results from elsewhere is often slow on the first query and quick on the
+    // second, so ask once more before giving up.
+    let query = async {
+        match client.invoke(&request).await {
+            Err(grammers_client::InvocationError::Rpc(rpc)) if rpc.name == "BOT_RESPONSE_TIMEOUT" => {
+                log::info!("Telegram: @{} was too slow for Telegram, asking again", ask.bot);
+                match client.invoke(&request).await {
+                    Err(grammers_client::InvocationError::Rpc(rpc)) if rpc.name == "BOT_RESPONSE_TIMEOUT" => Err(other(format!("@{} did not answer in time, twice; try again later or pick another bot in Settings", ask.bot))),
+                    answer => answer.map_err(Error::from),
+                }
+            }
+            answer => answer.map_err(Error::from),
+        }
+    };
     tokio::pin!(query);
     let tl::enums::messages::BotResults::Results(mut results) = loop {
         tokio::select! {
