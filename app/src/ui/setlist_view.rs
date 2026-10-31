@@ -141,7 +141,7 @@ pub fn reset_for_track(app: &mut App, token: u64, path: PathBuf) {
 
 /// Files at least this long are treated as mixes even before they have a setlist;
 /// above nearly all single tracks, well below real DJ mixes.
-const MIX_MIN_SECONDS: f64 = 20.0 * 60.0;
+pub(super) const MIX_MIN_SECONDS: f64 = 20.0 * 60.0;
 
 /// A file is a mix when it has a setlist, or failing that, when it is long. Single
 /// tracks rarely carry one: discovery wants two chapters or cue tracks, three

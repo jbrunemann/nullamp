@@ -568,11 +568,17 @@ fn fields(app: &mut App, ui: &mut Ui, viewport: Viewport) {
 }
 
 /// Asks for the key of the one open file when its tags have none, once per opening of the file.
+/// A mix is not asked: it changes key from track to track, so one key for the whole file means
+/// nothing, and decoding hours of audio for it would be wasted.
 fn ask_for_key(app: &mut App, writable: bool) {
     let st = &app.inspector;
     let ([target], KeyDetection::NotAsked) = (st.targets.as_slice(), &st.key_detection) else { return };
     let untagged = st.fields.get(&Field::Key).is_some_and(|f| matches!(&f.original, Original::Same(v) if v.trim().is_empty()));
     if !untagged || !writable {
+        return;
+    }
+    let long = st.loaded.get(target).and_then(|m| m.technical.duration).is_some_and(|d| d >= super::setlist_view::MIX_MIN_SECONDS);
+    if long || (app.mix.is_mix && app.mix.path.as_ref() == Some(target)) {
         return;
     }
     let path = target.clone();
