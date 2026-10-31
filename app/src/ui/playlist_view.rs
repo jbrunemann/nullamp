@@ -509,6 +509,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
                 super::spotify::open(app);
                 ui.close();
             }
+            if ui.button("Download from SoundCloud…").on_hover_text("Download a public track or set as an .m4a file and add it to this playlist. Against SoundCloud's terms of service; the audio is unchanged").clicked() {
+                super::soundcloud::open(app);
+                ui.close();
+            }
             if ui.button("Export as M3U8…").clicked() {
                 let i = app.player.viewing;
                 dialogs::export_playlist(app, i);

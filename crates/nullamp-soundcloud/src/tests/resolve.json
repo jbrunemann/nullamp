@@ -1,0 +1,47 @@
+{
+  "kind": "track",
+  "id": 2394669642,
+  "title": "CHRIS STASSY @ N:A:M:E:, Birmingham, 22.08.2026",
+  "duration": 9181186,
+  "permalink_url": "https://soundcloud.com/chrisstassydj/namebirmingham",
+  "artwork_url": "https://i1.sndcdn.com/artworks-abc-large.jpg",
+  "user": {
+    "username": "CHRIS STASSY",
+    "permalink_url": "https://soundcloud.com/chrisstassydj"
+  },
+  "track_authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW8iOiJOTCJ9.sig",
+  "media": {
+    "transcodings": [
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2394669642/819ff7a4-c18f-46f2-bfe2-650e6def658f/stream/hls",
+        "preset": "aac_160k",
+        "duration": 9181186,
+        "quality": "sq",
+        "format": {
+          "protocol": "hls",
+          "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+        }
+      },
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2394669642/9b69827e-79e2-4c34-b860-a9e40867986a/stream/hls",
+        "preset": "aac_96k",
+        "duration": 9181186,
+        "quality": "lq",
+        "format": {
+          "protocol": "hls",
+          "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+        }
+      },
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:2394669642/8325ea3b-beea-4b37-b692-7d5263ba26a9/stream/hls",
+        "preset": "abr_sq",
+        "duration": 9181186,
+        "quality": "sq",
+        "format": {
+          "protocol": "hls",
+          "mime_type": "audio/mpegurl"
+        }
+      }
+    ]
+  }
+}

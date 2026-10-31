@@ -131,12 +131,13 @@ pub struct Dialogs {
     pub library_import: Option<LibraryImport>,
     pub change_file: Option<ChangeFile>,
     pub spotify: Option<super::spotify::Import>,
+    pub soundcloud: Option<super::soundcloud::Download>,
 }
 
 impl Dialogs {
     pub fn new() -> Self {
         let (tx, results) = crossbeam_channel::unbounded();
-        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, change_file: None, spotify: None }
+        Dialogs { tx, results, rename: None, new_playlist: None, confirm_clear: None, confirm_delete: None, settings: None, about_icon: None, update: UpdateState::Idle, cache: CacheState::default(), python: PythonState::Unknown, library_import: None, change_file: None, spotify: None, soundcloud: None }
     }
 }
 
@@ -713,6 +714,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     super::telegram::chooser_modal(app, ctx);
     change_file_modal(app, ctx, enter, escape);
     super::spotify::modal(app, ctx, enter, escape);
+    super::soundcloud::modal(app, ctx, enter, escape);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;

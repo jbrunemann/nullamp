@@ -3425,6 +3425,7 @@ dependencies = [
  "nullamp-mixxx",
  "nullamp-rekordbox",
  "nullamp-shazam",
+ "nullamp-soundcloud",
  "nullamp-spotify",
  "nullamp-sysmedia",
  "nullamp-telegram",
@@ -3532,6 +3533,16 @@ dependencies = [
  "nullamp-core",
  "nullamp-http",
  "realfft",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nullamp-soundcloud"
+version = "2.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "nullamp-http",
  "serde_json",
  "thiserror 2.0.21",
 ]

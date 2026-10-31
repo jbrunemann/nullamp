@@ -7,6 +7,7 @@ mod menu;
 mod playlist_view;
 pub mod sections;
 mod setlist_view;
+pub mod soundcloud;
 pub mod spotify;
 pub mod telegram;
 pub mod theme;
@@ -835,6 +836,8 @@ impl App {
             JobResult::TracklistPage { request, result } => setlist_view::on_tracklist_page(self, request, result),
             JobResult::Located { request, root, search, secs } => dialogs::on_located(self, request, root, search, secs),
             JobResult::Spotify { request, result } => spotify::on_playlist(self, request, result),
+            JobResult::SoundCloudProgress { request, update } => soundcloud::on_progress(self, request, update),
+            JobResult::SoundCloudDone { request, target_list, result } => soundcloud::on_done(self, request, target_list, result),
             JobResult::Telegram(event) => telegram::on_event(self, event),
             JobResult::TelegramThumb { request, index, thumb } => telegram::on_thumb(self, request, index, thumb),
             JobResult::DataPack { export, path, result } => match result {
