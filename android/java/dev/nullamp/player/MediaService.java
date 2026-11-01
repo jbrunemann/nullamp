@@ -44,6 +44,7 @@ public final class MediaService extends Service {
     private static final String DISMISS = ACTION_PREFIX + "DISMISS";
     private static final double SKIP_SECONDS = 10;
     private static final int COVER_PIXELS = 512;
+    private static final long PAUSED_KEEP_MS = 10 * 60 * 1000;
 
     private static MediaService instance;
 
@@ -140,6 +141,7 @@ public final class MediaService extends Service {
     @Override
     public void onDestroy() {
         instance = null;
+        main.removeCallbacks(idleStop);
         unregisterReceiver(noisy);
         releaseFocus();
         releaseWake();
@@ -161,6 +163,7 @@ public final class MediaService extends Service {
         MediaBridge.Meta meta = MediaBridge.meta;
         MediaBridge.Play play = MediaBridge.play;
         if (play.state == MediaBridge.STOPPED) {
+            main.removeCallbacks(idleStop);
             releaseFocus();
             releaseWake();
             session.setActive(false);
@@ -176,6 +179,7 @@ public final class MediaService extends Service {
         Notification n = notification();
         if (play.state == MediaBridge.PLAYING) {
             resumeOnFocus = false;
+            main.removeCallbacks(idleStop);
             holdWake();
             if (!foreground) {
                 enterForeground(n);
@@ -187,14 +191,29 @@ public final class MediaService extends Service {
             }
         } else {
             releaseWake();
-            if (foreground) {
-                // Keeps the notification, now one the user can swipe away.
-                stopForeground(STOP_FOREGROUND_DETACH);
-                foreground = false;
+            // Stays a foreground service while paused. A plain started service is stopped by Android after about a
+            // minute in the background, which released the session and handed the media controls to the app that
+            // played before us.
+            if (!foreground) {
+                enterForeground(n);
+            } else {
+                notifications.notify(NOTIFICATION_ID, n);
             }
-            notifications.notify(NOTIFICATION_ID, n);
+            main.removeCallbacks(idleStop);
+            main.postDelayed(idleStop, PAUSED_KEEP_MS);
         }
     }
+
+    /** Paused for a long while: give the notification and the media controls up instead of holding them forever. */
+    private final Runnable idleStop = () -> {
+        if (MediaBridge.play.state != MediaBridge.PLAYING) {
+            releaseFocus();
+            session.setActive(false);
+            stopForeground(STOP_FOREGROUND_REMOVE);
+            foreground = false;
+            stopSelf();
+        }
+    };
 
     private void enterForeground(Notification n) {
         try {
