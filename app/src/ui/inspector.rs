@@ -68,6 +68,8 @@ pub struct InspectorState {
     fields: BTreeMap<Field, FieldState>,
     art: Vec<ArtItem>,
     art_touched: bool,
+    /// The image shown at the width of the panel, by position in `art`.
+    art_enlarged: Option<usize>,
     save_request: Option<u64>,
     status: Option<(String, bool)>,
     last_backup: Option<(PathBuf, PathBuf)>,
@@ -188,6 +190,7 @@ fn build_fields(app: &mut App) {
         }
     }
     st.art_touched = false;
+    st.art_enlarged = None;
     request_art_decodes(app);
 }
 
@@ -731,9 +734,19 @@ fn artwork(app: &mut App, ui: &mut Ui) {
     }
     let mut remove = None;
     let mut make_front = None;
+    let mut toggle = None;
+    let panel = ui.max_rect();
+    let mut enlarged_at = None;
     for (i, a) in app.inspector.art.iter().enumerate() {
         ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(96.0, 96.0), egui::Sense::hover());
+            let (rect, response) = ui.allocate_exact_size(vec2(96.0, 96.0), egui::Sense::click());
+            let response = if a.texture.is_some() { response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Click to see it large") } else { response };
+            if response.clicked() && a.texture.is_some() {
+                toggle = Some(i);
+            }
+            if app.inspector.art_enlarged == Some(i) {
+                enlarged_at = Some(rect.top());
+            }
             ui.painter().rect_filled(rect, 3.0, theme::LCD_BG);
             if let Some(t) = &a.texture {
                 let s = t.size_vec2();
@@ -754,6 +767,28 @@ fn artwork(app: &mut App, ui: &mut Ui) {
             });
         });
     }
+    if let (Some(i), Some(top)) = (app.inspector.art_enlarged, enlarged_at) {
+        if let Some(t) = app.inspector.art.get(i).and_then(|a| a.texture.as_ref()) {
+            // A preview over the panel, at the width of the inspector and kept inside what is on screen.
+            let view = ui.clip_rect();
+            let s = t.size_vec2();
+            let scale = (panel.width() / s.x.max(1.0)).min(view.height() / s.y.max(1.0));
+            let size = s * scale;
+            let pos = egui::pos2(panel.left(), top.min(view.bottom() - size.y).max(view.top()));
+            let mut close = false;
+            egui::Area::new(egui::Id::NULL.with("art-enlarged")).order(egui::Order::Foreground).fixed_pos(pos).show(ui.ctx(), |ui| {
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                ui.painter().image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                close = response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+            });
+            if close {
+                toggle = Some(i);
+            }
+        }
+    }
+    if let Some(i) = toggle {
+        app.inspector.art_enlarged = if app.inspector.art_enlarged == Some(i) { None } else { Some(i) };
+    }
     if let Some(i) = make_front {
         for (j, a) in app.inspector.art.iter_mut().enumerate() {
             if j == i {
@@ -763,10 +798,12 @@ fn artwork(app: &mut App, ui: &mut Ui) {
             }
         }
         app.inspector.art.swap(0, i);
+        app.inspector.art_enlarged = None;
         app.inspector.art_touched = true;
     }
     if let Some(i) = remove {
         app.inspector.art.remove(i);
+        app.inspector.art_enlarged = None;
         app.inspector.art_touched = true;
     }
 }
