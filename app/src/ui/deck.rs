@@ -982,33 +982,47 @@ const SCAN_TICK_SECS: f64 = 0.15;
 /// Length of one jump of a scan, so about 20 times the playing speed.
 const SCAN_STEP_SECS: f64 = 3.0;
 
+/// A press on Previous or Next: when it began, and when the scan last jumped (None until it has).
+#[derive(Clone, Copy, Default)]
+struct SkipHold {
+    start: f64,
+    last_step: Option<f64>,
+}
+
 /// Previous or Next with the two uses of a car CD player's keys: a tap skips a track (this returns true), holding
-/// scans through the current one and the release then skips nothing. Timed here, since egui's own long press never
-/// fires on the phone. The button senses drags as well, which is what keeps the press alive past 0.8 s on a touchpad.
-/// While stopped there is nothing to scan.
+/// scans through the current one and the release then skips nothing. The hold is followed from the raw pointer, not
+/// from the button's response: egui forgets a press after 0.8 s and, on a touch screen, turns a finger resting that
+/// long into a long press that cancels it. While stopped there is nothing to scan.
 fn skip_button(app: &mut App, ui: &mut Ui, icon: Icon, size: Vec2, tip: &str, forward: bool) -> bool {
-    let resp = widgets::icon_button_sensing(ui, icon, size, false, tip, egui::Sense::click_and_drag());
-    let id = resp.id.with("scan");
-    let last_step: Option<f64> = ui.data(|d| d.get_temp(id));
+    let id = ui.next_auto_id().with("scan");
     let now = ui.input(|i| i.time);
-    let mut scanning = last_step.is_some();
-    if resp.is_pointer_button_down_on() && app.player.status != Status::Stopped {
-        let held = ui.input(|i| i.pointer.press_start_time()).map_or(0.0, |t| now - t);
-        if held >= SCAN_HOLD_SECS {
-            if last_step.is_none_or(|t| now - t >= SCAN_TICK_SECS) {
-                let step = if forward { SCAN_STEP_SECS } else { -SCAN_STEP_SECS };
-                app.player.command(Command::SeekBy(step), CommandSource::Ui);
-                ui.data_mut(|d| d.insert_temp(id, now));
-                scanning = true;
-            }
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCAN_TICK_SECS));
-        } else {
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCAN_HOLD_SECS - held));
-        }
-    } else if last_step.is_some() {
-        ui.data_mut(|d| d.remove_temp::<f64>(id));
+    let mut hold: Option<SkipHold> = ui.data(|d| d.get_temp(id));
+    let down = ui.input(|i| i.pointer.primary_down());
+    let resp = widgets::icon_button_held(ui, icon, size, false, tip, hold.is_some() && down);
+    let mut scanned = false;
+    if hold.is_none() && resp.is_pointer_button_down_on() {
+        hold = Some(SkipHold { start: ui.input(|i| i.pointer.press_start_time()).unwrap_or(now), last_step: None });
     }
-    resp.clicked() && !scanning
+    if let Some(mut h) = hold {
+        if down {
+            let held = now - h.start;
+            if held >= SCAN_HOLD_SECS && app.player.status != Status::Stopped {
+                if h.last_step.is_none_or(|t| now - t >= SCAN_TICK_SECS) {
+                    let step = if forward { SCAN_STEP_SECS } else { -SCAN_STEP_SECS };
+                    app.player.command(Command::SeekBy(step), CommandSource::Ui);
+                    h.last_step = Some(now);
+                }
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCAN_TICK_SECS));
+            } else {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64((SCAN_HOLD_SECS - held).max(0.0)));
+            }
+            ui.data_mut(|d| d.insert_temp(id, h));
+        } else {
+            scanned = h.last_step.is_some();
+            ui.data_mut(|d| d.remove_temp::<SkipHold>(id));
+        }
+    }
+    resp.clicked() && !scanned
 }
 
 /// Mute, volume and the panel tabs.

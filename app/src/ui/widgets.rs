@@ -224,16 +224,16 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 
 /// A raised, tactile button with a painted icon. `lit` shows an active state.
 pub fn icon_button(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str) -> Response {
-    icon_button_sensing(ui, icon, size, lit, tooltip, Sense::click())
+    icon_button_held(ui, icon, size, lit, tooltip, false)
 }
 
-/// `icon_button` with another `sense`. A button that senses only clicks loses its press after 0.8 s or a little
-/// pointer drift, and `is_pointer_button_down_on` goes false; sensing drags too keeps it down until the release,
-/// for a button that does something while held.
-pub fn icon_button_sensing(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str, sense: Sense) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(size, sense);
+/// `icon_button` drawn pressed while `held`, for a button that does something while it is held down. egui itself
+/// forgets the press after 0.8 s (a mouse, a little drift) and turns a still finger into a long press, so the caller
+/// follows the pointer and says here that it is still down.
+pub fn icon_button_held(ui: &mut Ui, icon: Icon, size: Vec2, lit: bool, tooltip: &str, held: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
-        let pressed = resp.is_pointer_button_down_on();
+        let pressed = held || resp.is_pointer_button_down_on();
         let fill = if pressed {
             theme::bg()
         } else if resp.hovered() {

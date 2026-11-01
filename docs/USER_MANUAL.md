@@ -398,7 +398,7 @@ Press F1, or right-click the display and choose **Keyboard shortcuts**, to see t
 | Space or C | Play or pause |
 | X | Play |
 | V | Stop |
-| Z or B | Previous or next track |
+| Z or B | Previous or next track (hold ⏮ or ⏭ on screen to scan) |
 | ← or → | Seek 5 seconds |
 | ⇧← or ⇧→ | Previous or next setlist entry |
 | + or − | Volume up or down |
