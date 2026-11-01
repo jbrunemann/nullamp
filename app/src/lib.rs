@@ -123,7 +123,10 @@ pub(crate) fn system_bar_insets(ppp: f32) -> (f32, f32) {
     (top as f32 / ppp, bottom as f32 / ppp)
 }
 
-/// The system window insets (top, bottom) in pixels: `activity.getWindow().getDecorView().getRootWindowInsets()`.
+/// The system bar insets (top, bottom) in pixels: `activity.getWindow().getDecorView().getRootWindowInsets()`.
+/// The stable insets, not the system window insets: those also include the soft keyboard, which made the bottom
+/// panel grow by the keyboard's height, squeezed the focused field out of the layout, and egui then dropped its
+/// focus, which hid the keyboard, which gave the field its room back, and so on.
 #[cfg(target_os = "android")]
 fn window_insets(app: &android_activity::AndroidApp) -> jni::errors::Result<(i32, i32)> {
     use jni::objects::JObject;
@@ -136,8 +139,8 @@ fn window_insets(app: &android_activity::AndroidApp) -> jni::errors::Result<(i32
         let window = env.call_method(&*activity, jni_str!("getWindow"), jni_sig!("()Landroid/view/Window;"), &[])?.l()?;
         let decor = env.call_method(&window, jni_str!("getDecorView"), jni_sig!("()Landroid/view/View;"), &[])?.l()?;
         let insets = env.call_method(&decor, jni_str!("getRootWindowInsets"), jni_sig!("()Landroid/view/WindowInsets;"), &[])?.l()?;
-        let top = env.call_method(&insets, jni_str!("getSystemWindowInsetTop"), jni_sig!("()I"), &[])?.i()?;
-        let bottom = env.call_method(&insets, jni_str!("getSystemWindowInsetBottom"), jni_sig!("()I"), &[])?.i()?;
+        let top = env.call_method(&insets, jni_str!("getStableInsetTop"), jni_sig!("()I"), &[])?.i()?;
+        let bottom = env.call_method(&insets, jni_str!("getStableInsetBottom"), jni_sig!("()I"), &[])?.i()?;
         Ok((top, bottom))
     })
 }
