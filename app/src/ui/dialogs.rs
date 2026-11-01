@@ -684,7 +684,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         egui::Modal::new(egui::Id::unique("rename-playlist")).show(ctx, |ui| {
             ui.heading("Rename playlist");
             let r = ui.text_edit_singleline(&mut name);
-            r.request_focus();
+            widgets::focus_once(&r);
             ui.horizontal(|ui| {
                 if ui.button("Rename").clicked() || enter {
                     if let Some(doc) = app.player.lists.get_mut(index)
@@ -709,7 +709,8 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         let mut keep = true;
         egui::Modal::new(egui::Id::unique("new-playlist")).show(ctx, |ui| {
             ui.heading("New playlist");
-            ui.text_edit_singleline(&mut name).request_focus();
+            let field = ui.text_edit_singleline(&mut name);
+            widgets::focus_once(&field);
             ui.horizontal(|ui| {
                 if ui.button("Create").clicked() || enter {
                     playlist_view::new_playlist(app, &name);
@@ -1171,6 +1172,16 @@ fn updates_body(app: &mut App, ui: &mut egui::Ui) {
         }
         UpdateState::Done(Ok(Status::Available(release))) => {
             ui.label(format!("Version {} is available.", release.version));
+            // The Android build has no way to open a link (eframe's browser support is off there), and Obtainium
+            // does the installing, so point at it and show the address as text.
+            #[cfg(target_os = "android")]
+            {
+                ui.label(RichText::new("If you installed Nullamp with Obtainium, update it there. It follows the GitHub releases.").small().color(dim));
+                if let Some(page) = &release.page {
+                    ui.label(RichText::new(page).small().color(dim));
+                }
+            }
+            #[cfg(not(target_os = "android"))]
             if let Some(page) = &release.page {
                 ui.hyperlink_to("Open the download page", page).on_hover_text(page);
             }

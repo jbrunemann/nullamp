@@ -307,6 +307,15 @@ pub fn marquee(ui: &Ui, rect: Rect, text: &str, font: egui::FontId, color: Color
     resp.clicked()
 }
 
+/// Gives a text field the keyboard focus unless it has it already, for a dialog that wants to open ready to type.
+/// `request_focus` also interrupts the IME composition, which egui-winit answers by switching the IME off and on;
+/// on Android that hides and shows the soft keyboard, so calling it every frame makes the keyboard flicker.
+pub fn focus_once(field: &Response) {
+    if !field.has_focus() {
+        field.request_focus();
+    }
+}
+
 /// The width for a window that wants `wanted` points: all of it on a computer, less on a phone, where the
 /// window's frame and a gutter on each side still have to fit.
 pub fn modal_width(ctx: &egui::Context, wanted: f32) -> f32 {
@@ -447,5 +456,37 @@ pub fn paint_output_icon(painter: &Painter, rect: Rect, kind: nullamp_audio::Out
             painter.extend(Shape::dashed_line(&pts, stroke, s * 0.35, s * 0.3));
         }
         OutputKind::Unknown => paint_icon(painter, rect, Icon::Speaker, color),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// How many of `frames` frames of a dialog field that wants focus ask the IME to restart. On Android every
+    /// restart hides and shows the soft keyboard, so more than the first one makes it flicker.
+    fn ime_restarts(once: bool, frames: usize) -> usize {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let mut restarts = 0;
+        for _ in 0..frames {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                let field = ui.text_edit_singleline(&mut text);
+                if once {
+                    focus_once(&field);
+                } else {
+                    field.request_focus();
+                }
+            });
+            output.textures_delta.clear();
+            restarts += output.platform_output.ime.is_some_and(|ime| ime.should_interrupt_composition) as usize;
+        }
+        restarts
+    }
+
+    #[test]
+    fn focus_once_restarts_the_ime_only_when_the_field_gains_focus() {
+        assert!(ime_restarts(false, 6) > 1, "plain request_focus restarts the IME every frame");
+        assert!(ime_restarts(true, 6) <= 1);
     }
 }

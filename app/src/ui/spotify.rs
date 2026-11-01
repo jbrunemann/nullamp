@@ -37,7 +37,7 @@ pub fn modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
         ui.label(RichText::new("Paste the link of a public playlist (in Spotify: Share, Copy link to playlist). No account is needed.").small().color(theme::text_dim()));
         let field = ui.add_enabled(!busy, egui::TextEdit::singleline(&mut import.link).hint_text("https://open.spotify.com/playlist/…").desired_width(f32::INFINITY));
         if !busy {
-            field.request_focus();
+            widgets::focus_once(&field);
         }
         if let Some(error) = &import.error {
             ui.label(RichText::new(error).small().color(theme::err()));

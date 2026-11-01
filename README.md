@@ -55,6 +55,7 @@ Download the latest build from the [Releases](https://github.com/jbrunemann/null
 | macOS (Apple silicon) | Supported and tested. Unzip and drag `Nullamp.app` to Applications. The app is not signed or notarised yet, so the first launch needs a right-click and Open. |
 | Linux (x86_64) | A tarball is built by CI but has not been tested yet. Unpack it and run `./install.sh` to get a menu entry and dock icon (`./install.sh --uninstall` removes them). |
 | Windows (x86_64) | Unzip and run `Nullamp.exe`. The exe is not signed, so SmartScreen shows a warning on first launch (More info, then Run anyway). |
+| Android (64-bit ARM) | An early version of the desktop app on a phone. Download `Nullamp-<version>-android-arm64.apk` from the release and open it, or let [Obtainium](https://github.com/ImranR98/Obtainium) install and update it: choose Add app and enter `https://github.com/jbrunemann/nullamp`. Every release is signed with the same key, so updates install over the old version. Playing from the phone's storage needs the All files access permission, which the app asks for. |
 
 ## Build from source
 

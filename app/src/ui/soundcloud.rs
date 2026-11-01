@@ -74,7 +74,7 @@ pub fn modal(app: &mut App, ctx: &egui::Context, enter: bool, escape: bool) {
         ui.label(RichText::new("Paste the link of a track or set.").small().color(theme::text_dim()));
         let field = ui.add_enabled(!busy, egui::TextEdit::singleline(&mut dl.url).hint_text("https://soundcloud.com/… or https://on.soundcloud.com/…").desired_width(f32::INFINITY));
         if !busy {
-            field.request_focus();
+            widgets::focus_once(&field);
         }
         if let Some(error) = &dl.error {
             ui.label(RichText::new(error).small().color(theme::err()));
