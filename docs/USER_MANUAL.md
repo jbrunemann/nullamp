@@ -117,7 +117,7 @@ The status bar at the bottom shows track counts, total time and messages.
 ## 4. Playing music
 
 - **Play, pause, stop, previous, next:** the transport buttons, or Space (play and pause), and Z X C V B. See [Keyboard shortcuts](#10-keyboard-shortcuts).
-- **Seek:** click or drag the timeline (the seek happens when you let go), or press ← and → to move 5 seconds.
+- **Seek:** click or drag the timeline (the seek happens when you let go), or press ← and → to move 5 seconds. Like on a car CD player, tapping ⏮ or ⏭ skips a track, and holding one scans backwards or forwards through the current track.
 - **Volume:** the green bars, or + and −. M mutes.
 - **Shuffle and repeat:** S and R, or the buttons.
 - **Gapless:** the next track is prepared while the current one plays, so albums and consecutive mixes play without a gap.

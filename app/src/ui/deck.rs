@@ -927,7 +927,7 @@ fn play_buttons(app: &mut App, ui: &mut Ui) {
     let size = vec2(38.0, 28.0);
     let status = app.player.status;
     let run = |app: &mut App, c: Command| app.player.command(c, CommandSource::Ui);
-    if widgets::icon_button(ui, Icon::Prev, size, false, "Previous (Z)").clicked() {
+    if skip_button(app, ui, Icon::Prev, size, "Previous (Z), hold to scan backwards", false) {
         run(app, Command::Previous);
     }
     if widgets::icon_button(ui, Icon::Play, size, status == Status::Playing, "Play (X)").clicked() {
@@ -951,7 +951,7 @@ fn play_buttons(app: &mut App, ui: &mut Ui) {
     if widgets::icon_button(ui, Icon::Stop, size, false, "Stop (V)").clicked() {
         run(app, Command::Stop);
     }
-    if widgets::icon_button(ui, Icon::Next, size, false, "Next (B)").clicked() {
+    if skip_button(app, ui, Icon::Next, size, "Next (B), hold to scan forwards", true) {
         run(app, Command::Next);
     }
     ui.add_space(10.0);
@@ -971,6 +971,44 @@ fn play_buttons(app: &mut App, ui: &mut Ui) {
         app.player.set_repeat(repeat.cycle());
         app.mark_settings_dirty();
     }
+}
+
+/// How long Previous or Next is held before it starts to scan.
+const SCAN_HOLD_SECS: f64 = 0.45;
+
+/// Time between the jumps of a scan: short enough to hear a snippet of each, long enough for the engine to keep up.
+const SCAN_TICK_SECS: f64 = 0.15;
+
+/// Length of one jump of a scan, so about 20 times the playing speed.
+const SCAN_STEP_SECS: f64 = 3.0;
+
+/// Previous or Next with the two uses of a car CD player's keys: a tap skips a track (this returns true), holding
+/// scans through the current one and the release then skips nothing. Timed here, since egui's own long press never
+/// fires on the phone. The button senses drags as well, which is what keeps the press alive past 0.8 s on a touchpad.
+/// While stopped there is nothing to scan.
+fn skip_button(app: &mut App, ui: &mut Ui, icon: Icon, size: Vec2, tip: &str, forward: bool) -> bool {
+    let resp = widgets::icon_button_sensing(ui, icon, size, false, tip, egui::Sense::click_and_drag());
+    let id = resp.id.with("scan");
+    let last_step: Option<f64> = ui.data(|d| d.get_temp(id));
+    let now = ui.input(|i| i.time);
+    let mut scanning = last_step.is_some();
+    if resp.is_pointer_button_down_on() && app.player.status != Status::Stopped {
+        let held = ui.input(|i| i.pointer.press_start_time()).map_or(0.0, |t| now - t);
+        if held >= SCAN_HOLD_SECS {
+            if last_step.is_none_or(|t| now - t >= SCAN_TICK_SECS) {
+                let step = if forward { SCAN_STEP_SECS } else { -SCAN_STEP_SECS };
+                app.player.command(Command::SeekBy(step), CommandSource::Ui);
+                ui.data_mut(|d| d.insert_temp(id, now));
+                scanning = true;
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCAN_TICK_SECS));
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCAN_HOLD_SECS - held));
+        }
+    } else if last_step.is_some() {
+        ui.data_mut(|d| d.remove_temp::<f64>(id));
+    }
+    resp.clicked() && !scanning
 }
 
 /// Mute, volume and the panel tabs.

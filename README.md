@@ -76,7 +76,7 @@ On Linux you also need the ALSA, xkbcommon and Wayland development packages (`li
 |---|---|
 | Space or C | Play or pause |
 | X / V | Play, stop |
-| Z / B | Previous, next track |
+| Z / B | Previous, next track (hold the buttons to scan) |
 | ← / → | Seek 5 seconds |
 | ⇧← / ⇧→ | Previous or next setlist entry |
 | + / − / M | Volume up, down, mute |
