@@ -48,16 +48,20 @@ pub enum SettingsTab {
     Rekordbox,
     Web,
     Telegram,
+    Storage,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 10] = [SettingsTab::General, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Telegram, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
+    const ALL: [SettingsTab; 11] = [SettingsTab::General, SettingsTab::Storage, SettingsTab::Audio, SettingsTab::Shortcuts, SettingsTab::Rekordbox, SettingsTab::Web, SettingsTab::Telegram, SettingsTab::Updates, SettingsTab::Cache, SettingsTab::Logs, SettingsTab::About];
 
     /// The tabs this build has: without the online extras there is no Web or Telegram tab, without the update check no Updates tab.
+    /// The phone has neither Updates (the store updates the app) nor rekordbox (no DJ library there), and the tabs must fit.
     pub(super) fn shown() -> impl Iterator<Item = SettingsTab> {
         Self::ALL.into_iter().filter(|t| match t {
             SettingsTab::Web | SettingsTab::Telegram => crate::ONLINE_EXTRAS,
-            SettingsTab::Updates => crate::UPDATE_CHECK,
+            SettingsTab::Updates => crate::UPDATE_CHECK && !cfg!(target_os = "android"),
+            SettingsTab::Rekordbox => !cfg!(target_os = "android"),
+            SettingsTab::Storage => cfg!(target_os = "android"),
             _ => true,
         })
     }
@@ -65,7 +69,7 @@ impl SettingsTab {
     fn label(self) -> &'static str {
         match self {
             SettingsTab::General => "General",
-            SettingsTab::Audio => "Audio device",
+            SettingsTab::Audio => "Audio",
             SettingsTab::Shortcuts => "Shortcuts",
             SettingsTab::About => "About",
             SettingsTab::Logs => "Logs",
@@ -74,6 +78,7 @@ impl SettingsTab {
             SettingsTab::Rekordbox => "rekordbox",
             SettingsTab::Web => "Web",
             SettingsTab::Telegram => "Telegram",
+            SettingsTab::Storage => "Storage",
         }
     }
 }
@@ -731,6 +736,7 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
     change_file_modal(app, ctx, enter, escape);
     super::spotify::modal(app, ctx, enter, escape);
     super::soundcloud::modal(app, ctx, enter, escape);
+    storage_access_modal(app, ctx);
 
     if let Some(index) = app.dialogs.confirm_clear.take() {
         let mut keep = true;
@@ -783,6 +789,39 @@ pub fn show_modals(app: &mut App, ctx: &egui::Context) {
         if keep {
             app.dialogs.confirm_delete = Some(index);
         }
+    }
+}
+
+/// Android, first open: explains the "All files access" page before sending the user there, instead of
+/// leaving them to find it from an empty file browser. Asked once; the browser and Settings > Storage
+/// keep the button for whoever says "Not now".
+fn storage_access_modal(app: &mut App, ctx: &egui::Context) {
+    if !cfg!(target_os = "android") || app.settings.storage_access_asked {
+        return;
+    }
+    if crate::all_files_access() {
+        app.settings.storage_access_asked = true;
+        app.mark_settings_dirty();
+        return;
+    }
+    let mut answered = false;
+    egui::Modal::new(egui::Id::unique("storage-access")).show(ctx, |ui| {
+        ui.set_width(widgets::modal_width(ctx, 360.0));
+        ui.heading("Allow access to your music?");
+        ui.label("Nullamp plays the files in your Music and Download folders and saves tag changes to them. Android asks for this on its own page: switch on “Allow access to manage all files” for Nullamp, then come back.");
+        ui.horizontal(|ui| {
+            if ui.button("Open the page").clicked() {
+                crate::request_all_files_access();
+                answered = true;
+            }
+            if ui.button("Not now").clicked() {
+                answered = true;
+            }
+        });
+    });
+    if answered {
+        app.settings.storage_access_asked = true;
+        app.mark_settings_dirty();
     }
 }
 
@@ -928,6 +967,7 @@ pub fn show_deck_overlay(app: &mut App, ctx: &egui::Context, deck: egui::Rect) {
                     SettingsTab::Rekordbox => rekordbox_body(app, ui),
                     SettingsTab::Web => web_body(app, ui),
                     SettingsTab::Telegram => super::telegram::body(app, ui),
+                    SettingsTab::Storage => storage_body(ui),
                 }
             });
         });
@@ -952,17 +992,6 @@ pub fn show_browser(app: &mut App, ctx: &egui::Context) {
 fn general_body(app: &mut App, ui: &mut egui::Ui) {
     if ui.checkbox(&mut app.settings.show_status_bar, "Show the status bar").on_hover_text("The strip along the bottom with the track count and messages").changed() {
         app.mark_settings_dirty();
-    }
-    if cfg!(target_os = "android") {
-        ui.add_space(4.0);
-        if crate::all_files_access() {
-            ui.label(RichText::new("Access to all files is allowed: Nullamp can list your music and save tags to it.").small().weak());
-        } else {
-            ui.label(RichText::new("Nullamp needs access to all files to list your music and to save tags to it.").small().color(theme::LCD_AMBER));
-            if ui.button("Open the permission page").clicked() {
-                crate::request_all_files_access();
-            }
-        }
     }
     ui.add_space(4.0);
     let current = theme::Appearance::from_setting(&app.settings.appearance);
@@ -991,6 +1020,18 @@ fn general_body(app: &mut App, ui: &mut egui::Ui) {
         }
     });
     ui.label(RichText::new("For a copy of Nullamp that has no rekordbox or Mixxx, such as on a phone. Waveforms, tempo and covers are made again there.").small().color(theme::text_dim()));
+}
+
+/// Android: "All files access", which lists the music folders and lets tags be saved to files other apps made.
+fn storage_body(ui: &mut egui::Ui) {
+    if crate::all_files_access() {
+        ui.label("Access to all files is allowed: Nullamp can list your music and save tags to it.");
+    } else {
+        ui.label(RichText::new("Nullamp needs access to all files to list your music and to save tags to it.").color(theme::LCD_AMBER));
+        if ui.button("Open the permission page").clicked() {
+            crate::request_all_files_access();
+        }
+    }
 }
 
 /// What Nullamp reads from websites on the user's behalf, when the user asks.
@@ -1258,7 +1299,9 @@ mod tests {
         let tabs: Vec<_> = SettingsTab::shown().collect();
         assert_eq!(tabs.contains(&SettingsTab::Web), cfg!(feature = "online-extras"));
         assert_eq!(tabs.contains(&SettingsTab::Telegram), cfg!(feature = "online-extras"));
-        assert_eq!(tabs.contains(&SettingsTab::Updates), cfg!(feature = "update-check"));
+        assert_eq!(tabs.contains(&SettingsTab::Updates), cfg!(feature = "update-check") && !cfg!(target_os = "android"));
+        assert_eq!(tabs.contains(&SettingsTab::Rekordbox), !cfg!(target_os = "android"));
+        assert_eq!(tabs.contains(&SettingsTab::Storage), cfg!(target_os = "android"));
         assert!(tabs.contains(&SettingsTab::General) && tabs.contains(&SettingsTab::About));
     }
 

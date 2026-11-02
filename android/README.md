@@ -77,7 +77,7 @@ Android has no native file dialog that Rust can reach (the system picker hands i
 **Add > Add files**, **Add folder**, the playlist and setlist imports and exports and the artwork picker all open
 `app/src/ui/file_browser.rs`, a browser drawn by egui with shortcuts for Music, Download, internal storage, the app's
 own folder and memory cards. It lists any folder, which needs the **All files access** permission
-(`MANAGE_EXTERNAL_STORAGE`); the browser and Settings > General show a button that opens the system page for it.
+(`MANAGE_EXTERNAL_STORAGE`), which the app asks for on the first start; the browser and Settings > Storage show a button that opens the system page for it.
 The same permission lets tag saves rewrite files other apps or a computer put there. For a quick test without the
 page: `adb shell appops set dev.nullamp.player MANAGE_EXTERNAL_STORAGE allow`. Play Store does not give this
 permission to most apps, so a store build would need the system picker and Java after all.

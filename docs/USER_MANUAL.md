@@ -122,7 +122,7 @@ The status bar at the bottom shows track counts, total time and messages.
 - **Shuffle and repeat:** S and R, or the buttons.
 - **Gapless:** the next track is prepared while the current one plays, so albums and consecutive mixes play without a gap.
 - **Media keys:** the hardware play, pause and skip keys work even while Nullamp is in the background. The macOS Now Playing widget shows the current track. For a mix, it shows the track inside the mix as the title, "mix title, DJ" as the album, and the track's cover when one was found.
-- **Output device:** click `OUT` on the LCD, or open **Settings ▸ Audio device**, to choose where sound goes. Your choice sticks: if the device is unplugged, Nullamp plays on the system default and returns to your device when it comes back.
+- **Output device:** click `OUT` on the LCD, or open **Settings ▸ Audio**, to choose where sound goes. Your choice sticks: if the device is unplugged, Nullamp plays on the system default and returns to your device when it comes back.
 - **Device changes:** if you plug in headphones, connect Bluetooth speakers, or wake the Mac from sleep, Nullamp recovers and continues from the same position.
 - **Resume:** by default Nullamp starts silent. It does not resume the last track unless the `resume_playback` setting is on (see [Settings file](#settings-file)).
 
@@ -367,7 +367,7 @@ Right-click the LCD and pick a page. The settings page has these tabs:
 | Tab | What it holds |
 |---|---|
 | **General** | Appearance: dark, light, or follow macOS. The LCD stays dark in every theme. |
-| **Audio device** | The output device, as on the `OUT` label. |
+| **Audio** | The output device, as on the `OUT` label. |
 | **Shortcuts** | The keyboard shortcuts. F1 opens it. |
 | **rekordbox** | The waveform setting and the desktop library key (see [section 8](#8-rekordbox-and-mixxx)). |
 | **Updates** | Your version and **Check for updates**. Nullamp only contacts the update address when you press the button. |

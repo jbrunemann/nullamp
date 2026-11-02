@@ -254,6 +254,8 @@ pub struct App {
     settings_saved_at: Instant,
     /// Pending folder/file additions: request -> (list key, insert index).
     pub pending_adds: std::collections::HashMap<u64, (String, Option<usize>)>,
+    /// Whether all files access (Android) was there at the last frame, to notice it arriving.
+    files_access_seen: bool,
     last_sys_metadata: Option<NowPlaying>,
     #[cfg(target_os = "macos")]
     native_menu: Option<menu::NativeMenu>,
@@ -343,6 +345,7 @@ impl App {
             settings_dirty_at: None,
             settings_saved_at: Instant::now(),
             pending_adds: Default::default(),
+            files_access_seen: crate::all_files_access(),
             last_sys_metadata: None,
             #[cfg(target_os = "macos")]
             native_menu: None,
@@ -500,6 +503,30 @@ impl App {
     }
 
     // ----- Background scanning -----
+
+    /// Android: "All files access" can arrive while the app runs (the user switches it on in the system page).
+    /// What failed for lack of it is tried again: files marked missing or unreadable, tags never read, and covers
+    /// remembered as absent, none of which would otherwise be looked at again before a restart.
+    fn watch_files_access(&mut self) {
+        let granted = crate::all_files_access();
+        if granted == self.files_access_seen {
+            return;
+        }
+        self.files_access_seen = granted;
+        if !granted {
+            return;
+        }
+        self.pl_view.art.clear();
+        for doc in &mut self.player.lists {
+            let ids: Vec<EntryId> = doc.playlist.entries().iter().filter(|e| !matches!(e.status, EntryStatus::Ok | EntryStatus::Unknown)).map(|e| e.id).collect();
+            for id in ids {
+                if let Some(e) = doc.playlist.get_mut(id) {
+                    e.status = EntryStatus::Unknown;
+                }
+            }
+        }
+        self.scan_all_lists();
+    }
 
     fn scan_all_lists(&mut self) {
         let mut unknown = Vec::new();
@@ -1532,6 +1559,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::sync(&ctx);
+        self.watch_files_access();
         self.fit_sections(ctx.content_rect().width());
         self.handle_shortcuts(&ctx);
         self.handle_dropped_files(&ctx);

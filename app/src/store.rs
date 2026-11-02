@@ -106,6 +106,10 @@ pub struct Settings {
     /// the site; the confirmation dialog is skipped from then on.
     #[serde(default)]
     pub soundcloud_accepted: bool,
+    /// Android: the first-open dialog about access to the music and downloads folders has been
+    /// answered (or the access was already there), so it is not shown again.
+    #[serde(default)]
+    pub storage_access_asked: bool,
 }
 
 impl Default for Settings {
@@ -150,6 +154,7 @@ impl Default for Settings {
             mixxx: false,
             read_dj_data: true,
             soundcloud_accepted: false,
+            storage_access_asked: false,
         }
     }
 }

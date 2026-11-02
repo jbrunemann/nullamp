@@ -296,6 +296,12 @@ impl ArtCache {
         self.by_path.insert(path, Some(key));
     }
 
+    /// Forget every cover found or not found, for when files that could not be read become readable.
+    pub fn clear(&mut self) {
+        self.by_path.clear();
+        self.inflight.clear();
+    }
+
     /// Drop what is known about these files (their tags were rewritten).
     pub fn forget(&mut self, paths: &[PathBuf]) {
         for p in paths {

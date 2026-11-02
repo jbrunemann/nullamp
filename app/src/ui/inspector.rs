@@ -377,7 +377,7 @@ pub fn on_result(app: &mut App, r: JobResult) {
                 let mut m = format!("{} saved, {} failed: {}", ok.len(), failed.len(), failed.join("; "));
                 // Android refuses writes to files other apps made until the user allows all files.
                 if cfg!(target_os = "android") && !crate::all_files_access() {
-                    m.push_str(". Allow access to all files on Settings > General");
+                    m.push_str(". Allow access to all files on Settings > Storage");
                 }
                 (m, true)
             };

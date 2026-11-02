@@ -84,7 +84,7 @@ fn settings_menu(app: &mut App, ui: &mut Ui, lcd: &egui::Response) {
         use super::dialogs::SettingsTab;
         ui.label(RichText::new("Settings").strong().color(theme::text_dim()));
         ui.separator();
-        for (label, tab) in [("General", SettingsTab::General), ("Audio device", SettingsTab::Audio), ("Keyboard shortcuts", SettingsTab::Shortcuts), ("Web", SettingsTab::Web), ("Updates", SettingsTab::Updates), ("Cache", SettingsTab::Cache), ("Logs", SettingsTab::Logs), ("About Nullamp", SettingsTab::About)] {
+        for (label, tab) in [("General", SettingsTab::General), ("Audio", SettingsTab::Audio), ("Keyboard shortcuts", SettingsTab::Shortcuts), ("Storage", SettingsTab::Storage), ("Web", SettingsTab::Web), ("Updates", SettingsTab::Updates), ("Cache", SettingsTab::Cache), ("Logs", SettingsTab::Logs), ("About Nullamp", SettingsTab::About)] {
             if !SettingsTab::shown().any(|t| t == tab) {
                 continue;
             }
