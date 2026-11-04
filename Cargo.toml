@@ -3,6 +3,8 @@ resolver = "3"
 members = ["crates/*", "app", "android"]
 # The Android crate only builds for Android, through cargo-apk (see android/README.md).
 default-members = ["crates/*", "app"]
+# A path dependency inside the workspace directory would become a member.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "2.3.3"
@@ -42,3 +44,8 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# egui-winit 0.37.0 with one change (see vendor/egui-winit/src/lib.rs, marked "Nullamp"): the Android soft keyboard
+# flickered while a finger rested on a text field.
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }
