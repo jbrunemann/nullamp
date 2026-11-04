@@ -260,7 +260,8 @@ fn keep_found_times(current: &[SetlistEntry], incoming: &mut [SetlistEntry]) {
 pub fn update_active(app: &mut App) {
     app.mix.is_mix = detect_mix(app);
     let current_token = app.player.current.as_ref().map(|c| c.token);
-    if current_token != Some(app.mix.token) {
+    // Stopped, the position is 0 and would make the first track "active", whose cover the deck would then show.
+    if current_token != Some(app.mix.token) || app.player.status == crate::player::Status::Stopped {
         app.mix.active = None;
         return;
     }
@@ -431,8 +432,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     } else {
         source_summary(app, ui);
         entries(app, ui);
-        ui.add_space(4.0);
-        editor(app, ui);
+        if app.mix.edit.id.is_some() {
+            ui.add_space(4.0);
+            editor(app, ui);
+        }
     }
     paste_modal(app, ui.ctx());
     tracklist_search_modal(app, ui.ctx());
@@ -920,7 +923,7 @@ pub(super) fn select(app: &mut App, id: Option<EntryId>) {
 fn entries(app: &mut App, ui: &mut Ui) {
     let Some(setlist) = app.mix.setlist.clone() else { return };
     // With the editor open the list gives way so that the editor always fits.
-    let max_h = if app.mix.edit.id.is_some() { (ui.available_height() * 0.38).max(110.0) } else { (ui.available_height() - 30.0).max(160.0) };
+    let max_h = if app.mix.edit.id.is_some() { (ui.available_height() * 0.38).max(110.0) } else { ui.available_height().max(160.0) };
     let scroll_to = std::mem::take(&mut app.mix.scroll_to_active);
     let mut clicked = None;
     let mut seek = None;
@@ -1117,10 +1120,7 @@ fn delete_entry(app: &mut App, id: EntryId) {
 }
 
 fn editor(app: &mut App, ui: &mut Ui) {
-    let Some(id) = app.mix.edit.id else {
-        ui.label(RichText::new("Right-click an entry and choose Edit entry to change it. Double-click to jump.").small().color(theme::text_faint()));
-        return;
-    };
+    let Some(id) = app.mix.edit.id else { return };
     let pos = app.player.position();
     let mut apply = false;
     let mut cancel = false;
