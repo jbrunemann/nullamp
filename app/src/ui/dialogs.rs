@@ -1039,7 +1039,7 @@ fn web_body(app: &mut App, ui: &mut egui::Ui) {
     ui.label(RichText::new("1001Tracklists").small().weak());
     ui.horizontal(|ui| {
         ui.label("guid cookie:");
-        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.tracklists_guid).password(true).hint_text("cookie value").desired_width(240.0));
+        let field = ui.add(egui::TextEdit::singleline(&mut app.settings.tracklists_guid).hint_text("cookie value").desired_width(240.0));
         if field.changed() {
             app.settings.tracklists_guid = app.settings.tracklists_guid.trim().to_owned();
             app.mark_settings_dirty();
