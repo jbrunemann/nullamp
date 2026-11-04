@@ -60,6 +60,11 @@ const LONG_PRESS_DRIFT: f32 = 12.0;
 /// the output label sit on top of the display and take their own clicks, so both are read from the pointer
 /// instead of from the display's response.
 fn settings_menu(app: &mut App, ui: &mut Ui, lcd: &egui::Response) {
+    // The settings pages sit over the deck, so a press on a field there lands on the display. While they are open a
+    // long press is for the field's own paste menu, not another way into settings the user is already in (#20).
+    if app.dialogs.settings.is_some() {
+        return;
+    }
     let secondary = ui.input(|i| i.pointer.secondary_clicked() && i.pointer.interact_pos().is_some_and(|p| lcd.rect.contains(p)));
     // egui's own long press never fired on the phone, so it is timed here. The frames while resting are asked for,
     // since an idle player repaints only twice a second.
@@ -107,6 +112,11 @@ fn lcd_display(app: &mut App, ui: &mut Ui, rect: Rect) {
     }
 
     let status = app.player.status;
+    // A stopped player clears the retro display: the panel stays lit (it never dims) but shows no readouts, the
+    // way an old stereo blanks when you press Stop. The welcome stays when nothing was ever loaded (#17).
+    if status == Status::Stopped && app.player.current.is_some() {
+        return;
+    }
     let pos = app.player.position();
     let dur = app.player.duration();
     let inner = rect.shrink2(vec2(12.0, 9.0));
@@ -601,6 +611,11 @@ fn artwork(app: &mut App, ui: &Ui, rect: Rect) {
     app.refresh_deck_art(time);
     let p = ui.painter_at(rect);
     p.rect_filled(rect, ART_RADIUS, theme::LCD_BG);
+    // Cleared along with the rest of the retro display when stopped: the last track's cover does not linger (#17).
+    if app.player.status == Status::Stopped && app.player.current.is_some() {
+        p.rect_stroke(rect, ART_RADIUS, Stroke::new(1.0, theme::LCD_BORDER), StrokeKind::Inside);
+        return;
+    }
     let mode = app.settings.artwork;
     let shown = app.now.art_shown.as_ref().and_then(|a| a.pick(mode));
     match &app.now.art_transition {
